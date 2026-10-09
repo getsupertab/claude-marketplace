@@ -37,9 +37,9 @@ then `claude plugin install keeptabs@supertab`. The shell has no one-step form.
 - figures come from transcripts and are marked **INCOMPLETE**, because transcripts
   miss background calls, web searches and some helper calls.
 
-The limits you start with are the POC author's: warn-only, $25 per session, $40 per
-day, $2 per request, and a job budget check-in at $1. Set your own with
-[`/keeptabs:budget`](#budgets-keeptabsbudget).
+The limits you start with are the POC author's: warn-only, $25/90M tokens per session,
+$40/40M tokens per day, $2/100k tokens per request, and a job budget check-in at
+$1. Set your own with [`/keeptabs:budget`](#budgets-keeptabsbudget).
 
 ## Full tracking: `/keeptabs:setup`
 
