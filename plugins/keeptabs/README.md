@@ -17,17 +17,17 @@ marketplace and installs keeptabs; Claude Code asks you to confirm the source, t
 to pick a scope (choose "Install for you" to have it in every project):
 
 ```
-/plugin install keeptabs --marketplace laterpay/claude-marketplace
+/plugin install keeptabs --marketplace getsupertab/claude-marketplace
 ```
 
 **In two steps** (any version):
 
 ```
-/plugin marketplace add laterpay/claude-marketplace
+/plugin marketplace add getsupertab/claude-marketplace
 /plugin install keeptabs@supertab
 ```
 
-From a shell instead: `claude plugin marketplace add laterpay/claude-marketplace`,
+From a shell instead: `claude plugin marketplace add getsupertab/claude-marketplace`,
 then `claude plugin install keeptabs@supertab`. The shell has no one-step form.
 
 **Start a new session** (or run `/reload-plugins`). keeptabs is working from that point:
