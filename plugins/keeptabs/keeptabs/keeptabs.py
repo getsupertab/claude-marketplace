@@ -376,19 +376,13 @@ def bar(frac, width=28):
     color = GREEN if frac < 0.7 else (YELLOW if frac < 1.0 else RED)
     return color + "█" * filled + DIM + "·" * (width - filled) + RESET
 
-def budget_line(name, c, t, ulim, tlim):
-    """One scope: bar at whichever limit is closest, then both figures."""
-    parts, fracs = [], []
-    if ulim:
-        fracs.append(c / float(ulim)); parts.append(f"{money(c)} of ${float(ulim):,.2f}")
-    if tlim:
-        fracs.append(t / float(tlim)); parts.append(f"{num(t)} of {num(int(tlim))} tok")
-    if not fracs:
+def budget_line(scope_name, spent, limit_usd):
+    if not limit_usd:
         return None
-    frac = max(fracs)
-    over = f"  {RED}{BOLD}OVER{RESET}" if frac >= 1.0 else ""
-    return (f"    {name:<9} {bar(frac, 20)} {frac*100:5.0f}%   "
-            f"{DIM}{' · '.join(parts)}{RESET}{over}")
+    fraction = spent / float(limit_usd)
+    over = f"  {RED}{BOLD}OVER{RESET}" if fraction >= 1.0 else ""
+    return (f"    {scope_name:<9} {bar(fraction, 20)} {fraction*100:5.0f}%   "
+            f"{DIM}{money(spent)} of ${float(limit_usd):,.2f}{RESET}{over}")
 
 
 def pick(store, led, sid):
@@ -475,10 +469,10 @@ def render(store, sid, prices, budget, show_all, led=None):
 
     if budget:
         cold = budget.get("cold_resume") or {}
-        lines = [budget_line(name, c, t, budget.get(f"{key}_limit_usd"), budget.get(f"{key}_limit_tokens"))
-                 for name, key, c, t in (("session", "session", b.cost, b.wtok),
-                                         ("today", "daily", dc, dt))]
-        lines = [x for x in lines if x]
+        lines = [budget_line(scope_name, spent, budget.get(f"{config_key}_limit_usd"))
+                 for scope_name, config_key, spent in (("session", "session", b.cost),
+                                                       ("today", "daily", dc))]
+        lines = [line for line in lines if line]
         # The job budget lives in guard.py's state for this session.
         try:
             gs = json.load(open(os.path.join(CFG, "state", sid + ".json")))
@@ -486,14 +480,12 @@ def render(store, sid, prices, budget, show_all, led=None):
             gs = {}
         job = gs.get("job")
         if job:
-            jl = budget_line("job", max(0.0, b.cost - float(job["base_cost"])),
-                             max(0, b.wtok - int(job["base_tokens"])), job.get("usd"), job.get("tokens"))
-            if jl:
-                lines.append(jl + f"  {DIM}{job.get('label', '')}{RESET}")
+            job_line = budget_line("job", max(0.0, b.cost - float(job["base_cost"])), job.get("usd"))
+            if job_line:
+                lines.append(job_line + f"  {DIM}{job.get('label', '')}{RESET}")
         if gs.get("ask_fired"):
             lines.append(f"    {YELLOW}{'check-in':<9} paused: waiting for your budget reply{RESET}")
-        tu, tt = budget.get("turn_limit_usd"), budget.get("turn_limit_tokens")
-        if lines or tu or tt:
+        if lines or budget.get("turn_limit_usd"):
             L.append("")
             L.append(f"  {BOLD}BUDGET{RESET}  {DIM}{'hard stop' if budget.get('hard_stop') else 'warn only'}"
                      f" · warns at {budget.get('warn_at_percent', 70)}%{RESET}")
@@ -513,10 +505,9 @@ def render(store, sid, prices, budget, show_all, led=None):
                     cache = f"cache warm, {int((lim - idle) // 60)}m left"
                 L.append(f"    {'context':<9} {color}{num(tb.ctx)} tok{RESET}{DIM} · "
                          f"{money(per)}/call to re-read · {cache}{RESET}")
-            if tu or tt:
-                lim = " · ".join(x for x in ((f"${float(tu):,.2f}" if tu else ""),
-                                             (f"{int(tt):,} tok" if tt else "")) if x)
-                L.append(f"    {DIM}{'request':<9} {lim}, warned in the chat by guard.py{RESET}")
+            if budget.get("turn_limit_usd"):
+                L.append(f"    {DIM}{'request':<9} ${float(budget['turn_limit_usd']):,.2f}, "
+                         f"warned in the chat by guard.py{RESET}")
 
     if tb and tb.tools:
         rows = sorted(tb.tools.items(), key=lambda kv: -(kv[1]["ask"] + kv[1]["result"]))

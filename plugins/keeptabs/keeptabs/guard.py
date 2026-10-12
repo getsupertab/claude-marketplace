@@ -6,7 +6,7 @@ Three scopes, most restrictive wins:
   session this conversation.
   daily   every session today, across every project.
 
-Plus a job budget, set by starting a prompt with "$2:", "beer:" or "200k:".
+Plus a job budget, set by starting a prompt with "$2:" or "beer:".
 It runs until the next one, or "nobudget:" to clear it.
 
 Wired to PreToolUse (the brake inside a turn) and UserPromptSubmit (the stop
@@ -66,7 +66,7 @@ def tally(transcript, prices, st, others=frozenset()):
     # are derived from them at the current prices every time, so a price change
     # re-prices history. The tamper check runs on raw counts, which only grow.
     keep = {k: st.get(k) for k in ("band_session", "band_today", "ctx_band", "cold_block_at",
-                                   "turn_base_cost", "turn_base_tokens",
+                                   "turn_base_cost",
                                    "turn_band", "health_warned", "health_warned_at",
                                    "job", "band_job", "recent", "prompted", "ask_fired", "subs")}
     if "raw" not in st or st.get("v") != FORMAT:   # old format: re-read the transcript once
@@ -288,12 +288,6 @@ def ago(seconds):
     m = int(seconds // 60)
     return f"{m // 60}h {m % 60:02d}m" if m >= 60 else f"{m}m"
 
-def closest(usd_lim, tok_lim, c, t):
-    f = []
-    if usd_lim: f.append((c / float(usd_lim), f"${c:,.2f} of ${float(usd_lim):,.2f}"))
-    if tok_lim: f.append((t / float(tok_lim), f"{t:,} of {int(tok_lim):,} tokens"))
-    return max(f, key=lambda x: x[0]) if f else (0.0, "")
-
 def deny(event, user_msg, model_msg):
     out = {"systemMessage": user_msg}
     if event == "UserPromptSubmit":
@@ -316,26 +310,22 @@ def note(event, user_msg, model_msg):
                                     "additionalContext": model_msg})}
 
 SCALE = {"water": 0.5, "beer": 6.0, "pizza": 20.0, "wine": 50.0, "champagne": 100.0}
-JOB_RE = re.compile(r"^\s*(?:\$\s*(?P<usd>\d+(?:\.\d+)?)|(?P<tok>\d+(?:\.\d+)?)\s*(?P<unit>[km])\s*(?:tok(?:ens)?)?"
-                    r"|(?:a\s+)?(?P<word>[a-z]+))\s*:", re.I)
+JOB_RE = re.compile(r"^\s*(?:\$\s*(?P<usd>\d+(?:\.\d+)?)|(?:a\s+)?(?P<word>[a-z]+))\s*:", re.I)
 
 def parse_job(prompt, scale):
-    """A job budget at the start of a prompt. Returns ("set", usd, tokens, label),
+    """A job budget at the start of a prompt. Returns ("set", usd, label),
     ("clear",), or None when the prompt does not start with one."""
     prompt = re.sub(r"^\s*<pasted_content[^>]*>\s*", "", prompt or "")
     m = JOB_RE.match(prompt)
     if not m:
         return None
     if m.group("usd"):
-        return ("set", float(m.group("usd")), None, f"${float(m.group('usd')):,.2f}")
-    if m.group("tok"):
-        n = int(float(m.group("tok")) * (1000 if m.group("unit").lower() == "k" else 1000000))
-        return ("set", None, n, f"{n:,} tokens")
+        return ("set", float(m.group("usd")), f"${float(m.group('usd')):,.2f}")
     w = m.group("word").lower()
     if w in ("nobudget", "nojob"):
         return ("clear",)
     if w in scale:
-        return ("set", float(scale[w]), None, f"a {w} (${float(scale[w]):,.2f})")
+        return ("set", float(scale[w]), f"a {w} (${float(scale[w]):,.2f})")
     return None                                   # "note:", "todo:" and so on are just text
 
 def scale_line(scale):
@@ -368,11 +358,11 @@ def main():
                 f"checked until it is fixed."}))
         return 0
     scopes_cfg = [
-        ("session", b.get("session_limit_usd"), b.get("session_limit_tokens")),
-        ("today",   b.get("daily_limit_usd"),   b.get("daily_limit_tokens")),
-        ("request", b.get("turn_limit_usd"),    b.get("turn_limit_tokens")),
+        ("session", b.get("session_limit_usd")),
+        ("today",   b.get("daily_limit_usd")),
+        ("request", b.get("turn_limit_usd")),
     ]
-    if not any(u or t for _, u, t in scopes_cfg):
+    if not any(limit_usd for _, limit_usd in scopes_cfg):
         return 0                                  # nothing configured, stay out of the way
 
     transcript = payload.get("transcript_path")
@@ -444,7 +434,7 @@ def main():
     if event == "UserPromptSubmit" and st.get("turn_base_cost") is not None:
         st["recent"] = (st.get("recent") or [])[-9:] + [round(max(0.0, cost - float(st["turn_base_cost"])), 6)]
     if event == "UserPromptSubmit" or st.get("turn_base_cost") is None:
-        st["turn_base_cost"], st["turn_base_tokens"] = cost, toks
+        st["turn_base_cost"] = cost
         st["turn_band"] = 0
         st.pop("ask_fired", None)
 
@@ -455,15 +445,14 @@ def main():
     first_prompt = event == "UserPromptSubmit" and not st.get("prompted")
     if event == "UserPromptSubmit":
         st["prompted"] = True
-        j = parse_job(payload.get("prompt"), scale)
-        if j and j[0] == "clear":
+        parsed_job = parse_job(payload.get("prompt"), scale)
+        if parsed_job and parsed_job[0] == "clear":
             st.pop("job", None)
             job_msgs.append(("keeptabs: job budget cleared.",
                 "JOB NOTICE: the user cleared the job budget. Ignore the \"nobudget:\" prefix."))
-        elif j:
-            _, ju, jt, label = j
-            st["job"] = {"usd": ju, "tokens": jt, "label": label, "base_cost": cost,
-                         "base_tokens": toks, "at": time.time()}
+        elif parsed_job:
+            _, job_usd, label = parsed_job
+            st["job"] = {"usd": job_usd, "label": label, "base_cost": cost, "at": time.time()}
             st["band_job"] = 0
             job_msgs.append((f"keeptabs: job budget set to {label}.",
                 f"JOB BUDGET: the user set this job's budget to {label}, counted from now, "
@@ -484,15 +473,14 @@ def main():
     day_c, day_t = max(day_c, l_dc), max(day_t, l_dt)
 
     measured = {
-        "session": (cost, toks),
-        "today":   (day_c, day_t),
+        "session": cost,
+        "today":   day_c,
         # "is None", not "or": a baseline of 0 (a session's first turn) is real.
-        "request": (max(0.0, cost - float(cost if st.get("turn_base_cost") is None else st["turn_base_cost"])),
-                    max(0,   toks - int(toks if st.get("turn_base_tokens") is None else st["turn_base_tokens"]))),
+        "request": max(0.0, cost - float(cost if st.get("turn_base_cost") is None else st["turn_base_cost"])),
     }
     if job:
-        measured["job"] = (max(0.0, cost - float(job["base_cost"])), max(0, toks - int(job["base_tokens"])))
-        scopes_cfg.append(("job", job.get("usd"), job.get("tokens")))
+        measured["job"] = max(0.0, cost - float(job["base_cost"]))
+        scopes_cfg.append(("job", job.get("usd")))
 
     warn_at = float(b.get("warn_at_percent", 70)) / 100.0
     hard    = bool(b.get("hard_stop", True))
@@ -634,7 +622,7 @@ def main():
                 f"user stops you. If it does need the context, or you already suggested this and the "
                 f"user carried on, say nothing about it.")
     if event == "UserPromptSubmit" and job and job.get("usd"):
-        spent_j = measured["job"][0]
+        spent_j = measured["job"]
         left = float(job["usd"]) - spent_j
         floor = (last[1] * rate(prices, last[2], "cache_read") / 1e6) if last else 0.0
         calls = (f" Each call here costs at least ${floor:,.3f} just to re-read this context, so "
@@ -657,7 +645,7 @@ def main():
     # also stop once when a single request crosses the threshold with no job set.
     # A deny, not a note: a note arrives while the spending carries on.
     ask_over = float(jcfg.get("ask_over_usd", 1.0))
-    spent = measured["request"][0]
+    spent = measured["request"]
     waiting = st.get("ask_fired")
     if (event == "PreToolUse" and jcfg.get("ask_mid_request", True) and not job
             and (waiting or spent >= ask_over) and helper):
@@ -694,18 +682,16 @@ def main():
             f"instructions and adds its own start-up cost. Do the work yourself, or stop and "
             f"report back to the agent that started you."))
 
-    for name, ulim, tlim in scopes_cfg:
-        if not (ulim or tlim):
+    for scope_name, limit_usd in scopes_cfg:
+        if not limit_usd:
             continue
-        if name == "request" and event == "UserPromptSubmit":
+        if scope_name == "request" and event == "UserPromptSubmit":
             continue
-        c, t = measured[name]
-        frac, detail = closest(ulim, tlim, c, t)
-        if "$" not in detail:
-            detail += f", about ${c:,.2f}"
-        v = judge(name, frac, detail)
-        if v:
-            verdicts.append(v)
+        scope_spent = measured[scope_name]
+        verdict = judge(scope_name, scope_spent / float(limit_usd),
+                        f"${scope_spent:,.2f} of ${float(limit_usd):,.2f}")
+        if verdict:
+            verdicts.append(verdict)
 
     if helper:
         verdicts = [v for v in verdicts if v[0] == "deny"]

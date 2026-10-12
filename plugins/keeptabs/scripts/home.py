@@ -64,11 +64,51 @@ def write_if_changed(path, text):
     os.replace(tmp, path)
 
 
-def prepare():
+DEAD_BUDGET_KEYS = ("session_limit_tokens", "daily_limit_tokens", "turn_limit_tokens")
+OLD_TURN_LIMIT_USD = 2      # the token-era default, when a token ceiling bit first
+
+
+def migrate_budget(path):
+    """Budgets are dollars now. Drop the keys the guard stopped reading, and move
+    the request limit off the old default once, since without its token ceiling it
+    would be more than three times looser. Returns a message, or None."""
+    budget = load(path, None)
+    if not isinstance(budget, dict):
+        return None
+    dead_keys = [key for key in DEAD_BUDGET_KEYS if key in budget]
+    if not dead_keys:
+        return None
+    for dead_key in dead_keys:
+        del budget[dead_key]
+    shipped = load(os.path.join(CODE, "budget.json"), {})
+    request_limit_moved = float(budget.get("turn_limit_usd") or 0) == OLD_TURN_LIMIT_USD
+    if request_limit_moved:
+        budget["turn_limit_usd"] = shipped.get("turn_limit_usd", 0.6)
+    # Only replace the shipped wording, never a comment the user rewrote.
+    if "_limit_tokens" in str(budget.get("_comment", "")):
+        budget["_comment"] = shipped.get("_comment", budget["_comment"])
+    if "200k:" in str(budget.get("_job_comment", "")):
+        budget["_job_comment"] = shipped.get("_job_comment", budget["_job_comment"])
+    write_if_changed(path, json.dumps(budget, indent=2) + "\n")
+    return ("keeptabs: budgets are in dollars now, so " + ", ".join(dead_keys) + " no longer "
+            "did anything and " + ("were" if len(dead_keys) > 1 else "was") + " removed from "
+            "your budget.json."
+            + (f" Your request limit moved from ${OLD_TURN_LIMIT_USD:,.2f} to "
+               f"${float(budget['turn_limit_usd']):,.2f}, which is about where the token "
+               f"ceiling used to stop a request. Change it with /keeptabs:budget."
+               if request_limit_moved else ""))
+
+
+def prepare(quiet=True):
+    """Returns messages for the user, if any."""
     os.makedirs(STATE, exist_ok=True)
-    budget = os.path.join(DATA, "budget.json")
-    if not os.path.exists(budget):
-        write_if_changed(budget, open(os.path.join(CODE, "budget.json")).read())
+    budget_path = os.path.join(DATA, "budget.json")
+    if not os.path.exists(budget_path):
+        write_if_changed(budget_path, open(os.path.join(CODE, "budget.json")).read())
+        return []
+    # Only at session start: a limit must not move mid-session with no one told.
+    migration_message = None if quiet else migrate_budget(budget_path)
+    return [migration_message] if migration_message else []
 
 
 def probe():
@@ -202,10 +242,9 @@ def telemetry_state():
 
 def run(quiet):
     try:
-        prepare()
+        msgs = prepare(quiet)
     except OSError as e:
         return [f"keeptabs: could not set up {DATA}: {e}"]
-    msgs = []
     if quiet and os.path.exists(STOPPED):
         return msgs      # stop-collector ran: stay down until the next session start
     problem = ensure_collector()
