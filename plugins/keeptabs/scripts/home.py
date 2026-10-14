@@ -65,7 +65,8 @@ def write_if_changed(path, text):
 
 
 DEAD_BUDGET_KEYS = ("session_limit_tokens", "daily_limit_tokens", "turn_limit_tokens")
-OLD_TURN_LIMIT_USD = 2      # the token-era default, when a token ceiling bit first
+OLD_TURN_LIMIT_USD = 2            # the token-era default, when a token ceiling bit first
+OLD_TURN_LIMIT_TOKENS = 100000    # the ceiling that bit first, at about $0.59
 
 
 def migrate_budget(path):
@@ -78,10 +79,13 @@ def migrate_budget(path):
     dead_keys = [key for key in DEAD_BUDGET_KEYS if key in budget]
     if not dead_keys:
         return None
+    # Decided before the dead keys go: $2 alone cannot tell the old default from a
+    # limit someone chose, so only move it when the token ceiling was also untouched.
+    request_limit_moved = (float(budget.get("turn_limit_usd") or 0) == OLD_TURN_LIMIT_USD
+                           and budget.get("turn_limit_tokens") == OLD_TURN_LIMIT_TOKENS)
     for dead_key in dead_keys:
         del budget[dead_key]
     shipped = load(os.path.join(CODE, "budget.json"), {})
-    request_limit_moved = float(budget.get("turn_limit_usd") or 0) == OLD_TURN_LIMIT_USD
     if request_limit_moved:
         budget["turn_limit_usd"] = shipped.get("turn_limit_usd", 0.6)
     # Only replace the shipped wording, never a comment the user rewrote.

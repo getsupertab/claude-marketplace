@@ -424,7 +424,7 @@ def main():
     except Exception as e:
         led_ok, led_why = False, f"health check failed ({type(e).__name__}: {e})."
     today = datetime.now().astimezone().date().isoformat()
-    l_sc, l_st, l_dc, l_dt = ledger_totals(sid, today, prices)
+    l_sc, l_st, l_dc, _ = ledger_totals(sid, today, prices)
     if led_ok:
         cost, toks = max(cost, l_sc), max(toks, l_st)
 
@@ -461,6 +461,11 @@ def main():
                 f"budget hints keeptabs sends. If the job clearly will not fit, say so early and "
                 f"offer a smaller version rather than running out halfway."))
     job = st.get("job")
+    # A token-only job from before budgets went USD enforces nothing, but would still
+    # read as "a job is set" and silence the check-ins below.
+    if job and not job.get("usd"):
+        st.pop("job", None)
+        job = None
 
     # This session's fresh state is saved first so today's total includes it.
     try:
@@ -468,9 +473,9 @@ def main():
             json.dump(st, fh)
     except Exception:
         pass
-    day_c, day_t = day_totals(today, prices)
+    day_c, _ = day_totals(today, prices)
     # Other sessions today may send telemetry even if this one does not.
-    day_c, day_t = max(day_c, l_dc), max(day_t, l_dt)
+    day_c = max(day_c, l_dc)
 
     measured = {
         "session": cost,
@@ -509,7 +514,7 @@ def main():
             if name == "request":
                 return ("deny",
                     f"keeptabs: this request hit its own limit ({detail}, {pct}%). Send a "
-                    f"new prompt to start a fresh turn, or raise turn_limit_* in "
+                    f"new prompt to start a fresh turn, or raise turn_limit_usd in "
                     f"budget.json (/keeptabs:budget shows where).",
                     f"This single request has spent {detail} and reached its per-request "
                     f"ceiling. Stop now and report what you finished and what is left. The "
