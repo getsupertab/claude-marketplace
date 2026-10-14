@@ -37,9 +37,10 @@ then `claude plugin install keeptabs@supertab`. The shell has no one-step form.
 - figures come from transcripts and are marked **INCOMPLETE**, because transcripts
   miss background calls, web searches and some helper calls.
 
-The limits you start with are the POC author's: warn-only, $25/90M tokens per session,
-$40/40M tokens per day, $2/100k tokens per request, and a job budget check-in at
-$1. Set your own with [`/keeptabs:budget`](#budgets-keeptabsbudget).
+The limits you start with are the POC author's: $25/90M tokens per session, $40/40M
+tokens per day, $2/100k tokens per request — all three warn only — and a job budget
+check-in at $1, which does stop. Set your own with
+[`/keeptabs:budget`](#budgets-keeptabsbudget).
 
 ## Full tracking: `/keeptabs:setup`
 
@@ -67,13 +68,14 @@ and plugin auto-update with it. From Desktop, update by hand (next section).
 /keeptabs:budget
 ```
 
-Shows the limits you have now, and the path to the file they live in. To change one,
-say what you want changed:
+Shows the limits you have now, and the path to the file they live in:
+`${CLAUDE_PLUGIN_DATA}/budget.json`, yours, kept across plugin updates and deleted when
+you uninstall keeptabs. To change one, say what you want changed:
 
 ```
 /keeptabs:budget daily 20
 /keeptabs:budget request 0.50
-/keeptabs:budget hard stop on
+/keeptabs:budget warn at 50
 ```
 
 It shows the change (old → new) before writing, and the new values apply from your next
@@ -89,9 +91,11 @@ limit governs, and either can be turned off.
 | Request | one prompt and everything it sets off | each prompt | `/keeptabs:budget request 0.50` |
 | Job | one piece of work, however many prompts it takes | when you set the next one | a prompt prefix, below |
 
-Warnings start at 70% (`/keeptabs:budget warn at 50`). What 100% means is up to
-`hard_stop`: by default keeptabs only warns; `/keeptabs:budget hard stop on` makes it
-refuse tool calls instead.
+Warnings start at 70% and repeat once per 10% band after that; `/keeptabs:budget warn
+at 50` moves the start. What 100% means is up to `hard_stop`: by default these three
+only warn, and `/keeptabs:budget hard stop on for session, daily and request` makes them
+refuse tool calls instead. Say which budgets you mean — the job budget has its own
+`job.hard_stop`.
 
 ### Job budgets: a prefix on the prompt
 
@@ -107,13 +111,21 @@ nobudget: carry on without one
 
 It counts from that moment on, across as many prompts as the job takes, until you set
 the next one. The words are a scale you can change: water $0.50, beer $6, pizza $20,
-wine $50, champagne $100. Job budgets do stop at 100%, and Claude then reports what is
-done, what is left, and what the rest would cost.
+wine $50, champagne $100. Job budgets stop at 100% by default — tool calls are refused,
+and Claude reports what is done, what is left, and what the rest would cost. That one is
+`job.hard_stop`, and you can turn it off.
 
-With no job budget set, Claude estimates the job itself and asks you for one when the
-estimate is over $1 — on a session's first prompt, and again mid-request if one request
-passes that figure. `/keeptabs:budget ask over 5` moves that line, and
-`/keeptabs:budget ask off` stops it asking.
+With no job budget set, keeptabs steps in at $1. There are two separate check-ins, each
+with its own switch:
+
+- **On a session's first prompt**, Claude estimates the job and asks you for a budget if
+  the estimate is over $1. `/keeptabs:budget ask off` stops this one.
+- **Mid-request**, as soon as one request passes $1, keeptabs pauses the work. This is
+  not a question you can ignore: every tool call, Claude's own and its helpers', is
+  refused until you send a new message — a budget like `$3:`, or `nobudget:`.
+  `/keeptabs:budget mid-request ask off` stops this one.
+
+`/keeptabs:budget ask over 5` moves the $1 line for both.
 
 The POC README covers the rest of what the guard watches: context size, the block on
 resuming a cold session, and the suggestion to start a new session when this one has
