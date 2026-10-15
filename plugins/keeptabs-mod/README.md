@@ -1,6 +1,7 @@
-# keeptabs
+# keeptabs-mod
 
-Supertab's proof of concept that shows what Claude Code is spending, stops it at limits
+keeptabs rewritten around a Claude Code hooks module, being tested beside the original
+`keeptabs` plugin. Supertab's proof of concept that shows what Claude Code is spending, stops it at limits
 you set, and gives the agent the numbers it needs to stay inside a budget. Packaged as
 a plugin in [claude-marketplace](../../README.md). The POC's own documentation (how the
 numbers are worked out, budgets, the threat model) is in
@@ -20,7 +21,14 @@ The repo is private: you need access and working git credentials, see the
 ```
 
 Claude Code asks you to confirm the source, then to pick a scope (choose "Install for
-you" to have it in every project). That is the whole install: no setup, no settings
+you" to have it in every project). If you have the original `keeptabs` installed, switch
+it off first, or both guards run on every prompt:
+
+```bash
+claude plugin disable keeptabs@supertab
+```
+
+That is the whole install: no setup, no settings
 change, no restart. **Start a new session** (or run `/reload-plugins`) and keeptabs is
 working from its first prompt:
 
@@ -75,7 +83,7 @@ data (ledger, guard state and your `budget.json`) stays in
 | `scripts/loaded-check.sh` | Shell hook on `UserPromptSubmit` | The version gate: says once, on the first prompt, when the module did not load |
 | `keeptabs/keeptabs.py`, `keeptabs/sankey.py` | Python, run by the status skill or by hand | The accounting and the terminal live view; the status page as a snapshot file |
 | `skills/status`, `skills/budget` | `/keeptabs-mod:status`, `/keeptabs-mod:budget` | Show the numbers; show or change the limits |
-| Data: `budget.json`, `ledger/<day>/<session>.jsonl`, `state/` | `~/.claude/plugins/data/keeptabs-mod-supertab/`, one fixed path whatever the marketplace is called | Kept across updates |
+| Data: `budget.json`, `ledger/<day>/<session>.jsonl`, `state/` | `~/.claude/plugins/data/keeptabs-mod-supertab/`, one fixed path, separate from keeptabs' folder | Kept across updates |
 
 Code runs from the plugin folder, `${CLAUDE_PLUGIN_ROOT}`
 (`~/.claude/plugins/cache/supertab/keeptabs-mod/<version>/`, the version being the git
