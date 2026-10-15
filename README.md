@@ -7,6 +7,7 @@ Supertab's private plugin marketplace for Claude Code. Marketplace name: `supert
 | Plugin | Install id | What it does |
 |---|---|---|
 | [keeptabs](plugins/keeptabs/README.md) | `keeptabs@supertab` | Shows what Claude Code is spending, stops it at limits you set, and gives the agent the numbers it needs to stay inside a budget. Proof of concept. |
+| [keeptabs-mod](plugins/keeptabs-mod/README.md) | `keeptabs-mod@supertab` | keeptabs rewritten around a Claude Code hooks module (Claude Code 2.1.287 or later): every API call in a ledger from the first prompt, no telemetry setup. Being tested beside keeptabs; install one or the other. |
 
 Each plugin's README covers what it needs after install and how to remove it cleanly.
 

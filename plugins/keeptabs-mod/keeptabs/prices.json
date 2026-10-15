@@ -1,0 +1,118 @@
+{
+  "_comment": "USD per 1,000,000 tokens. Published rates from platform.claude.com/docs/en/about-claude/pricing, checked 2026-10-13. Cache writes: 5m = 1.25x input, 1h = 2x input. Cache reads: 0.1x input, except Fable 5.1 / Mythos 5.1 at 0.025x and Opus 5.5 / Sonnet 5.5 at 0.05x. Haiku 5.5 is listed at its up-to-100K-token rate; prompts over 100K tokens cost 5x that and are not modelled. 'default' is Opus 5.5 and applies to any model id not listed here. Not included: web search fees ($10 per 1,000 searches, billed per search) and Claude Code background calls not written to transcripts.",
+  "_verified": true,
+  "models": {
+    "claude-fable-5-1": {
+      "input": 10.0,
+      "output": 50.0,
+      "cache_write_5m": 12.5,
+      "cache_write_1h": 20.0,
+      "cache_read": 0.25
+    },
+    "claude-mythos-5-1": {
+      "input": 10.0,
+      "output": 50.0,
+      "cache_write_5m": 12.5,
+      "cache_write_1h": 20.0,
+      "cache_read": 0.25
+    },
+    "claude-fable-5": {
+      "input": 10.0,
+      "output": 50.0,
+      "cache_write_5m": 12.5,
+      "cache_write_1h": 20.0,
+      "cache_read": 1.0
+    },
+    "claude-mythos-5": {
+      "input": 10.0,
+      "output": 50.0,
+      "cache_write_5m": 12.5,
+      "cache_write_1h": 20.0,
+      "cache_read": 1.0
+    },
+    "claude-opus-5-5": {
+      "input": 4.0,
+      "output": 20.0,
+      "cache_write_5m": 5.0,
+      "cache_write_1h": 8.0,
+      "cache_read": 0.2
+    },
+    "claude-opus-5": {
+      "input": 5.0,
+      "output": 25.0,
+      "cache_write_5m": 6.25,
+      "cache_write_1h": 10.0,
+      "cache_read": 0.5
+    },
+    "claude-opus-4-8": {
+      "input": 5.0,
+      "output": 25.0,
+      "cache_write_5m": 6.25,
+      "cache_write_1h": 10.0,
+      "cache_read": 0.5
+    },
+    "claude-opus-4-7": {
+      "input": 5.0,
+      "output": 25.0,
+      "cache_write_5m": 6.25,
+      "cache_write_1h": 10.0,
+      "cache_read": 0.5
+    },
+    "claude-opus-4-6": {
+      "input": 5.0,
+      "output": 25.0,
+      "cache_write_5m": 6.25,
+      "cache_write_1h": 10.0,
+      "cache_read": 0.5
+    },
+    "claude-sonnet-5-5": {
+      "input": 2.0,
+      "output": 10.0,
+      "cache_write_5m": 2.5,
+      "cache_write_1h": 4.0,
+      "cache_read": 0.1
+    },
+    "claude-sonnet-5": {
+      "input": 2.0,
+      "output": 10.0,
+      "cache_write_5m": 2.5,
+      "cache_write_1h": 4.0,
+      "cache_read": 0.2
+    },
+    "claude-sonnet-4-6": {
+      "input": 3.0,
+      "output": 15.0,
+      "cache_write_5m": 3.75,
+      "cache_write_1h": 6.0,
+      "cache_read": 0.3
+    },
+    "claude-haiku-5-5": {
+      "input": 0.1,
+      "output": 0.5,
+      "cache_write_5m": 0.125,
+      "cache_write_1h": 0.2,
+      "cache_read": 0.01
+    },
+    "claude-haiku-4-5": {
+      "input": 1.0,
+      "output": 5.0,
+      "cache_write_5m": 1.25,
+      "cache_write_1h": 2.0,
+      "cache_read": 0.1
+    },
+    "claude-haiku-4-5-20251001": {
+      "input": 1.0,
+      "output": 5.0,
+      "cache_write_5m": 1.25,
+      "cache_write_1h": 2.0,
+      "cache_read": 0.1
+    }
+  },
+  "default": {
+    "input": 4.0,
+    "output": 20.0,
+    "cache_write_5m": 5.0,
+    "cache_write_1h": 8.0,
+    "cache_read": 0.2
+  }
+}
