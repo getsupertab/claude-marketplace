@@ -220,16 +220,17 @@ test('an interactive session opens the pane and draws the live view', async ($, 
   expect(drawn.find(t => t.text === '██')?.props).toEqual({ color: '#00cd00' })
   expect(drawn.filter(t => t.text === ' ').length).toBe(2)     // the space after 'keeptabs', and the blank line
   expect(drawn.some(t => t.text.includes('ctrl-c'))).toBe(false)
-  // the tab row: live is the primary one, then flow, options and the browser button
+  // the tab row: live is the primary one, then options and the browser button
   expect(elements(tree, 'Button').map(b => [b.key, b.variant])).toEqual([
-    ['tab-live', 'primary'], ['tab-flow', 'secondary'], ['tab-options', 'secondary'], ['open-browser', undefined],
+    ['tab-live', 'primary'], ['tab-options', 'secondary'], ['open-browser', undefined],
   ])
+  expect(sources(tree, 'Svg')).toEqual([])
 
-  // a remote surface: one Svg, monospace text with the spans as fills and weights
+  // a remote surface: the live view as the last Svg (the flow above it once fetched),
+  // monospace text with the spans as fills and weights
   for (const surface of ['desktop', 'vscode', 'mobile'] as const) {
     const remote = await $.ui.render({ surface, component: 'Pane', requestId: 'keeptabs', props: PANE_PROPS })
-    const svg = sources(remote, 'Svg')
-    expect(svg.length).toBe(1)
+    const svg = sources(remote, 'Svg').slice(-1)
     expect(svg[0]).toBe(svgOf(liveLines(ONCE)))
     expect(svg[0]!.startsWith('<svg xmlns="http://www.w3.org/2000/svg" ')).toBe(true)
     expect(svg[0]).toContain('<tspan font-weight="700">keeptabs</tspan>')
@@ -245,11 +246,13 @@ test('an interactive session opens the pane and draws the live view', async ($, 
   expect(svgOf(['a<b&c'])).toContain('<tspan>a&lt;b&amp;c</tspan>')
   expect(svgOf(['x'.repeat(120)])).toContain('<tspan>' + 'x'.repeat(99) + '…</tspan>')
 
-  // a ledger write redraws: one more helper run, one invalidate
+  // a ledger write redraws: one invalidate, and since a remote surface drew the pane,
+  // two helper runs, the live view and the flow
+  await clock.settle()
   const runs = ui.runs.length, invalidates = ui.invalidates
   await $.telemetry.log(request({}))
   await clock.settle()
-  expect(ui.runs.length).toBe(runs + 1)
+  expect(ui.runs.slice(runs).map(a => a.slice(2))).toEqual([['--once', '--session', SID], ['--session', SID, '--flow-svg']])
   expect(ui.invalidates).toBe(invalidates + 1)
 })
 
@@ -299,33 +302,29 @@ test('/keeptabs-mod:status (the skill) is answered by the hook: the pane opens, 
   expect(r.context).toEqual([`keeptabs, this session's figures as of now:\n${liveLines(ONCE).map(stripAnsi).join('\n')}`])
 })
 
-test('the flow tab draws the compact Sankey on a remote surface; the terminal points at the browser', async ($, on) => {
+test('on a remote surface the live tab draws the flow above the live view, and the flow opens the page', async ($, on) => {
   mock.env(on, { HOME: '/home/t' })
   const clock = mock.clock(on, { now: T0 })
   const { ui } = world(on, FILES)
   await $.session.start({ cwd: '/w', surface: 'desktop', isInteractive: true })
   await clock.settle()
-  await $.ui.render({ surface: 'desktop', component: 'Pane', requestId: 'keeptabs', props: PANE_PROPS })
-  const runs = ui.runs.length
-  await $.ui.press(press('tab-flow', 'desktop'))
-  // one helper run for the drawing, the session pinned, no page push (none is open)
-  expect(ui.runs.slice(runs).map(a => [a[1]!.split('/').pop(), ...a.slice(2)])).toEqual([['sankey.py', '--session', SID, '--flow-svg']])
-  const desktop = await $.ui.render({ surface: 'desktop', component: 'Pane', requestId: 'keeptabs', props: PANE_PROPS })
-  expect(sources(desktop, 'Svg')).toEqual([FLOW])
-  expect(elements(desktop, 'Button').map(b => [b.key, b.variant])).toEqual([
-    ['tab-live', 'secondary'], ['tab-flow', 'primary'], ['tab-options', 'secondary'], ['open-browser', undefined],
+  // the live view and the drawing, the session pinned, no page push (none is open)
+  expect(ui.runs.map(a => [a[1]!.split('/').pop(), ...a.slice(2)])).toEqual([
+    ['keeptabs.py', '--once', '--session', SID], ['sankey.py', '--session', SID, '--flow-svg'],
   ])
+  const desktop = await $.ui.render({ surface: 'desktop', component: 'Pane', requestId: 'keeptabs', props: PANE_PROPS })
+  expect(sources(desktop, 'Svg')).toEqual([FLOW, svgOf(liveLines(ONCE))])
+  expect(elements(desktop, 'Button').map(b => [b.key, b.variant])).toEqual([
+    ['tab-live', 'primary'], ['tab-options', 'secondary'], ['open-browser', undefined], ['open-flow', undefined],
+  ])
+  // the terminal has no Svg: the lines alone
   const terminal = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'keeptabs', props: PANE_PROPS })
   expect(sources(terminal, 'Svg')).toEqual([])
-  expect(texts(terminal).some(t => t.text.includes('open in browser'))).toBe(true)
-  // a ledger write redraws the tab that is up: the flow again, not the live view
-  const before = ui.runs.length
-  await $.telemetry.log(request({}))
-  await clock.settle()
-  expect(ui.runs.slice(before).map(a => a.slice(2))).toEqual([['--session', SID, '--flow-svg']])
-  // back to live: the live view is fetched again
-  await $.ui.press(press('tab-live', 'desktop'))
-  expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['--once', '--session', SID])
+  expect(texts(terminal).filter(t => t.props.wrap === 'end').length).toBe(5)
+  // the button under the drawing opens the status page
+  const runs = ui.runs.length
+  await $.ui.press(press('open-flow', 'desktop'))
+  expect(ui.runs.slice(runs).map(a => a[0] === 'open' ? 'open' : a[1]!.split('/').pop())).toEqual(['sankey.py', 'open'])
 })
 
 test('the open-in-browser button writes the page for this session, opens it, and keeps it live', async ($, on) => {
@@ -354,9 +353,16 @@ test('the open-in-browser button writes the page for this session, opens it, and
     ['python3', 'keeptabs.py', '--once', '--session', SID],
     ['python3', 'sankey.py', '--session', SID, '--push', `${DATA}/status/${SID}.js`],
   ])
-  // with the flow tab up, one run does both
-  await $.ui.press(press('tab-flow'))
-  expect(named(ui.runs[ui.runs.length - 1]!)).toEqual(['python3', 'sankey.py', '--session', SID, '--flow-svg', '--push', `${DATA}/status/${SID}.js`])
+  // with the flow drawn (a remote surface showed the pane), its run writes the data file too
+  await $.ui.render({ surface: 'desktop', component: 'Pane', requestId: 'keeptabs', props: PANE_PROPS })
+  await clock.settle()
+  const later = ui.runs.length
+  await $.telemetry.log(request({}))
+  await clock.settle()
+  expect(ui.runs.slice(later).map(named)).toEqual([
+    ['python3', 'keeptabs.py', '--once', '--session', SID],
+    ['python3', 'sankey.py', '--session', SID, '--flow-svg', '--push', `${DATA}/status/${SID}.js`],
+  ])
 })
 
 test('the options tab: auto-open through the config menu, the limits through the validator', async ($, on) => {
@@ -369,7 +375,8 @@ test('the options tab: auto-open through the config menu, the limits through the
   await $.ui.press(press('tab-options'))
   const tree = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'keeptabs', props: PANE_PROPS })
   const t = texts(tree)
-  expect(t.some(x => x.text === 'open the pane at session start:')).toBe(true)
+  expect(t.some(x => x.text === 'open at session start')).toBe(true)
+  expect(t.filter(x => x.props.bold).map(x => x.text)).toEqual(['pane', 'this session', 'today', 'per request', 'at the limit', 'jobs'])
   expect(elements(tree, 'Button').find(b => b.key === 'auto-open')?.label).toBe('on')
   // the fields hold budget.json's values, "off" for null, grouped tokens
   const inputs = elements(tree, 'Input')
@@ -397,6 +404,6 @@ test('the options tab: auto-open through the config menu, the limits through the
   // mobile has no Input: the values are shown, with where to edit them
   const mobile = await $.ui.render({ surface: 'mobile', component: 'Pane', requestId: 'keeptabs', props: PANE_PROPS })
   expect(elements(mobile, 'Input')).toEqual([])
-  expect(texts(mobile).some(x => x.text.includes('today, USD') && x.text.includes('40'))).toBe(true)
+  expect(texts(mobile).some(x => x.text === '40')).toBe(true)
   expect(texts(mobile).some(x => x.text.includes('/keeptabs-mod:budget'))).toBe(true)
 })
