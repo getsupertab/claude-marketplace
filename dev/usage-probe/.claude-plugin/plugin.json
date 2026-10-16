@@ -1,0 +1,1 @@
+{ "name": "usage-probe", "version": "0.1.0", "description": "Spike: logs every model request's usage the engine reports, to compare with keeptabs' OpenTelemetry ledger" }

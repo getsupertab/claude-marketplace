@@ -1,0 +1,7 @@
+{
+  "name": "keeptabs-mod",
+  "description": "keeptabs rewritten around a Claude Code hooks module: every API call in a ledger from the first prompt, no telemetry setup; budget guard and cost views (Supertab proof of concept, testing beside keeptabs).",
+  "author": {
+    "name": "Supertab"
+  }
+}
