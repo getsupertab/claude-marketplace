@@ -358,12 +358,13 @@ What turned out differently from the text above:
   proportional font and collapses an empty `Text` to nothing, so the renderer's columns
   fell apart and the blank lines between blocks vanished (seen 2026-10-16 in two
   sessions side by side; the viewport is still reported in cells of the code font). The
-  types offer no monospace `Text`, so on `desktop`, `vscode` and `mobile` the Live view
-  is one `Code` element of the plain text (ANSI stripped), drawn in the surface's code
-  font: the layout and the blank lines hold, bold, dim and the four colours are lost
-  there. The terminal keeps the spans, with a blank line drawn as one space so it keeps
-  its row. The colours come back on Desktop with a `Client` surface module of the
-  plugin's own (a later phase), or if a monospace `Text` arrives in the API.
+  types offer no monospace `Text`; `Code` is monospace but plain; a `Client` surface
+  module draws with the same elements. What the remote surfaces have is `Svg`, so on
+  `desktop`, `vscode` and `mobile` the Live view is one `Svg` (`svgOf`): one `<text>` per
+  line in a monospace face on a dark ground, a `<tspan>` per span with the palette fill,
+  dim as grey (or a faded colour), bold as the weight, lines cut at 100 columns, about
+  10 KB. The terminal look on every surface, Desktop's light mode included. The
+  terminal keeps the spans, with a blank line drawn as one space so it keeps its row.
 - The status line's numbers come from Python, `keeptabs.py --status`, one plain line
   from the same `report()` as the live view, not from `--json` and TypeScript: the
   snapshot JSON has no today's total or job budget. `report()` carries the job budget

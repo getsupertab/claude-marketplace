@@ -1,6 +1,6 @@
 import { test, expect, mock } from 'claude-code/testing'
 import type { On, RenderElement, RenderNode } from 'claude-code'
-import { liveLines, spansOf, stripAnsi } from './register'
+import { liveLines, spansOf, stripAnsi, svgOf } from './register'
 
 // The world beneath the plugin: `$.fs` reaches nothing under `claude plugin test`, and
 // nothing answers `telemetry.log`, `session.id`, the pane, the command or a process, so
@@ -53,12 +53,12 @@ const STATUS = 'session $2.0228 · today $7.9406 · job $17.98 left (a pizza ($2
 
 const PANE_PROPS = { title: 'keeptabs', isFocused: false, bodyColumns: 80, placement: 'dock' as const, scroll: { offset: 0, bodyRows: 40 }, view: {} }
 
-/** Every Code block's source in a tree. */
-function codes(node: RenderNode): string[] {
+/** The `source` of every element of one type (Svg, Code) in a tree. */
+function sources(node: RenderNode, type: string): string[] {
   if (typeof node === 'string') return []
   const el = node as RenderElement & { children?: RenderNode[]; props?: { source?: string } }
-  const below = (el.children ?? []).flatMap(codes)
-  return el.type === 'Code' ? [el.props?.source ?? '', ...below] : below
+  const below = (el.children ?? []).flatMap(c => sources(c, type))
+  return el.type === type ? [el.props?.source ?? '', ...below] : below
 }
 
 /** Every Text in a tree, each as its own string plus its style props. */
@@ -189,13 +189,23 @@ test('an interactive session opens the pane and draws the live view', async ($, 
   expect(drawn.filter(t => t.text === ' ').length).toBe(2)     // the space after 'keeptabs', and the blank line
   expect(drawn.some(t => t.text.includes('ctrl-c'))).toBe(false)
 
-  // a remote surface: the plain text as one Code block, in the surface's code font
+  // a remote surface: one Svg, monospace text with the spans as fills and weights
   for (const surface of ['desktop', 'vscode', 'mobile'] as const) {
     const remote = await $.ui.render({ surface, component: 'Pane', requestId: 'keeptabs', props: PANE_PROPS })
-    const code = codes(remote)
-    expect(code).toEqual([liveLines(ONCE).map(stripAnsi).join('\n')])
+    const svg = sources(remote, 'Svg')
+    expect(svg.length).toBe(1)
+    expect(svg[0]).toBe(svgOf(liveLines(ONCE)))
+    expect(svg[0]!.startsWith('<svg xmlns="http://www.w3.org/2000/svg" ')).toBe(true)
+    expect(svg[0]).toContain('<tspan font-weight="700">keeptabs</tspan>')
+    expect(svg[0]).toContain('<tspan fill="#8a8a8a">· live</tspan>')
+    expect(svg[0]).toContain('<tspan fill="#00cd00">██</tspan><tspan fill="#00cd00" opacity="0.6">····</tspan>')
+    expect((svg[0]!.match(/<text /g) ?? []).length).toBe(5)       // one <text> per line, the blank one too
+    expect(svg[0]).not.toContain('ctrl-c')
     expect(texts(remote).some(t => t.props.wrap === 'end')).toBe(false)
   }
+  // markup in the figures is escaped; a line past 100 columns is cut with an ellipsis
+  expect(svgOf(['a<b&c'])).toContain('<tspan>a&lt;b&amp;c</tspan>')
+  expect(svgOf(['x'.repeat(120)])).toContain('<tspan>' + 'x'.repeat(99) + '…</tspan>')
 
   // a ledger write redraws: one more helper run, one invalidate
   const runs = ui.runs.length, invalidates = ui.invalidates

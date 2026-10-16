@@ -194,6 +194,40 @@ export function liveLines(text: string): string[] {
   return lines
 }
 
+// The live view as an SVG for the remote surfaces (Desktop, VS Code, mobile), which draw
+// `Text` in a proportional font and have no monospace Text, but do draw `Svg`: one
+// <text> per line in a monospace face on a dark ground, a <tspan> per span with the
+// palette fill, dim as a grey fill (or faded colour), bold as the weight. The terminal
+// look on every surface, in Desktop's light mode too.
+const CELL_W = 7.3, LINE_H = 16, FONT_PX = 12, PAD = 8, MAX_COLS = 100
+const BG = '#1c1c1c', FG = '#d4d4d4', DIM_FG = '#8a8a8a'
+const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+
+export function svgOf(lines: string[]): string {
+  const rows = lines.map(line => {
+    const parts: string[] = []
+    let n = 0
+    for (const s of spansOf(line)) {
+      let text = s.text
+      if (n + text.length > MAX_COLS) text = text.slice(0, Math.max(0, MAX_COLS - n - 1)) + '…'
+      n += text.length
+      if (text === '') continue
+      const fill = s.color !== undefined ? ` fill="${s.color}"` : s.dim ? ` fill="${DIM_FG}"` : ''
+      const fade = s.dim && s.color !== undefined ? ' opacity="0.6"' : ''
+      parts.push(`<tspan${fill}${s.bold ? ' font-weight="700"' : ''}${fade}>${esc(text)}</tspan>`)
+      if (n >= MAX_COLS) break
+    }
+    return { parts, n }
+  })
+  const cols = Math.max(40, ...rows.map(r => r.n))
+  const w = Math.ceil(cols * CELL_W + 2 * PAD), h = rows.length * LINE_H + 2 * PAD
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" `
+    + `font-family="ui-monospace, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="${FONT_PX}" fill="${FG}">`
+    + `<rect width="100%" height="100%" fill="${BG}" rx="4"/>`
+    + rows.map((r, i) => `<text x="${PAD}" y="${PAD + (i + 1) * LINE_H - 4}" xml:space="preserve">${r.parts.join('')}</text>`).join('')
+    + '</svg>'
+}
+
 type Live = { lines: string[]; status: string; error?: string }
 
 let live: Live | undefined              // the last helper output; a reload starts empty
@@ -297,17 +331,27 @@ export const register: Register = on => {
     return r
   })
 
-  // The terminal draws each line as styled Text spans. A remote surface (Desktop, VS Code,
-  // mobile) draws Text in a proportional font and collapses an empty one, which breaks the
-  // renderer's columns; there the view is one Code block of the plain text, in the
-  // surface's code font, so the layout holds and blank lines stay, at the price of bold,
-  // dim and the four colours. (Seen on Desktop 2.1.295; the types offer no monospace Text.)
+  // The terminal draws each line as styled Text spans (a blank line as one space, so it
+  // keeps its row). A remote surface draws Text in a proportional font and collapses an
+  // empty one, which broke the renderer's columns (Desktop 2.1.295), and the types offer
+  // no monospace Text; there the view is one Svg, see svgOf.
   on('ui.render', { component: 'Pane', requestId: PANE }, ($, e) => {
-    const { Box, Text, Button, Code } = $.ui.resolve(e)
+    const { Box, Text, Button } = $.ui.resolve(e)
     const l = live
     // Placed after a status-only refresh (the terminal widened): fetch the lines once.
     if (l === undefined || (l.lines.length === 0 && l.error === undefined)) void refresh($)
     const lines = l?.lines ?? []
+    let body
+    if (e.surface === 'terminal') {
+      body = lines.map(line => (
+        <Text wrap="end">
+          {spansOf(line === '' ? ' ' : line).map(s => <Text bold={s.bold} dimColor={s.dim} color={s.color}>{s.text}</Text>)}
+        </Text>
+      ))
+    } else {
+      const { Svg } = $.ui.resolve(e)
+      body = lines.length > 0 && <Svg source={svgOf(lines)} alt={`keeptabs live view: ${lines.map(stripAnsi).join(' / ')}`} />
+    }
     return (
       <Box flexDirection="column">
         <Box>
@@ -316,13 +360,7 @@ export const register: Register = on => {
         </Box>
         {l === undefined && <Text dimColor>loading...</Text>}
         {l?.error !== undefined && <Text color="error">keeptabs: {l.error}</Text>}
-        {e.surface === 'terminal'
-          ? lines.map(line => (
-            <Text wrap="end">
-              {spansOf(line === '' ? ' ' : line).map(s => <Text bold={s.bold} dimColor={s.dim} color={s.color}>{s.text}</Text>)}
-            </Text>
-          ))
-          : lines.length > 0 && <Code source={lines.map(stripAnsi).join('\n')} />}
+        {body}
       </Box>
     )
   })
