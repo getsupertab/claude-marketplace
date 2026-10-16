@@ -49,7 +49,7 @@ const ONCE = [
   '  \x1b[2mctrl-c to quit\x1b[0m',
   '',
 ].join('\n')
-const STATUS = 'keeptabs · session $2.0228 · today $7.9406 · job $17.98 left (a pizza ($20.00))'
+const STATUS = 'session $2.0228 · today $7.9406 · job $17.98 left (a pizza ($20.00))'
 
 const PANE_PROPS = { title: 'keeptabs', isFocused: false, bodyColumns: 80, placement: 'dock' as const, scroll: { offset: 0, bodyRows: 40 }, view: {} }
 

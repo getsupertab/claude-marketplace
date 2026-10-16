@@ -894,7 +894,7 @@ def status_line(store, sid, prices, budget, led=None):
         left = float(job["usd"]) - job["spent"]
         parts.append((f"job ${left:,.2f} left" if left >= 0 else f"job ${-left:,.2f} OVER")
                       + (f" ({job['label']})" if job.get("label") else ""))
-    return "keeptabs · " + " · ".join(parts)
+    return " · ".join(parts)      # the engine draws the plugin name before the line
 
 
 def main():
