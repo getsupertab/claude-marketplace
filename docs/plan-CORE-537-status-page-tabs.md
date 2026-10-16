@@ -4,7 +4,7 @@ Ticket: [CORE-537](https://laterpay.atlassian.net/browse/CORE-537), "Add a UI co
 show usage in real time" (story, sprint Keeptabs, estimate S). First agreed between Jannes
 and the project manager on 2026-10-14 as a tabbed web page; rewritten 2026-10-15 around a
 Claude Code mod after the spike at the end of this document proved the mod route. Status:
-**draft for review; phase 0 done 2026-10-15**. The earlier plan is summarised in the last section.
+**draft for review; phase 0 done 2026-10-15, phase 1 done 2026-10-16**. The earlier plan is summarised in the last section.
 
 ## In one paragraph
 
@@ -325,12 +325,83 @@ the micro-dollar. What turned out differently from the text above:
 - `validate` lists the `telemetry.log` hook as a gating hook with `.catch`: its handler
   is `next(e)`, so a failing module still passes the record on.
 
-**Phase 1 (one to two days): the pane.** ANSI-to-`Text` conversion of `render()`; pane
-opened at `session.start` with auto-open on; status line fallback; `/keeptabs:status` as a
-registered command that opens the pane; redraw on ledger writes and the 30 s clock; the
-"open in browser" link to a snapshot written on demand. Verify in Desktop (two sessions
-side by side), in a wide and a narrow terminal, and under `claude -p` (no pane, ledger
-written). This is CORE-537's deliverable.
+**Phase 1, done 2026-10-16 (branch `feature/mod-pane`): the pane.** ANSI-to-`Text`
+conversion of `render()`; pane opened at `session.start` with auto-open on; status line
+fallback; `/keeptabs-mod:status` as a registered command that opens the pane; redraw on
+ledger writes and the 30 s clock; the "open in browser" button to a snapshot written on
+demand. Verified under `claude -p` (no pane, one ledger line), in a wide and a narrow
+terminal, and in Desktop with two sessions side by side. This is CORE-537's deliverable.
+What turned out differently from the text above:
+
+- Checked against the types **2.1.292** laid in `plugins/keeptabs-mod/.claude-plugin/types/`
+  (the Desktop binary, 2.1.295, does not run on the host). Everything the plan relies
+  on is there with the shapes in the API table: `$.ui.open`, `ui.render` for `Pane` with
+  `title`, `isFocused`, `bodyColumns`, `placement`, `$.command.register` and
+  `command.run`'s `{ text, context }`, `$.ui.status`, `$.ui.panes`, `Text`, `Box`,
+  `Button`, `Link`. Two things the table does not say: a `-p` run places every pane
+  (so the module gates the visuals on `session.start`'s `isInteractive` and `surface`
+  rather than on the engine), and a remote surface draws a `Link` whose `href` is not
+  `https:` as plain text, so the snapshot opens from a `Button` (hotkey `o`) that runs
+  `sankey.py` and then `open`, on every surface.
+- **`/keeptabs-mod:status` is not a registered command.** `$.command.register({ name })`
+  makes a flat `/<name>`: no plugin prefix, no colon allowed in the name, and the same
+  namespace as the built-ins, so `status` is shadowed by Claude Code's own `/status` and
+  never shows in the typeahead (tried; `keeptabs` as the name worked). The
+  `<plugin>:<name>` convention is the engine's for what a plugin ships as files (skills,
+  markdown commands, agents). So the command stays the `status` skill, and the module's
+  `command.run` hook matches `{ command: 'keeptabs-mod:status' }` and answers without
+  `next`: the pane opens, the status line prints, the figures go to Claude as `context`,
+  and the skill's prompt never runs. The skill's own text is the fallback where the module
+  did not load (it says Claude Code 2.1.287 or later is needed). `validate` lists the
+  matcher with the colon.
+- **Desktop does not draw `Text` in character cells.** Its pane draws `Text` in a
+  proportional font and collapses an empty `Text` to nothing, so the renderer's columns
+  fell apart and the blank lines between blocks vanished (seen 2026-10-16 in two
+  sessions side by side; the viewport is still reported in cells of the code font). The
+  types offer no monospace `Text`; `Code` is monospace but plain; a `Client` surface
+  module draws with the same elements. What the remote surfaces have is `Svg`, so on
+  `desktop`, `vscode` and `mobile` the Live view is one `Svg` (`svgOf`): one `<text>` per
+  line in a monospace face, a `<tspan>` per span, bold as the weight, dim and the four
+  colours as classes, lines cut at 100 columns, about 10 KB. It has no ground of its
+  own: the API carries no theme signal, so a `<style>` with `prefers-color-scheme`
+  picks a light or a dark palette and the surface hands its scheme to the image, which
+  is how the pane follows the app's theme (the plan's "hex values so it looks like a
+  terminal in light mode too" was dropped for this: Jannes wanted the app's theme). The
+  terminal keeps the spans, with a blank line drawn as one space so it keeps its row.
+- The status line's numbers come from Python, `keeptabs.py --status`, one plain line
+  from the same `report()` as the live view, not from `--json` and TypeScript: the
+  snapshot JSON has no today's total or job budget. `report()` carries the job budget
+  as numbers now (`R["job"]`); no number changed.
+- One helper process per redraw, not two: the module runs `--once` while the pane is
+  placed (and clears the status line) and `--status` while it is not. The render hook
+  draws from the last helper output held in the module's own variables and
+  `$.ui.invalidate` redraws it; a render that finds no lines (the pane placed after a
+  status-only refresh, the terminal widened) asks for one refresh. Redraws in flight are
+  coalesced, one more after the current. The module's variables start over on a hot
+  reload, so a reload shows `loading...` until `session.start`'s refresh lands.
+- Auto-open is a constant in the module, not the manifest's `userConfig` nor `$.store`:
+  the Options view that would flip it is phase 3.
+- `bodyColumns` is not passed: `keeptabs.py` has no `--columns` yet, and the narrow layout
+  stays "later".
+- The ledger line is as phase 0 left it (no `agent_id`, `turn_id`, `tools` from
+  `turn.step`): the ledger code and its tests were kept as they were, by decision.
+- Claude's own road to the numbers is a second skill, `skills/spend`, model-invocable
+  (its description answers "what have I spent"); `status` is user-invoked only. The
+  command hands Claude the same figures as `context` when the person runs it.
+- The snapshot is `status/<session-id>.html` in the data folder, written on each press
+  of the button; the refresh meta tag and the 30-minute regeneration rule are phase 4.
+  `sankey.py`'s default output (`state/status.html`, the spend skill's) is unchanged.
+- Tests: the harness has no pane, command, process or status line beneath the plugin
+  either, so the test stands in for `ui.open`, `ui.panes`, `ui.status`, `ui.invalidate`,
+  `ui.toast` and `process.run` with `on(...)` hooks, settles the
+  module's unawaited redraws with `mock.clock`'s `settle()`, draws the pane through
+  `$.ui.render` on `terminal` and `desktop` (a Text with no props comes back without a
+  `props` key), and presses the button through `$.ui.press`. A test file may import the
+  module's pure functions. `tsc` runs as `npx -y -p typescript tsc -p plugins/keeptabs-mod`
+  against the laid types; there is no global `tsc`.
+- A terminal of a known width for the behavioural checks came from `tmux` (installed for
+  it); the Desktop check needed `CLAUDE_CODE_PLUGIN_DIRS` in `~/.claude/settings.json`
+  and a restart, with the installed plugin disabled first so the module loads once.
 
 **Phase 2 (one to two days): the guard in the module.** `prompt.submit` and `tool.call`
 replace `guard.sh`/`guard.py`; job budgets and request history in `state/jobs.json`;

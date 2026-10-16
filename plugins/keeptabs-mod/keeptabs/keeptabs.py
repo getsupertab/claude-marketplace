@@ -11,6 +11,7 @@ per-tool attribution. No dependencies.
   keeptabs.py --session ID    pin to one session
   keeptabs.py --once          print one snapshot and exit
   keeptabs.py --json          machine-readable snapshot (for hooks)
+  keeptabs.py --status        one plain line for a status bar (for the hooks module)
   keeptabs.py --all           live view across every project
 """
 import argparse, bisect, glob, json, os, re, sys, time
@@ -666,7 +667,8 @@ def report(store, sid, prices, budget, show_all, led=None):
     tb = store.sessions.get(sid)          # transcripts: only source of tool detail
     b, src = source(store, led, sid)
     R = {"sid": sid, "now": datetime.now(), "prices_verified": bool(prices.get("_verified")), "session": None,
-         "bucket": b, "transcript": tb}   # the buckets themselves, for the Sankey
+         "bucket": b, "transcript": tb,   # the buckets themselves, for the Sankey
+         "job": None}                      # the job budget as numbers, for status_line()
     if not b:
         return R
     R["session"] = {"title": store.title(sid), "models": sorted(b.models), "since": b.first.astimezone() if b.first else None,
@@ -714,6 +716,8 @@ def report(store, sid, prices, budget, show_all, led=None):
             gs = {}
         job = gs.get("job")
         if job:
+            R["job"] = {"spent": max(0.0, b.cost - float(job["base_cost"])), "usd": job.get("usd"),
+                        "label": job.get("label", "")}
             jl = budget_row("job", max(0.0, b.cost - float(job["base_cost"])),
                             max(0, b.wtok - int(job["base_tokens"])), job.get("usd"), job.get("tokens"))
             if jl:
@@ -875,11 +879,31 @@ def snapshot(store, sid, prices, led=None):
     }
 
 
+def status_line(store, sid, prices, budget, led=None):
+    """One plain line for Claude Code's status bar while the pane is not placed (the hooks
+    module runs `--status`): this session's cost, today's over every session, and what is
+    left of the job budget. The same report() as the live view, so the figures agree."""
+    R = report(store, sid, prices, budget, True, led)
+    if R.get("total"):
+        sess, today = R["total"]["cost"], R["totals"]["today"]
+    else:
+        sess, today = 0.0, source(store, led, sid)[1].day_total()[0]
+    parts = [f"session {money(sess)}", f"today {money(today)}"]
+    job = R.get("job")
+    if job and job.get("usd"):
+        left = float(job["usd"]) - job["spent"]
+        parts.append((f"job ${left:,.2f} left" if left >= 0 else f"job ${-left:,.2f} OVER")
+                      + (f" ({job['label']})" if job.get("label") else ""))
+    return " · ".join(parts)      # the engine draws the plugin name before the line
+
+
 def main():
     ap = argparse.ArgumentParser(description="Live token and cost monitor for Claude Code.")
     ap.add_argument("--session", help="session id to pin to (default: most recently active)")
     ap.add_argument("--once", action="store_true", help="print one snapshot and exit")
     ap.add_argument("--json", action="store_true", help="machine-readable snapshot, implies --once")
+    ap.add_argument("--status", action="store_true",
+                    help="one plain line (session, today, job budget left) for a status bar, implies --once")
     ap.add_argument("--all", action="store_true", help="include cross-project totals")
     ap.add_argument("--interval", type=float, default=2.0, help="refresh seconds (default 2)")
     a = ap.parse_args()
@@ -898,9 +922,11 @@ def main():
     led.scan()
     sid = a.session or store.newest_session()
 
-    if a.json or a.once:
+    if a.json or a.status or a.once:
         if a.json:
             print(json.dumps(snapshot(store, sid, prices, led), indent=2))
+        elif a.status:
+            print(status_line(store, sid, prices, budget, led))
         else:
             print(render(store, sid, prices, budget, True, led))
         return
