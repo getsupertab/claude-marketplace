@@ -63,12 +63,14 @@ python3 ~/.claude/plugins/cache/supertab/keeptabs-mod/*/keeptabs/keeptabs.py
 is the live view (`--once` for one snapshot, `--json` for the raw numbers), and
 `sankey.py` next to it writes the status page and prints its path.
 
-The pane has three tabs, each a button (hotkeys `l`, `f`, `p`): **live**, the terminal
-view; **flow**, the Sankey in miniature (Claude Desktop and VS Code; the terminal has no
-drawings), every column and the costliest tools, scaled to the pane's width; **options**,
-the auto-open switch and the budget limits as fields, saved through the plugin's
-validator (`keeptabs/budget.py`), a refused value shown under its field. Auto-open is also
-a row in `/config` (`keeptabs-mod.autoOpen`). "open in browser" (`o`) writes the status
+The pane opens beside the chat when a session starts (in a terminal, from 144 columns;
+narrower, the status line carries the numbers and `/keeptabs-mod:status` opens it). It
+has two tabs, each a button (hotkeys `l`, `p`): **live**, the Sankey in miniature (Claude
+Desktop and VS Code; the terminal has no drawings) above the terminal view, with "open
+the full flow in the browser" under the drawing; **options**, in sections: the auto-open
+switch first, then the budget limits as fields, saved through the plugin's validator
+(`keeptabs/budget.py`), a refused value shown under its field. Auto-open is on unless you
+switch it off there or in `/config` (`keeptabs-mod.autoOpen`). "open in browser" (`o`) writes the status
 page and opens it; for 30 minutes after, the page stays live without a reload: it loads
 a data file beside itself every few seconds and swaps only what changed, so hovering the
 Sankey keeps working. The dot in its header says `live`, `stale` or `snapshot`.
