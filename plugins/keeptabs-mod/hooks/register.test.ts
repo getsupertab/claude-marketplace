@@ -64,7 +64,6 @@ test('an api_request record becomes one priced ledger line per request', async (
     cost_usd: 0.08387, cost_usd_cc: tokens + 0.01, fees_usd: 0.01, duration_ms: 2530,
     query_source: 'main_loop', request_id: 'req_1', prices_verified: true,
   })
-  expect(fs.get(`${path}.tmp`)).toBe(fs.get(path))
 
   // a second request appends; an unknown model is priced at the default rates, and a
   // difference under half a tenth of a cent is not a fee
@@ -76,6 +75,14 @@ test('an api_request record becomes one priced ledger line per request', async (
   expect(two[1].cost_usd).toBe(Math.round((12 * 4 + 480 * 20 + 71000 * 0.2 + 2100 * 8) / 1e6 * 1e6) / 1e6)
   expect(two[1].fees_usd).toBe(0)
   expect(two[1].cost_usd_cc).toBe(0)
+
+  // a crash in the middle of the in-place write leaves a cut last line: the next append
+  // drops that tail and keeps the rest; no `.tmp` twin is written beside the file
+  fs.set(path, fs.get(path)!.slice(0, -20))
+  await $.telemetry.log(request({ request_id: 'req_3' }))
+  const three = fs.get(path)!.trimEnd().split('\n').map(l => JSON.parse(l))
+  expect(three.map(l => l.request_id)).toEqual(['req_1', 'req_3'])
+  expect([...fs.keys()].some(k => k.endsWith('.tmp'))).toBe(false)
 })
 
 test('records that are not api_request, and a failure in the module, leave the record alone', async ($, on) => {
