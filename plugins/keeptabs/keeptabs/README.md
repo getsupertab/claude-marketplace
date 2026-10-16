@@ -94,18 +94,25 @@ Correctness rules, each learned the hard way:
 
 ## Budgets
 
-All in `budget.json`, in USD, tokens, or both. Whichever is closest to its limit
-governs. `null` turns one off.
+All in `budget.json`, all in USD: one unit, so a figure in a warning can be compared
+with the limit it is about without converting anything. `null` turns one off.
 
-| Scope | Keys | Resets |
+| Scope | Key | Resets |
 |---|---|---|
-| Session | `session_limit_usd`, `session_limit_tokens` | new session |
-| Today | `daily_limit_usd`, `daily_limit_tokens` | midnight, all sessions and projects |
-| Request | `turn_limit_usd`, `turn_limit_tokens` | every prompt |
+| Session | `session_limit_usd` | new session |
+| Today | `daily_limit_usd` | midnight, all sessions and projects |
+| Request | `turn_limit_usd` | every prompt |
 | Job | set from the prompt (below) | when you set a new one |
 
 `warn_at_percent` (default 70) starts warnings, once per 10% band. `hard_stop: true`
 blocks at 100%; `false` only warns. Job budgets have their own `job.hard_stop`.
+
+Budgets used to be settable in tokens too, and a token ceiling usually bit first. The
+first session start after the update drops the dead `*_limit_tokens` keys from your
+`budget.json` and says so. A `turn_limit_usd` still at the old `2` moves to `0.6`,
+roughly where the token ceiling stopped a request; a limit you chose yourself is left
+alone. Token counts still appear in `context_warn_tokens`, `cold_resume` and
+`new_session`, which measure context size, not spend.
 
 ### Job budgets
 
@@ -113,7 +120,6 @@ Start a prompt with a budget and a colon:
 
     $2: find me a comparable plan
     beer: tidy up this module
-    200k: summarise these docs
     nobudget: carry on without one
 
 - Counted from the moment it is set, across prompts, until you set a new one.
