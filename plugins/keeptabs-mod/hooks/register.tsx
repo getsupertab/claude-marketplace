@@ -297,11 +297,17 @@ export const register: Register = on => {
     return r
   })
 
+  // The terminal draws each line as styled Text spans. A remote surface (Desktop, VS Code,
+  // mobile) draws Text in a proportional font and collapses an empty one, which breaks the
+  // renderer's columns; there the view is one Code block of the plain text, in the
+  // surface's code font, so the layout holds and blank lines stay, at the price of bold,
+  // dim and the four colours. (Seen on Desktop 2.1.295; the types offer no monospace Text.)
   on('ui.render', { component: 'Pane', requestId: PANE }, ($, e) => {
-    const { Box, Text, Button } = $.ui.resolve(e)
+    const { Box, Text, Button, Code } = $.ui.resolve(e)
     const l = live
     // Placed after a status-only refresh (the terminal widened): fetch the lines once.
     if (l === undefined || (l.lines.length === 0 && l.error === undefined)) void refresh($)
+    const lines = l?.lines ?? []
     return (
       <Box flexDirection="column">
         <Box>
@@ -310,11 +316,13 @@ export const register: Register = on => {
         </Box>
         {l === undefined && <Text dimColor>loading...</Text>}
         {l?.error !== undefined && <Text color="error">keeptabs: {l.error}</Text>}
-        {(l?.lines ?? []).map(line => (
-          <Text wrap="end">
-            {spansOf(line).map(s => <Text bold={s.bold} dimColor={s.dim} color={s.color}>{s.text}</Text>)}
-          </Text>
-        ))}
+        {e.surface === 'terminal'
+          ? lines.map(line => (
+            <Text wrap="end">
+              {spansOf(line === '' ? ' ' : line).map(s => <Text bold={s.bold} dimColor={s.dim} color={s.color}>{s.text}</Text>)}
+            </Text>
+          ))
+          : lines.length > 0 && <Code source={lines.map(stripAnsi).join('\n')} />}
       </Box>
     )
   })

@@ -53,6 +53,14 @@ const STATUS = 'session $2.0228 · today $7.9406 · job $17.98 left (a pizza ($2
 
 const PANE_PROPS = { title: 'keeptabs', isFocused: false, bodyColumns: 80, placement: 'dock' as const, scroll: { offset: 0, bodyRows: 40 }, view: {} }
 
+/** Every Code block's source in a tree. */
+function codes(node: RenderNode): string[] {
+  if (typeof node === 'string') return []
+  const el = node as RenderElement & { children?: RenderNode[]; props?: { source?: string } }
+  const below = (el.children ?? []).flatMap(codes)
+  return el.type === 'Code' ? [el.props?.source ?? '', ...below] : below
+}
+
 /** Every Text in a tree, each as its own string plus its style props. */
 function texts(node: RenderNode): { text: string; props: Record<string, unknown> }[] {
   if (typeof node === 'string') return []
@@ -170,15 +178,23 @@ test('an interactive session opens the pane and draws the live view', async ($, 
   expect(ui.runs.map(a => a.slice(2))).toEqual([['--once', '--session', SID]])
   expect(ui.status).toEqual([undefined])
 
-  for (const surface of ['terminal', 'desktop'] as const) {
-    const tree = await $.ui.render({ surface, component: 'Pane', requestId: 'keeptabs', props: PANE_PROPS })
-    const drawn = texts(tree)
-    const lines = drawn.filter(t => t.props.wrap === 'end')
-    expect(lines.length).toBe(5)                               // one Text per line, wrap end
-    expect(drawn.find(t => t.text === 'keeptabs')?.props).toEqual({ bold: true })
-    expect(drawn.find(t => t.text === '· live')?.props).toEqual({ dimColor: true })
-    expect(drawn.find(t => t.text === '██')?.props).toEqual({ color: '#00cd00' })
-    expect(drawn.some(t => t.text.includes('ctrl-c'))).toBe(false)
+  // the terminal: one Text per line (wrap end), the blank line a space so it keeps its row
+  const tree = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'keeptabs', props: PANE_PROPS })
+  const drawn = texts(tree)
+  const lines = drawn.filter(t => t.props.wrap === 'end')
+  expect(lines.length).toBe(5)
+  expect(drawn.find(t => t.text === 'keeptabs')?.props).toEqual({ bold: true })
+  expect(drawn.find(t => t.text === '· live')?.props).toEqual({ dimColor: true })
+  expect(drawn.find(t => t.text === '██')?.props).toEqual({ color: '#00cd00' })
+  expect(drawn.filter(t => t.text === ' ').length).toBe(2)     // the space after 'keeptabs', and the blank line
+  expect(drawn.some(t => t.text.includes('ctrl-c'))).toBe(false)
+
+  // a remote surface: the plain text as one Code block, in the surface's code font
+  for (const surface of ['desktop', 'vscode', 'mobile'] as const) {
+    const remote = await $.ui.render({ surface, component: 'Pane', requestId: 'keeptabs', props: PANE_PROPS })
+    const code = codes(remote)
+    expect(code).toEqual([liveLines(ONCE).map(stripAnsi).join('\n')])
+    expect(texts(remote).some(t => t.props.wrap === 'end')).toBe(false)
   }
 
   // a ledger write redraws: one more helper run, one invalidate

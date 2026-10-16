@@ -354,6 +354,16 @@ What turned out differently from the text above:
   and the skill's prompt never runs. The skill's own text is the fallback where the module
   did not load (it says Claude Code 2.1.287 or later is needed). `validate` lists the
   matcher with the colon.
+- **Desktop does not draw `Text` in character cells.** Its pane draws `Text` in a
+  proportional font and collapses an empty `Text` to nothing, so the renderer's columns
+  fell apart and the blank lines between blocks vanished (seen 2026-10-16 in two
+  sessions side by side; the viewport is still reported in cells of the code font). The
+  types offer no monospace `Text`, so on `desktop`, `vscode` and `mobile` the Live view
+  is one `Code` element of the plain text (ANSI stripped), drawn in the surface's code
+  font: the layout and the blank lines hold, bold, dim and the four colours are lost
+  there. The terminal keeps the spans, with a blank line drawn as one space so it keeps
+  its row. The colours come back on Desktop with a `Client` surface module of the
+  plugin's own (a later phase), or if a monospace `Text` arrives in the API.
 - The status line's numbers come from Python, `keeptabs.py --status`, one plain line
   from the same `report()` as the live view, not from `--json` and TypeScript: the
   snapshot JSON has no today's total or job budget. `report()` carries the job budget
