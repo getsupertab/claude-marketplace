@@ -63,6 +63,16 @@ python3 ~/.claude/plugins/cache/supertab/keeptabs-mod/*/keeptabs/keeptabs.py
 is the live view (`--once` for one snapshot, `--json` for the raw numbers), and
 `sankey.py` next to it writes the status page and prints its path.
 
+The pane has three tabs, each a button (hotkeys `l`, `f`, `p`): **live**, the terminal
+view; **flow**, the Sankey in miniature (Claude Desktop and VS Code; the terminal has no
+drawings), every column and the costliest tools, scaled to the pane's width; **options**,
+the auto-open switch and the budget limits as fields, saved through the plugin's
+validator (`keeptabs/budget.py`), a refused value shown under its field. Auto-open is also
+a row in `/config` (`keeptabs-mod.autoOpen`). "open in browser" (`o`) writes the status
+page and opens it; for 30 minutes after, the page stays live without a reload: it loads
+a data file beside itself every few seconds and swaps only what changed, so hovering the
+Sankey keeps working. The dot in its header says `live`, `stale` or `snapshot`.
+
 ## Updates
 
 Update as described in the [marketplace README](../../README.md) (from the Claude
@@ -84,13 +94,13 @@ data (ledger, guard state and your `budget.json`) stays in
 
 | Part | Where it runs | What it does |
 |---|---|---|
-| `hooks/register.tsx`, the hooks module | Inside Claude Code, loaded from `hooks/hooks.json` (`modules`) | Sees every API request in-process (`telemetry.log`), prices it from `keeptabs/prices.json` and appends one line to the session's ledger file. At session start it writes the loaded marker, on first run copies `budget.json` into the data folder and opens the pane; answers `/keeptabs-mod:status` by opening it. Draws the pane (the live view, run as `keeptabs.py --once`) or sets the status line (`keeptabs.py --status`); the "open in browser" button runs `sankey.py` and opens the file |
+| `hooks/register.tsx`, the hooks module | Inside Claude Code, loaded from `hooks/hooks.json` (`modules`) | Sees every API request in-process (`telemetry.log`), prices it from `keeptabs/prices.json` and appends one line to the session's ledger file. At session start it writes the loaded marker, on first run copies `budget.json` into the data folder and opens the pane; answers `/keeptabs-mod:status` by opening it. Draws the pane's tabs: the live view (`keeptabs.py --once`), the flow (`sankey.py --flow-svg`), the options (budget.json, written through `budget.py set`, and the `autoOpen` config row); or sets the status line (`keeptabs.py --status`). "open in browser" runs `sankey.py --out`, opens the file and, for 30 minutes, has every redraw write the page's data file (`sankey.py --push`) |
 | `scripts/guard.sh` → `keeptabs/guard.py` | Shell hooks on `UserPromptSubmit` and `PreToolUse` | The budget guard: reads the ledger and the session's transcript, warns or stops, gives Claude the budget hints |
 | `scripts/loaded-check.sh` | Shell hook on `UserPromptSubmit` | The version gate: says once, on the first prompt, when the module did not load |
-| `keeptabs/keeptabs.py`, `keeptabs/sankey.py` | Python, run by the hooks module, the spend skill or by hand | The accounting, the terminal live view (`--once`) and the status line (`--status`); the status page as a snapshot file |
+| `keeptabs/keeptabs.py`, `keeptabs/sankey.py` | Python, run by the hooks module, the spend skill or by hand | The accounting, the terminal live view (`--once`) and the status line (`--status`); the status page (`--out`), its live data file (`--push`) and the pane's Sankey (`--flow-svg`); `budget.py` validates and writes one limit |
 | `skills/status` | `/keeptabs-mod:status`, answered by the hooks module | Opens the pane and hands Claude the figures; the skill's own text runs only where the module did not load |
 | `skills/spend`, `skills/budget` | Claude, when asked what was spent; `/keeptabs-mod:budget` | Answer in words from `keeptabs.py --once`; show or change the limits |
-| Data: `budget.json`, `ledger/<day>/<session>.jsonl`, `state/`, `status/<session>.html` | `~/.claude/plugins/data/keeptabs-mod-supertab/`, one fixed path, separate from keeptabs' folder | Kept across updates; the status page is rewritten on each "open in browser" |
+| Data: `budget.json`, `ledger/<day>/<session>.jsonl`, `state/`, `status/<session>.html` | `~/.claude/plugins/data/keeptabs-mod-supertab/`, one fixed path, separate from keeptabs' folder | Kept across updates; the status page and its data file `status/<session>.js` are rewritten on each "open in browser", the data file on every redraw for 30 minutes after |
 
 Code runs from the plugin folder, `${CLAUDE_PLUGIN_ROOT}`
 (`~/.claude/plugins/cache/supertab/keeptabs-mod/<version>/`, the version being the git

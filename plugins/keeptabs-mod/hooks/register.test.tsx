@@ -1,13 +1,16 @@
 import { test, expect, mock } from 'claude-code/testing'
 import type { On, RenderElement, RenderNode } from 'claude-code'
-import { liveLines, spansOf, stripAnsi, svgOf } from './register'
+import { at, liveLines, shown, spansOf, stripAnsi, svgOf } from './register'
 
 // The world beneath the plugin: `$.fs` reaches nothing under `claude plugin test`, and
-// nothing answers `telemetry.log`, `session.id`, the pane, the command or a process, so
-// the test stands in for them. Files are matched by their tail, since the plugin's root
-// is the engine's to know. `ui` records what the plugin asked the surface for, and
-// `placed` says what `$.ui.panes()` reports for the pane.
-type Ui = { opens: number; commands: string[]; status: (string | undefined)[]; invalidates: number; runs: string[][]; toasts: string[] }
+// nothing answers `telemetry.log`, `session.id`, the pane, the command, the store, the
+// config menu or a process, so the test stands in for them. Files are matched by their
+// tail, since the plugin's root is the engine's to know. `ui` records what the plugin
+// asked the surface for, and `placed` says what `$.ui.panes()` reports for the pane.
+type Ui = {
+  opens: number; commands: string[]; status: (string | undefined)[]; invalidates: number
+  runs: string[][]; toasts: string[]; config: [string, unknown][]; store: Map<string, unknown>
+}
 function world(on: On, initial: Record<string, string>, placed = { is: true }) {
   const fs = new Map(Object.entries(initial))
   const find = (path: string) => [...fs.keys()].find(k => k === path || path.endsWith(k))
@@ -17,22 +20,28 @@ function world(on: On, initial: Record<string, string>, placed = { is: true }) {
   on('session.id', () => ({ value: SID }))
   on('session.start', ($, e) => ({ cwd: e.cwd }))
   on('telemetry.log', { to: 'collector' }, () => ({ value: undefined }))
-  const ui: Ui = { opens: 0, commands: [], status: [], invalidates: 0, runs: [], toasts: [] }
+  const ui: Ui = { opens: 0, commands: [], status: [], invalidates: 0, runs: [], toasts: [], config: [], store: new Map() }
   on('ui.open', () => { ui.opens++; return { value: placed.is ? { isPlaced: true } : { isPlaced: false, reason: 'narrower than 144 columns' } } })
   on('ui.panes', () => ({ value: [{ id: 'keeptabs', title: 'keeptabs', isShown: placed.is, isFocused: false, isPlaced: placed.is }] }))
   on('ui.status', ($, e) => { ui.status.push(e.text); return { value: undefined } })
   on('ui.invalidate', () => { ui.invalidates++; return { value: undefined } })
   on('ui.toast', ($, e) => { ui.toasts.push(e.text); return { value: undefined } })
   on('command.register', ($, e) => { ui.commands.push(e.name); return { value: { command: e.name } } })
+  on('store.get', ($, e) => ({ value: ui.store.get(e.key) }))
+  on('store.set', ($, e) => { ui.store.set(e.key, e.value); return { value: undefined } })
+  on('config.set', ($, e) => { ui.config.push([e.key, e.value]); return { value: e.value } })
   on('process.run', ($, e) => {
     const argv = [...e.argv]
     ui.runs.push(argv)
     const script = (argv[1] ?? '').split('/').pop()
-    const stdout = script === 'keeptabs.py' && argv.includes('--status') ? STATUS + '\n'
-      : script === 'keeptabs.py' && argv.includes('--once') ? ONCE
-      : script === 'sankey.py' ? argv[argv.indexOf('--out') + 1] + '\n'
-      : ''
-    return { value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    let exitCode = 0, stdout = '', stderr = ''
+    if (script === 'keeptabs.py') stdout = argv.includes('--status') ? STATUS + '\n' : argv.includes('--once') ? ONCE : ''
+    else if (script === 'sankey.py') stdout = argv.includes('--flow-svg') ? FLOW : argv.includes('--out') ? argv[argv.indexOf('--out') + 1] + '\n' : ''
+    else if (script === 'budget.py') {
+      if (argv[argv.length - 1] === 'bad') { exitCode = 1; stderr = `${argv[3]}: a number is needed, not 'bad'\n` }
+      else stdout = JSON.stringify(argv[argv.length - 1]) + '\n'
+    }
+    return { value: { exitCode, stdout, stderr, isStdoutTruncated: false, isStderrTruncated: false } }
   })
   return { fs, ui }
 }
@@ -50,6 +59,12 @@ const ONCE = [
   '',
 ].join('\n')
 const STATUS = 'session $2.0228 · today $7.9406 · job $17.98 left (a pizza ($20.00))'
+const FLOW = '<svg viewBox="0 0 760 380" width="760" height="380" xmlns="http://www.w3.org/2000/svg"><style>text{fill:#d4d4d4}</style><rect/></svg>'
+const BUDGET = JSON.stringify({
+  _comment: 'kept', session_limit_usd: 25, session_limit_tokens: 90000000, turn_limit_usd: 2, turn_limit_tokens: null,
+  daily_limit_usd: 40, daily_limit_tokens: 40000000, warn_at_percent: 70, hard_stop: false,
+  job: { ask: true, ask_over_usd: 1.0, hard_stop: true },
+}, null, 2)
 
 const PANE_PROPS = { title: 'keeptabs', isFocused: false, bodyColumns: 80, placement: 'dock' as const, scroll: { offset: 0, bodyRows: 40 }, view: {} }
 
@@ -59,6 +74,14 @@ function sources(node: RenderNode, type: string): string[] {
   const el = node as RenderElement & { children?: RenderNode[]; props?: { source?: string } }
   const below = (el.children ?? []).flatMap(c => sources(c, type))
   return el.type === type ? [el.props?.source ?? '', ...below] : below
+}
+
+/** Every element of one type in a tree, with its props. */
+function elements(node: RenderNode, type: string): Record<string, unknown>[] {
+  if (typeof node === 'string') return []
+  const el = node as RenderElement & { children?: RenderNode[]; props?: Record<string, unknown> }
+  const below = (el.children ?? []).flatMap(c => elements(c, type))
+  return el.type === type ? [(el.props ?? {}) as Record<string, unknown>, ...below] : below
 }
 
 /** Every Text in a tree, each as its own string plus its style props. */
@@ -78,6 +101,8 @@ const PRICES = {
 }
 const DATA = '/home/t/.claude/plugins/data/keeptabs-mod-supertab'
 const T0 = Date.UTC(2026, 9, 15, 14, 3, 11, 412)
+const FILES = { '/keeptabs/prices.json': JSON.stringify(PRICES), '/keeptabs/budget.json': BUDGET }
+const press = (key: string, surface?: 'terminal' | 'desktop') => ({ plugin: 'keeptabs-mod', key, requestId: 'keeptabs', ...(surface ? { surface } : {}) })
 
 function request(attributes: Record<string, string | number>) {
   return {
@@ -164,12 +189,19 @@ test('the ANSI codes of the live view become spans: bold, dim and the four colou
     'keeptabs · live        12:43:54', '', '  data: ledger (every API call)',
     '    total                  960,195     $2.0228   11 msgs', '    session   ██····     8%   $2.0228 of $25.00',
   ])
+  // the budget fields: dotted keys, "off" for a limit switched off, grouped tokens
+  const cfg = JSON.parse(BUDGET)
+  expect(at(cfg, 'job.ask_over_usd')).toBe(1)
+  expect(at(cfg, 'job.missing')).toBe(undefined)
+  expect(shown(at(cfg, 'turn_limit_tokens'))).toBe('off')
+  expect(shown(at(cfg, 'daily_limit_tokens'))).toBe('40,000,000')
+  expect(shown(at(cfg, 'turn_limit_usd'))).toBe('2')
 })
 
 test('an interactive session opens the pane and draws the live view', async ($, on) => {
   mock.env(on, { HOME: '/home/t' })
   const clock = mock.clock(on, { now: T0 })
-  const { ui } = world(on, { '/keeptabs/prices.json': JSON.stringify(PRICES), '/keeptabs/budget.json': '{}' })
+  const { ui } = world(on, FILES)
   await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
   await clock.settle()                                        // the redraw session.start left running
   expect(ui.opens).toBe(1)
@@ -188,6 +220,10 @@ test('an interactive session opens the pane and draws the live view', async ($, 
   expect(drawn.find(t => t.text === '██')?.props).toEqual({ color: '#00cd00' })
   expect(drawn.filter(t => t.text === ' ').length).toBe(2)     // the space after 'keeptabs', and the blank line
   expect(drawn.some(t => t.text.includes('ctrl-c'))).toBe(false)
+  // the tab row: live is the primary one, then flow, options and the browser button
+  expect(elements(tree, 'Button').map(b => [b.key, b.variant])).toEqual([
+    ['tab-live', 'primary'], ['tab-flow', 'secondary'], ['tab-options', 'secondary'], ['open-browser', undefined],
+  ])
 
   // a remote surface: one Svg, monospace text with the spans as fills and weights
   for (const surface of ['desktop', 'vscode', 'mobile'] as const) {
@@ -220,7 +256,7 @@ test('an interactive session opens the pane and draws the live view', async ($, 
 test('while the pane is not placed, the status line carries the numbers', async ($, on) => {
   mock.env(on, { HOME: '/home/t' })
   const clock = mock.clock(on, { now: T0 })
-  const { ui } = world(on, { '/keeptabs/prices.json': JSON.stringify(PRICES), '/keeptabs/budget.json': '{}' }, { is: false })
+  const { ui } = world(on, FILES, { is: false })
   await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
   await clock.settle()
   expect(ui.opens).toBe(1)
@@ -231,7 +267,7 @@ test('while the pane is not placed, the status line carries the numbers', async 
 test('under claude -p, or with no surface, nothing visual happens and the ledger is written', async ($, on) => {
   mock.env(on, { HOME: '/home/t' })
   const clock = mock.clock(on, { now: T0 })
-  const { fs, ui } = world(on, { '/keeptabs/prices.json': JSON.stringify(PRICES), '/keeptabs/budget.json': '{}' })
+  const { fs, ui } = world(on, FILES)
   await $.session.start({ cwd: '/w', surface: null, isInteractive: false })
   await $.telemetry.log(request({}))
   await clock.settle()
@@ -241,10 +277,20 @@ test('under claude -p, or with no surface, nothing visual happens and the ledger
   expect(fs.get(`${DATA}/ledger/2026-10-15/${SID}.jsonl`)!.trimEnd().split('\n').length).toBe(1)
 })
 
+test('with autoOpen off, an interactive session does not open the pane; the status line still runs', { options: { autoOpen: false } }, async ($, on) => {
+  mock.env(on, { HOME: '/home/t' })
+  const clock = mock.clock(on, { now: T0 })
+  const { ui } = world(on, FILES, { is: false })
+  await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  expect(ui.opens).toBe(0)
+  expect(ui.status).toEqual([STATUS])
+})
+
 test('/keeptabs-mod:status (the skill) is answered by the hook: the pane opens, the figures go to the person and to Claude', async ($, on) => {
   mock.env(on, { HOME: '/home/t' })
   mock.clock(on, { now: T0 })
-  const { ui } = world(on, { '/keeptabs/prices.json': JSON.stringify(PRICES), '/keeptabs/budget.json': '{}' })
+  const { ui } = world(on, FILES)
   await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
   const opens = ui.opens
   const r = await $.command.run({ command: 'keeptabs-mod:status', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 200 } })
@@ -253,18 +299,104 @@ test('/keeptabs-mod:status (the skill) is answered by the hook: the pane opens, 
   expect(r.context).toEqual([`keeptabs, this session's figures as of now:\n${liveLines(ONCE).map(stripAnsi).join('\n')}`])
 })
 
-test('the open-in-browser button writes the snapshot for this session and opens it', async ($, on) => {
+test('the flow tab draws the compact Sankey on a remote surface; the terminal points at the browser', async ($, on) => {
   mock.env(on, { HOME: '/home/t' })
-  mock.clock(on, { now: T0 })
-  const { ui } = world(on, { '/keeptabs/prices.json': JSON.stringify(PRICES), '/keeptabs/budget.json': '{}' })
-  await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
-  await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'keeptabs', props: PANE_PROPS })
-  await $.ui.press({ plugin: 'keeptabs-mod', key: 'open-browser', requestId: 'keeptabs' })
-  const snapshot = `${DATA}/status/${SID}.html`
-  const pressed = ui.runs.filter(a => a[0] === 'open' || a[1]?.endsWith('/sankey.py')).map(a => a[0] === 'python3' ? [a[0], 'sankey.py', ...a.slice(2)] : a)
-  expect(pressed).toEqual([
-    ['python3', 'sankey.py', '--session', SID, '--out', snapshot],
-    ['open', snapshot],
+  const clock = mock.clock(on, { now: T0 })
+  const { ui } = world(on, FILES)
+  await $.session.start({ cwd: '/w', surface: 'desktop', isInteractive: true })
+  await clock.settle()
+  await $.ui.render({ surface: 'desktop', component: 'Pane', requestId: 'keeptabs', props: PANE_PROPS })
+  const runs = ui.runs.length
+  await $.ui.press(press('tab-flow', 'desktop'))
+  // one helper run for the drawing, the session pinned, no page push (none is open)
+  expect(ui.runs.slice(runs).map(a => [a[1]!.split('/').pop(), ...a.slice(2)])).toEqual([['sankey.py', '--session', SID, '--flow-svg']])
+  const desktop = await $.ui.render({ surface: 'desktop', component: 'Pane', requestId: 'keeptabs', props: PANE_PROPS })
+  expect(sources(desktop, 'Svg')).toEqual([FLOW])
+  expect(elements(desktop, 'Button').map(b => [b.key, b.variant])).toEqual([
+    ['tab-live', 'secondary'], ['tab-flow', 'primary'], ['tab-options', 'secondary'], ['open-browser', undefined],
   ])
-  expect(ui.toasts).toEqual([`keeptabs: status page opened (${snapshot})`])
+  const terminal = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'keeptabs', props: PANE_PROPS })
+  expect(sources(terminal, 'Svg')).toEqual([])
+  expect(texts(terminal).some(t => t.text.includes('open in browser'))).toBe(true)
+  // a ledger write redraws the tab that is up: the flow again, not the live view
+  const before = ui.runs.length
+  await $.telemetry.log(request({}))
+  await clock.settle()
+  expect(ui.runs.slice(before).map(a => a.slice(2))).toEqual([['--session', SID, '--flow-svg']])
+  // back to live: the live view is fetched again
+  await $.ui.press(press('tab-live', 'desktop'))
+  expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['--once', '--session', SID])
+})
+
+test('the open-in-browser button writes the page for this session, opens it, and keeps it live', async ($, on) => {
+  mock.env(on, { HOME: '/home/t' })
+  const clock = mock.clock(on, { now: T0 })
+  const { ui } = world(on, FILES)
+  await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'keeptabs', props: PANE_PROPS })
+  const runs = ui.runs.length
+  await $.ui.press(press('open-browser'))
+  const page = `${DATA}/status/${SID}.html`
+  const named = (a: string[]) => a[0] === 'python3' ? ['python3', a[1]!.split('/').pop()!, ...a.slice(2)] : a
+  expect(ui.runs.slice(runs).map(named)).toEqual([
+    ['python3', 'sankey.py', '--session', SID, '--out', page],
+    ['open', page],
+  ])
+  expect(ui.toasts).toEqual([`keeptabs: status page opened (${page}); it stays live for 30 minutes`])
+  expect(ui.store.get(`pageOpenedAt:${SID}`)).toBe(T0)
+
+  // from now on a redraw writes the page's data file beside it too, in a second run
+  const before = ui.runs.length
+  await $.telemetry.log(request({}))
+  await clock.settle()
+  expect(ui.runs.slice(before).map(named)).toEqual([
+    ['python3', 'keeptabs.py', '--once', '--session', SID],
+    ['python3', 'sankey.py', '--session', SID, '--push', `${DATA}/status/${SID}.js`],
+  ])
+  // with the flow tab up, one run does both
+  await $.ui.press(press('tab-flow'))
+  expect(named(ui.runs[ui.runs.length - 1]!)).toEqual(['python3', 'sankey.py', '--session', SID, '--flow-svg', '--push', `${DATA}/status/${SID}.js`])
+})
+
+test('the options tab: auto-open through the config menu, the limits through the validator', async ($, on) => {
+  mock.env(on, { HOME: '/home/t' })
+  const clock = mock.clock(on, { now: T0 })
+  const { ui } = world(on, FILES)
+  await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'keeptabs', props: PANE_PROPS })
+  await $.ui.press(press('tab-options'))
+  const tree = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'keeptabs', props: PANE_PROPS })
+  const t = texts(tree)
+  expect(t.some(x => x.text === 'open the pane at session start:')).toBe(true)
+  expect(elements(tree, 'Button').find(b => b.key === 'auto-open')?.label).toBe('on')
+  // the fields hold budget.json's values, "off" for null, grouped tokens
+  const inputs = elements(tree, 'Input')
+  expect(inputs.map(i => i.key)).toEqual(['b-session_limit_usd', 'b-session_limit_tokens', 'b-daily_limit_usd', 'b-daily_limit_tokens',
+    'b-turn_limit_usd', 'b-turn_limit_tokens', 'b-warn_at_percent', 'b-job.ask_over_usd'])
+  expect(inputs.find(i => i.key === 'b-daily_limit_usd')?.value).toBe('40')
+  expect(inputs.find(i => i.key === 'b-turn_limit_tokens')?.value).toBe('off')
+  expect(inputs.find(i => i.key === 'b-daily_limit_tokens')?.value).toBe('40,000,000')
+  expect(elements(tree, 'Button').find(b => b.key === 'b-hard_stop')?.label).toBe('off')
+  expect(elements(tree, 'Button').find(b => b.key === 'b-job.hard_stop')?.label).toBe('on')
+
+  // the switch is the manifest's userConfig field, written as the menu would
+  await $.ui.press(press('auto-open'))
+  expect(ui.config).toEqual([['keeptabs-mod.autoOpen', false]])
+
+  // a limit goes through budget.py; a refused value is shown under its field
+  await $.ui.input({ plugin: 'keeptabs-mod', key: 'b-daily_limit_usd', text: '30' })
+  expect(ui.runs[ui.runs.length - 1]!.slice(1).map((s, i) => i === 0 ? s.split('/').pop() : s)).toEqual(['budget.py', 'set', 'daily_limit_usd', '30'])
+  await $.ui.input({ plugin: 'keeptabs-mod', key: 'b-turn_limit_usd', text: 'bad' })
+  const after = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'keeptabs', props: PANE_PROPS })
+  expect(texts(after).find(x => x.props.color === 'error')?.text.trim()).toBe("turn_limit_usd: a number is needed, not 'bad'")
+  await $.ui.press(press('b-hard_stop'))
+  expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'hard_stop', 'on'])
+
+  // mobile has no Input: the values are shown, with where to edit them
+  const mobile = await $.ui.render({ surface: 'mobile', component: 'Pane', requestId: 'keeptabs', props: PANE_PROPS })
+  expect(elements(mobile, 'Input')).toEqual([])
+  expect(texts(mobile).some(x => x.text.includes('today, USD') && x.text.includes('40'))).toBe(true)
+  expect(texts(mobile).some(x => x.text.includes('/keeptabs-mod:budget'))).toBe(true)
 })

@@ -1,8 +1,7 @@
 ---
 name: budget
-description: Show or change keeptabs' spending limits (session, daily, per request, job budgets, warnings, hard stop). User-invoked; pass what to change, e.g. "daily 20" or "hard stop on".
+description: Show or change keeptabs' spending limits (session, daily, per request, job budgets, warnings, hard stop). Use when the user asks, in the same prompt, to see or change a keeptabs limit, e.g. "raise my daily limit to 30" or "hard stop on". Never change a limit unasked.
 argument-hint: "[what to change]"
-disable-model-invocation: true
 ---
 
 # keeptabs budget
@@ -29,9 +28,17 @@ change with `/keeptabs-mod:budget <what to change>`.
 
 1. Work out exactly which keys change and to what, and show the change (old → new)
    before writing. If the request is ambiguous, ask.
-2. Change only those keys and keep the file valid JSON, including its `_comment` keys.
-3. Show the new values. They apply from the next prompt; no restart is needed.
+2. Change each key through the validator, one call per key, never by editing the file:
+
+       python3 "${CLAUDE_PLUGIN_ROOT}/keeptabs/budget.py" set KEY VALUE
+
+   KEY is dotted for the job settings (`job.ask_over_usd`); VALUE is a number, `off` for a
+   limit switched off, `on`/`off` for a switch. It refuses a value that does not fit or a
+   key that does not exist, and keeps the file's order and comments. `budget.py get` prints
+   the file.
+3. Show the new values. They apply from the next prompt; no restart is needed. The same
+   limits are editable in the keeptabs pane's Options tab.
 
 keeptabs tells Claude never to raise a limit on its own. That rule is about Claude
-acting unasked; here the user asked. If keeptabs blocks the edit anyway (for example
+acting unasked; this skill acts only on what the user asked for in the same prompt. If keeptabs blocks the edit anyway (for example
 during a hard stop), give the user the path so they can edit the file themselves.

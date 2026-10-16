@@ -3,5 +3,13 @@
   "description": "keeptabs rewritten around a Claude Code hooks module: every API call in a ledger from the first prompt, no telemetry setup; budget guard and cost views (Supertab proof of concept, testing beside keeptabs).",
   "author": {
     "name": "Supertab"
+  },
+  "userConfig": {
+    "autoOpen": {
+      "title": "Open the pane at session start",
+      "type": "boolean",
+      "description": "Open the keeptabs pane beside the chat when a session starts. Off, /keeptabs-mod:status opens it.",
+      "default": true
+    }
   }
 }

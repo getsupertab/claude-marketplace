@@ -1,19 +1,26 @@
-import type { EngineInterface, Register, TelemetryRecordEntry, Timer, UiOpenResult } from 'claude-code'
+import type { EngineInterface, PluginOptions, Register, RenderChildren, TelemetryRecordEntry, Timer, UiOpenResult } from 'claude-code'
 
-// keeptabs' hooks module (docs/plan-CORE-537-status-page-tabs.md), two parts:
+// keeptabs' hooks module (docs/plan-CORE-537-status-page-tabs.md), three parts:
 //
 // The ledger (phase 0). Every API request the engine makes reaches `telemetry.log` as
 // an `api_request` record for the operator's collector, with or without telemetry
 // switched on, main loop and helpers alike. This module prices it and appends one
 // line to the session's ledger file; the Python accounting reads those.
 //
-// The pane (phase 1). `session.start` opens a pane beside the chat; `/keeptabs-mod:status`
-// (the status skill, answered by a hook) opens it asked; `ui.render` draws the terminal live view in it, which is
-// `keeptabs.py --once` with its ANSI codes turned into Text spans, so the pane and the
-// standalone terminal view cannot drift apart. While the pane is not placed (a narrow
-// terminal) one status line carries the numbers instead. Redrawn after every ledger
-// write and on a 30 s clock; nothing polls the data folder. Under `claude -p`, or with
-// no surface, nothing visual happens and the ledger is written as before.
+// The pane (phase 1, tabs and the flow 2026-10-16). `session.start` opens a pane beside
+// the chat (the `autoOpen` option); `/keeptabs-mod:status` (the status skill, answered by
+// a hook) opens it asked. `ui.render` draws one of three tabs: Live, the terminal live
+// view (`keeptabs.py --once` with its ANSI codes turned into Text spans, so the pane and
+// the standalone view cannot drift apart); Flow, the compact Sankey (`sankey.py
+// --flow-svg`) on the surfaces that draw Svg; Options, the auto-open switch and the
+// budget limits. While the pane is not placed (a narrow terminal) one status line
+// carries the numbers instead. Redrawn after every ledger write and on a 30 s clock;
+// nothing polls the data folder. Under `claude -p`, or with no surface, nothing visual
+// happens and the ledger is written as before.
+//
+// The status page. "open in browser" writes `status/<session>.html` and opens it; for
+// 30 minutes after, every redraw also writes its data file beside it (`sankey.py --push`),
+// which the open page loads as a script and swaps in place: live without a server.
 
 type Prices = {
   _verified?: boolean
@@ -140,11 +147,11 @@ const TITLE = 'keeptabs'
 // `command.run` hook below answers the skill's command in its place instead. The skill's own
 // text runs only where the module did not load.
 const COMMAND = 'keeptabs-mod:status'
-// Open the pane unasked at session start. A plain constant until the Options view
-// (phase 3) puts it behind the manifest's `userConfig`.
-const AUTO_OPEN = true
 const REDRAW_MS = 30_000
 const HELPER_TIMEOUT_MS = 20_000
+// The status page is kept current (its data file written on every redraw) this long
+// after it was last opened from the pane; the page says "stale" once the pushes stop.
+const PAGE_MS = 30 * 60_000
 
 /** The four colours keeptabs.py uses, as hex from the xterm palette rather than theme keys
  *  or colour names, so every surface (Desktop's light mode included) draws the terminal look. */
@@ -231,13 +238,67 @@ export function svgOf(lines: string[]): string {
     + '</svg>'
 }
 
-type Live = { lines: string[]; status: string; error?: string }
+// ---------- the tabs ----------
 
+export type View = 'live' | 'flow' | 'options'
+export const TABS: { view: View; label: string; hotkey: string }[] = [
+  { view: 'live', label: 'live', hotkey: 'l' },
+  { view: 'flow', label: 'flow', hotkey: 'f' },
+  { view: 'options', label: 'options', hotkey: 'p' },
+]
+
+// The budget limits the Options tab edits, in budget.json's keys (dotted below the
+// top level). Every write goes through keeptabs/budget.py, the one validator.
+export const FIELDS: { key: string; label: string }[] = [
+  { key: 'session_limit_usd', label: 'session, USD' },
+  { key: 'session_limit_tokens', label: 'session, tokens' },
+  { key: 'daily_limit_usd', label: 'today, USD' },
+  { key: 'daily_limit_tokens', label: 'today, tokens' },
+  { key: 'turn_limit_usd', label: 'per request, USD' },
+  { key: 'turn_limit_tokens', label: 'per request, tokens' },
+  { key: 'warn_at_percent', label: 'warn at, %' },
+  { key: 'job.ask_over_usd', label: 'job: ask over, USD' },
+]
+export const SWITCHES: { key: string; label: string }[] = [
+  { key: 'hard_stop', label: 'hard stop at 100%' },
+  { key: 'job.hard_stop', label: 'job: hard stop' },
+  { key: 'job.ask', label: 'job: ask for an estimate' },
+]
+
+type Json = Record<string, unknown>
+
+/** The value under a dotted key of a parsed budget.json. */
+export function at(cfg: Json | undefined, key: string): unknown {
+  let node: unknown = cfg
+  for (const k of key.split('.')) {
+    if (typeof node !== 'object' || node === null) return undefined
+    node = (node as Json)[k]
+  }
+  return node
+}
+
+/** A limit as the field shows it: `off` for null, thousands grouped for tokens. */
+export function shown(v: unknown): string {
+  if (v === null || v === undefined) return 'off'
+  if (typeof v === 'number') return Number.isInteger(v) ? v.toLocaleString('en-US') : String(v)
+  return String(v)
+}
+
+type Live = { lines: string[]; status: string; error?: string }
+type Options = { budget?: Json; path: string; errors: Record<string, string>; error?: string }
+
+let opts: PluginOptions = {}           // the manifest's userConfig values, from register()
+let view: View = 'live'
 let live: Live | undefined              // the last helper output; a reload starts empty
+let flow: string | undefined            // the last compact Sankey
+let options: Options | undefined        // the last budget.json read
+let pageOpenedAt: number | undefined    // ms; the page's data file is written while within PAGE_MS
 let sessionId: string | undefined
 let tick: Timer | undefined             // set while this load draws anything (the 30 s clock)
 let running: Promise<void> | undefined  // one refresh at a time; a request during one runs after it
 let again = false
+
+const autoOpen = () => opts.autoOpen !== false
 
 async function sid($: EngineInterface): Promise<string> {
   return (sessionId ??= await $.session.id())
@@ -254,20 +315,47 @@ async function isPlaced($: EngineInterface): Promise<boolean> {
   try { return (await $.ui.panes()).some(p => p.id === PANE && p.isPlaced) } catch { return false }
 }
 
-/** One redraw: the live view when the pane is placed (and the status line cleared), else
- *  the status line alone. One helper process either way. */
+const pagePath = (data: string, id: string) => `${data}/status/${id}.html`
+const pushPath = (data: string, id: string) => `${data}/status/${id}.js`
+
+async function pageIsOpen($: EngineInterface): Promise<boolean> {
+  return pageOpenedAt !== undefined && (await $.clock.now()) - pageOpenedAt < PAGE_MS
+}
+
+async function readBudget($: EngineInterface): Promise<void> {
+  const path = `${await home($)}/budget.json`
+  const errors = options?.errors ?? {}
+  try {
+    options = { budget: JSON.parse(await $.fs.read(path)) as Json, path, errors }
+  } catch (err) {
+    options = { path, errors, error: `budget.json: ${err instanceof Error ? err.message : String(err)}` }
+  }
+}
+
+/** One redraw: the current tab's content when the pane is placed (and the status line
+ *  cleared), else the status line alone. One helper process either way, two while the
+ *  status page is open (its data file is written by the same run when the Flow tab is up). */
 async function refreshNow($: EngineInterface): Promise<void> {
   const id = await sid($)
+  const push = (await pageIsOpen($)) ? ['--push', pushPath(await home($), id)] : []
   try {
     if (await isPlaced($)) {
-      const lines = liveLines(await python($, 'keeptabs.py', ['--once', '--session', id]))
-      live = { lines, status: live?.status ?? '' }
+      if (view === 'flow') {
+        flow = await python($, 'sankey.py', ['--session', id, '--flow-svg', ...push])
+        push.length = 0
+      } else if (view === 'options') {
+        await readBudget($)
+      } else {
+        const lines = liveLines(await python($, 'keeptabs.py', ['--once', '--session', id]))
+        live = { lines, status: live?.status ?? '' }
+      }
       $.ui.status(undefined)
     } else {
       const status = (await python($, 'keeptabs.py', ['--status', '--session', id])).trim()
       live = { lines: live?.lines ?? [], status }
       $.ui.status(status)
     }
+    if (push.length > 0) await python($, 'sankey.py', ['--session', id, ...push])
   } catch (err) {
     live = { lines: live?.lines ?? [], status: live?.status ?? '', error: String(err instanceof Error ? err.message : err) }
   }
@@ -289,6 +377,12 @@ function startClock($: EngineInterface): void {
   tick = $.clock.every(REDRAW_MS, () => { void refresh($) })
 }
 
+function show($: EngineInterface, v: View): void {
+  view = v
+  $.ui.invalidate('ui.render')
+  void refresh($)
+}
+
 async function openPane($: EngineInterface): Promise<UiOpenResult> {
   try { return await $.ui.open({ id: PANE, title: TITLE }) }
   catch (err) { return { isPlaced: false, reason: String(err instanceof Error ? err.message : err) } }
@@ -296,21 +390,54 @@ async function openPane($: EngineInterface): Promise<UiOpenResult> {
 
 /** The status page (the Sankey, the chart, every figure) written now by sankey.py as
  *  `status/<session>.html` in the data folder, then opened in the default browser. A
- *  Button rather than a Link: a remote surface draws a `file:` Link as plain text. */
+ *  Button rather than a Link: a remote surface draws a `file:` Link as plain text. From
+ *  now on, for PAGE_MS, every redraw writes the page's data file too (`$.store` keeps
+ *  the moment across a reload of the module). */
 async function openSnapshot($: EngineInterface): Promise<void> {
   try {
     const id = await sid($)
-    const path = `${await home($)}/status/${id}.html`
+    const path = pagePath(await home($), id)
     await python($, 'sankey.py', ['--session', id, '--out', path])
     const opened = await $.process.run(['open', path], { timeoutMs: HELPER_TIMEOUT_MS })
     if (opened.exitCode !== 0) throw new Error(opened.stderr.trim() || `open exited ${opened.exitCode}`)
-    $.ui.toast(`keeptabs: status page opened (${path})`)
+    pageOpenedAt = await $.clock.now()
+    await $.store.set(`pageOpenedAt:${id}`, pageOpenedAt)
+    $.ui.toast(`keeptabs: status page opened (${path}); it stays live for 30 minutes`)
+    if (tick === undefined) startClock($)
   } catch (err) {
     $.ui.toast(`keeptabs: could not open the status page: ${err instanceof Error ? err.message : String(err)}`)
   }
 }
 
-export const register: Register = on => {
+/** The auto-open switch is the manifest's `userConfig` field: written as the config menu
+ *  would, so the menu, the install screen and the pane show one value. The write reloads
+ *  the module with the new options; `session.start` then runs again and is idempotent. */
+async function setAutoOpen($: EngineInterface, value: boolean): Promise<void> {
+  try {
+    const r = await $.config.set({ key: `${$.plugin.name}.autoOpen`, value })
+    if ('deny' in r && r.deny !== undefined) $.ui.toast(`keeptabs: auto-open not changed: ${r.deny}`)
+  } catch (err) {
+    $.ui.toast(`keeptabs: auto-open not changed: ${err instanceof Error ? err.message : String(err)}`)
+  }
+}
+
+/** One limit through the validator; a refused value is shown under its field, unwritten. */
+async function setBudget($: EngineInterface, key: string, value: string): Promise<void> {
+  if (options === undefined) await readBudget($)
+  const errors = options?.errors ?? {}
+  try {
+    await python($, 'budget.py', ['set', key, value])
+    delete errors[key]
+  } catch (err) {
+    errors[key] = err instanceof Error ? err.message : String(err)
+  }
+  await readBudget($)
+  $.ui.invalidate('ui.render')
+}
+
+export const register: Register = (on, pluginOptions) => {
+  opts = pluginOptions ?? {}
+
   on('session.start', async ($, e, next) => {
     const r = await next(e)
     try {
@@ -325,43 +452,68 @@ export const register: Register = on => {
 
     // A reload runs this again: every step below is idempotent (an open id retitles).
     live = undefined
+    flow = undefined
+    options = undefined
     sessionId = undefined
     if (e.isInteractive && e.surface !== null) {   // `claude -p` and a bare host: nothing visual
-      if (AUTO_OPEN) await openPane($)
+      try { pageOpenedAt = num(await $.store.get(`pageOpenedAt:${await sid($)}`)) || undefined } catch { /* none */ }
+      if (autoOpen()) await openPane($)
       startClock($)
       void refresh($)
     }
     return r
   })
 
-  // The terminal draws each line as styled Text spans (a blank line as one space, so it
-  // keeps its row). A remote surface draws Text in a proportional font and collapses an
+  // The terminal draws each live line as styled Text spans (a blank line as one space, so
+  // it keeps its row). A remote surface draws Text in a proportional font and collapses an
   // empty one, which broke the renderer's columns (Desktop 2.1.295), and the types offer
-  // no monospace Text; there the view is one Svg, see svgOf.
+  // no monospace Text; there the view is one Svg, see svgOf. The Flow tab is an Svg too,
+  // so the terminal, which has none, points at the browser instead.
   on('ui.render', { component: 'Pane', requestId: PANE }, ($, e) => {
     const { Box, Text, Button } = $.ui.resolve(e)
     const l = live
-    // Placed after a status-only refresh (the terminal widened): fetch the lines once.
-    if (l === undefined || (l.lines.length === 0 && l.error === undefined)) void refresh($)
-    const lines = l?.lines ?? []
+    // Placed after a status-only refresh (the terminal widened), or a tab shown for the
+    // first time: fetch its content once. Only while nothing is in flight, so a render
+    // never starts a refresh that invalidates into another render.
+    const empty = view === 'live' ? (l === undefined || (l.lines.length === 0 && l.error === undefined))
+      : view === 'flow' ? flow === undefined : options === undefined
+    if (empty && running === undefined) void refresh($)
+    const tabs = (
+      <Box gap={1}>
+        {TABS.map(t => (
+          <Button key={`tab-${t.view}`} label={t.label} hotkey={t.hotkey} variant={view === t.view ? 'primary' : 'secondary'}
+            onPress={() => show($, t.view)} />
+        ))}
+        <Button key="open-browser" label="open in browser" hotkey="o" onPress={() => { void openSnapshot($) }} />
+      </Box>
+    )
     let body
-    if (e.surface === 'terminal') {
-      body = lines.map(line => (
-        <Text wrap="end">
-          {spansOf(line === '' ? ' ' : line).map(s => <Text bold={s.bold} dimColor={s.dim} color={s.color}>{s.text}</Text>)}
-        </Text>
-      ))
+    if (view === 'options') {
+      body = optionsTab($, e)
+    } else if (view === 'flow') {
+      if (e.surface === 'terminal') {
+        body = <Text dimColor>the flow drawing needs Claude Desktop or VS Code; "open in browser" (o) shows it with every figure.</Text>
+      } else {
+        const { Svg } = $.ui.resolve(e)
+        body = flow !== undefined && <Svg source={flow} alt="where this session's money went: session, model, kind, rate, tool, where it went" />
+      }
     } else {
-      const { Svg } = $.ui.resolve(e)
-      body = lines.length > 0 && <Svg source={svgOf(lines)} alt={`keeptabs live view: ${lines.map(stripAnsi).join(' / ')}`} />
+      const lines = l?.lines ?? []
+      if (e.surface === 'terminal') {
+        body = lines.map(line => (
+          <Text wrap="end">
+            {spansOf(line === '' ? ' ' : line).map(s => <Text bold={s.bold} dimColor={s.dim} color={s.color}>{s.text}</Text>)}
+          </Text>
+        ))
+      } else {
+        const { Svg } = $.ui.resolve(e)
+        body = lines.length > 0 && <Svg source={svgOf(lines)} alt={`keeptabs live view: ${lines.map(stripAnsi).join(' / ')}`} />
+      }
     }
     return (
       <Box flexDirection="column">
-        <Box>
-          <Button key="open-browser" label="open in browser" hotkey="o" onPress={() => { void openSnapshot($) }} />
-          <Text dimColor>  the status page: where the money went, cost over time</Text>
-        </Box>
-        {l === undefined && <Text dimColor>loading...</Text>}
+        {tabs}
+        {l === undefined && view === 'live' && <Text dimColor>loading...</Text>}
         {l?.error !== undefined && <Text color="error">keeptabs: {l.error}</Text>}
         {body}
       </Box>
@@ -404,4 +556,53 @@ export const register: Register = on => {
     }
     return r
   }).catch(($, e, next) => next(e))
+}
+
+/** The Options tab: the auto-open switch (the manifest's `userConfig` field, as in
+ *  /config) and the budget limits as Input fields over budget.json. Mobile has no Input,
+ *  so it shows the values and says where to edit them. */
+type RenderEvent = Parameters<EngineInterface['ui']['resolve']>[0]
+
+function optionsTab($: EngineInterface, e: RenderEvent): RenderChildren {
+  const { Box, Text, Button } = $.ui.resolve(e)
+  const o = options
+  const rows: RenderChildren[] = [
+    <Box gap={1}>
+      <Text>open the pane at session start:</Text>
+      <Button key="auto-open" label={autoOpen() ? 'on' : 'off'} onPress={() => { void setAutoOpen($, !autoOpen()) }} />
+      <Text dimColor>(also in /config as {$.plugin.name}.autoOpen)</Text>
+    </Box>,
+    <Text> </Text>,
+    <Text bold>budget limits</Text>,
+    <Text dimColor>{o?.path ?? 'budget.json'} · "off" switches a limit off · changes apply from the next prompt</Text>,
+  ]
+  if (o?.error !== undefined) rows.push(<Text color="error">{o.error}</Text>)
+  const error = (key: string) => { const err = o?.errors[key]; if (err !== undefined) rows.push(<Text color="error">  {err}</Text>) }
+  if (e.surface === 'mobile') {
+    for (const f of FIELDS) rows.push(<Text>{f.label.padEnd(20)} {shown(at(o?.budget, f.key))}</Text>)
+    for (const s of SWITCHES) rows.push(<Text>{s.label.padEnd(24)} {at(o?.budget, s.key) === true ? 'on' : 'off'}</Text>)
+    rows.push(<Text dimColor>edit the limits from a desktop or the terminal, or ask: /keeptabs-mod:budget daily 30</Text>)
+  } else {
+    const { Input } = $.ui.resolve(e)
+    for (const f of FIELDS) {
+      rows.push(
+        <Box gap={1}>
+          <Text>{f.label.padEnd(20)}</Text>
+          <Input key={`b-${f.key}`} value={shown(at(o?.budget, f.key))} placeholder="off" submitLabel="save" onSubmit={v => { void setBudget($, f.key, v) }} />
+        </Box>,
+      )
+      error(f.key)
+    }
+    for (const s of SWITCHES) {
+      const on = at(o?.budget, s.key) === true
+      rows.push(
+        <Box gap={1}>
+          <Text>{s.label.padEnd(24)}</Text>
+          <Button key={`b-${s.key}`} label={on ? 'on' : 'off'} onPress={() => { void setBudget($, s.key, on ? 'off' : 'on') }} />
+        </Box>,
+      )
+      error(s.key)
+    }
+  }
+  return <Box flexDirection="column">{rows}</Box>
 }
