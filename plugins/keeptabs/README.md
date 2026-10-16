@@ -80,8 +80,7 @@ you uninstall keeptabs. To change one, say what you want changed:
 It shows the change (old → new) before writing, and the new values apply from your next
 prompt. No restart.
 
-Four budgets. Each can be in dollars, in tokens, or both; whichever is closest to its
-limit governs, and either can be turned off.
+Four budgets, all in dollars. Each can be turned off.
 
 | Budget | What it counts | Resets | Set it with |
 |---|---|---|---|
@@ -104,7 +103,6 @@ colon:
 ```
 $2: find me a comparable plan
 beer: tidy up this module
-200k: summarise these docs
 nobudget: carry on without one
 ```
 
