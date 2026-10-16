@@ -101,8 +101,9 @@ async function home($: EngineInterface): Promise<string> {
   return dataDir(h)
 }
 
-/** Appends one line: read the file, write `<file>.tmp`, then the file. `$.fs.write` is
- *  not atomic, so at worst the `.tmp` holds the latest line after a crash mid-write. */
+/** Appends one line: read the file, write it back with the line added. `$.fs.write` replaces
+ *  the file in place and the engine has no append, rename or delete, so a crash in the middle
+ *  of a write can leave a cut last line; the next append drops that tail, never the file. */
 function append($: EngineInterface, data: string, line: LedgerLine): Promise<void> {
   queue = queue.then(async () => {
     const dir = `${data}/ledger/${dayOf(Date.parse(line.ts))}`
@@ -111,9 +112,9 @@ function append($: EngineInterface, data: string, line: LedgerLine): Promise<voi
       const path = `${dir}/${line.session_id}${n > 1 ? `-${n}` : ''}.jsonl`
       let prev = ''
       try { prev = await $.fs.read(path) } catch { /* first line of the day */ }
+      if (prev !== '' && !prev.endsWith('\n')) prev = prev.slice(0, prev.lastIndexOf('\n') + 1)
       if (prev.length + text.length > ROLL_BYTES) continue
       part.set(line.session_id, n)
-      await $.fs.write(`${path}.tmp`, prev + text)
       await $.fs.write(path, prev + text)
       return
     }
