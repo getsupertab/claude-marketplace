@@ -46,9 +46,15 @@ getsupertab/claude-marketplace` and `claude plugin install keeptabs-mod@supertab
 
 ## See the numbers
 
-`/keeptabs-mod:status` writes the status page (where the money went as a flow diagram, cost
-over time, and every figure keeptabs tracks) as a snapshot file and summarises the
-session. In a terminal:
+The live view opens in a **pane beside the chat** when a session starts: in Claude
+Desktop and in a terminal of 144 columns or more (110 once you have opened it yourself).
+In a narrower terminal the pane waits and keeptabs' **status line** under the prompt
+shows session cost, today's cost and what is left of the job budget; `/keeptabs-mod:status`
+opens the pane at any width. The pane is the terminal live view, redrawn after every
+API call and every 30 seconds. Its "open in browser" button writes the status page
+(where the money went as a flow diagram, cost over time, and every figure keeptabs
+tracks) as a snapshot file and opens it. Ask Claude what you have spent and it answers
+from the same figures. In a terminal of your own:
 
 ```bash
 python3 ~/.claude/plugins/cache/supertab/keeptabs-mod/*/keeptabs/keeptabs.py
@@ -78,12 +84,13 @@ data (ledger, guard state and your `budget.json`) stays in
 
 | Part | Where it runs | What it does |
 |---|---|---|
-| `hooks/register.ts`, the hooks module | Inside Claude Code, loaded from `hooks/hooks.json` (`modules`) | Sees every API request in-process (`telemetry.log`), prices it from `keeptabs/prices.json` and appends one line to the session's ledger file. At session start it writes the loaded marker and, on first run, copies `budget.json` into the data folder |
+| `hooks/register.tsx`, the hooks module | Inside Claude Code, loaded from `hooks/hooks.json` (`modules`) | Sees every API request in-process (`telemetry.log`), prices it from `keeptabs/prices.json` and appends one line to the session's ledger file. At session start it writes the loaded marker, on first run copies `budget.json` into the data folder and opens the pane; answers `/keeptabs-mod:status` by opening it. Draws the pane (the live view, run as `keeptabs.py --once`) or sets the status line (`keeptabs.py --status`); the "open in browser" button runs `sankey.py` and opens the file |
 | `scripts/guard.sh` → `keeptabs/guard.py` | Shell hooks on `UserPromptSubmit` and `PreToolUse` | The budget guard: reads the ledger and the session's transcript, warns or stops, gives Claude the budget hints |
 | `scripts/loaded-check.sh` | Shell hook on `UserPromptSubmit` | The version gate: says once, on the first prompt, when the module did not load |
-| `keeptabs/keeptabs.py`, `keeptabs/sankey.py` | Python, run by the status skill or by hand | The accounting and the terminal live view; the status page as a snapshot file |
-| `skills/status`, `skills/budget` | `/keeptabs-mod:status`, `/keeptabs-mod:budget` | Show the numbers; show or change the limits |
-| Data: `budget.json`, `ledger/<day>/<session>.jsonl`, `state/` | `~/.claude/plugins/data/keeptabs-mod-supertab/`, one fixed path, separate from keeptabs' folder | Kept across updates |
+| `keeptabs/keeptabs.py`, `keeptabs/sankey.py` | Python, run by the hooks module, the spend skill or by hand | The accounting, the terminal live view (`--once`) and the status line (`--status`); the status page as a snapshot file |
+| `skills/status` | `/keeptabs-mod:status`, answered by the hooks module | Opens the pane and hands Claude the figures; the skill's own text runs only where the module did not load |
+| `skills/spend`, `skills/budget` | Claude, when asked what was spent; `/keeptabs-mod:budget` | Answer in words from `keeptabs.py --once`; show or change the limits |
+| Data: `budget.json`, `ledger/<day>/<session>.jsonl`, `state/`, `status/<session>.html` | `~/.claude/plugins/data/keeptabs-mod-supertab/`, one fixed path, separate from keeptabs' folder | Kept across updates; the status page is rewritten on each "open in browser" |
 
 Code runs from the plugin folder, `${CLAUDE_PLUGIN_ROOT}`
 (`~/.claude/plugins/cache/supertab/keeptabs-mod/<version>/`, the version being the git
