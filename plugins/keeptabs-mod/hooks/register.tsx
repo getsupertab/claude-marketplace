@@ -7,8 +7,8 @@ import type { EngineInterface, Register, TelemetryRecordEntry, Timer, UiOpenResu
 // switched on, main loop and helpers alike. This module prices it and appends one
 // line to the session's ledger file; the Python accounting reads those.
 //
-// The pane (phase 1). `session.start` opens a pane beside the chat and registers
-// `/keeptabs-mod:status`; `ui.render` draws the terminal live view in it, which is
+// The pane (phase 1). `session.start` opens a pane beside the chat; `/keeptabs-mod:status`
+// (the status skill, answered by a hook) opens it asked; `ui.render` draws the terminal live view in it, which is
 // `keeptabs.py --once` with its ANSI codes turned into Text spans, so the pane and the
 // standalone terminal view cannot drift apart. While the pane is not placed (a narrow
 // terminal) one status line carries the numbers instead. Redrawn after every ledger
@@ -135,7 +135,11 @@ function append($: EngineInterface, data: string, line: LedgerLine): Promise<voi
 
 const PANE = 'keeptabs'
 const TITLE = 'keeptabs'
-const COMMAND = 'status'
+// The slash command is the `status` skill's name: a registered command (`$.command.register`)
+// runs as a flat `/<name>` with no plugin prefix and `status` is the built-in's, so the
+// `command.run` hook below answers the skill's command in its place instead. The skill's own
+// text runs only where the module did not load.
+const COMMAND = 'keeptabs-mod:status'
 // Open the pane unasked at session start. A plain constant until the Options view
 // (phase 3) puts it behind the manifest's `userConfig`.
 const AUTO_OPEN = true
@@ -285,7 +289,6 @@ export const register: Register = on => {
     // A reload runs this again: every step below is idempotent (an open id retitles).
     live = undefined
     sessionId = undefined
-    try { await $.command.register({ name: COMMAND, description: 'Open the keeptabs pane: what this session has spent, live, against its budgets' }) } catch { /* no command on this host */ }
     if (e.isInteractive && e.surface !== null) {   // `claude -p` and a bare host: nothing visual
       if (AUTO_OPEN) await openPane($)
       startClock($)
@@ -316,8 +319,9 @@ export const register: Register = on => {
     )
   })
 
-  // `/keeptabs-mod:status`: asked, so the pane is placed at any width. The figures go
-  // back as `context` too, so Claude can answer "what have I spent" from them.
+  // `/keeptabs-mod:status`: asked, so the pane is placed at any width. Answered here without
+  // `next`, so the skill's text never runs while the module is loaded. The figures go back
+  // as `context` too, so Claude can answer "what have I spent" from them.
   on('command.run', { command: COMMAND }, async $ => {
     const opened = await openPane($)
     if (tick === undefined) startClock($)

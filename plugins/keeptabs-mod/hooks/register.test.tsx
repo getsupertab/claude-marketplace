@@ -158,14 +158,14 @@ test('the ANSI codes of the live view become spans: bold, dim and the four colou
   ])
 })
 
-test('an interactive session opens the pane, registers the command and draws the live view', async ($, on) => {
+test('an interactive session opens the pane and draws the live view', async ($, on) => {
   mock.env(on, { HOME: '/home/t' })
   const clock = mock.clock(on, { now: T0 })
   const { ui } = world(on, { '/keeptabs/prices.json': JSON.stringify(PRICES), '/keeptabs/budget.json': '{}' })
   await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
   await clock.settle()                                        // the redraw session.start left running
   expect(ui.opens).toBe(1)
-  expect(ui.commands).toEqual(['status'])
+  expect(ui.commands).toEqual([])                             // nothing registered: the skill is the command
   // placed: the live view was fetched once, with the session pinned, and the status line cleared
   expect(ui.runs.map(a => a.slice(2))).toEqual([['--once', '--session', SID]])
   expect(ui.status).toEqual([undefined])
@@ -213,13 +213,13 @@ test('under claude -p, or with no surface, nothing visual happens and the ledger
   expect(fs.get(`${DATA}/ledger/2026-10-15/${SID}.jsonl`)!.trimEnd().split('\n').length).toBe(1)
 })
 
-test('/keeptabs-mod:status opens the pane and answers with the figures, for the person and for Claude', async ($, on) => {
+test('/keeptabs-mod:status (the skill) is answered by the hook: the pane opens, the figures go to the person and to Claude', async ($, on) => {
   mock.env(on, { HOME: '/home/t' })
   mock.clock(on, { now: T0 })
   const { ui } = world(on, { '/keeptabs/prices.json': JSON.stringify(PRICES), '/keeptabs/budget.json': '{}' })
   await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
   const opens = ui.opens
-  const r = await $.command.run({ command: 'status', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 200 } })
+  const r = await $.command.run({ command: 'keeptabs-mod:status', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 200 } })
   expect(ui.opens).toBe(opens + 1)
   expect(r.text).toBe(`${STATUS}\nThe keeptabs pane is open beside the chat; "open in browser" there writes the status page.`)
   expect(r.context).toEqual([`keeptabs, this session's figures as of now:\n${liveLines(ONCE).map(stripAnsi).join('\n')}`])
