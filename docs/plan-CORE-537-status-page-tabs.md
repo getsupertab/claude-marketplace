@@ -361,9 +361,12 @@ What turned out differently from the text above:
   types offer no monospace `Text`; `Code` is monospace but plain; a `Client` surface
   module draws with the same elements. What the remote surfaces have is `Svg`, so on
   `desktop`, `vscode` and `mobile` the Live view is one `Svg` (`svgOf`): one `<text>` per
-  line in a monospace face on a dark ground, a `<tspan>` per span with the palette fill,
-  dim as grey (or a faded colour), bold as the weight, lines cut at 100 columns, about
-  10 KB. The terminal look on every surface, Desktop's light mode included. The
+  line in a monospace face, a `<tspan>` per span, bold as the weight, dim and the four
+  colours as classes, lines cut at 100 columns, about 10 KB. It has no ground of its
+  own: the API carries no theme signal, so a `<style>` with `prefers-color-scheme`
+  picks a light or a dark palette and the surface hands its scheme to the image, which
+  is how the pane follows the app's theme (the plan's "hex values so it looks like a
+  terminal in light mode too" was dropped for this: Jannes wanted the app's theme). The
   terminal keeps the spans, with a blank line drawn as one space so it keeps its row.
 - The status line's numbers come from Python, `keeptabs.py --status`, one plain line
   from the same `report()` as the live view, not from `--json` and TypeScript: the

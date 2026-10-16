@@ -196,11 +196,14 @@ export function liveLines(text: string): string[] {
 
 // The live view as an SVG for the remote surfaces (Desktop, VS Code, mobile), which draw
 // `Text` in a proportional font and have no monospace Text, but do draw `Svg`: one
-// <text> per line in a monospace face on a dark ground, a <tspan> per span with the
-// palette fill, dim as a grey fill (or faded colour), bold as the weight. The terminal
-// look on every surface, in Desktop's light mode too.
+// <text> per line in a monospace face, a <tspan> per span, bold as the weight, dim and
+// the four colours as classes. No ground of its own: the API carries no theme, so a
+// <style> with prefers-color-scheme picks a light or a dark palette, and the surface
+// hands its scheme to the image. The terminal look on every surface, in both themes.
 const CELL_W = 7.3, LINE_H = 16, FONT_PX = 12, PAD = 8, MAX_COLS = 100
-const BG = '#1c1c1c', FG = '#d4d4d4', DIM_FG = '#8a8a8a'
+const CLASS: Record<string, string> = { '#cd0000': 'r', '#00cd00': 'g', '#cdcd00': 'y', '#00cdcd': 'c' }
+const STYLE = 'svg{fill:#d4d4d4}.d{fill:#8a8a8a}.r{fill:#ff6b6b}.g{fill:#5fd75f}.y{fill:#e5c07b}.c{fill:#56c8d8}'
+  + '@media(prefers-color-scheme:light){svg{fill:#1f1f1f}.d{fill:#767676}.r{fill:#c62828}.g{fill:#2e7d32}.y{fill:#9a7b00}.c{fill:#0277bd}}'
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
 export function svgOf(lines: string[]): string {
@@ -212,9 +215,9 @@ export function svgOf(lines: string[]): string {
       if (n + text.length > MAX_COLS) text = text.slice(0, Math.max(0, MAX_COLS - n - 1)) + '…'
       n += text.length
       if (text === '') continue
-      const fill = s.color !== undefined ? ` fill="${s.color}"` : s.dim ? ` fill="${DIM_FG}"` : ''
+      const cls = s.color !== undefined ? CLASS[s.color] : s.dim ? 'd' : undefined
       const fade = s.dim && s.color !== undefined ? ' opacity="0.6"' : ''
-      parts.push(`<tspan${fill}${s.bold ? ' font-weight="700"' : ''}${fade}>${esc(text)}</tspan>`)
+      parts.push(`<tspan${cls ? ` class="${cls}"` : ''}${s.bold ? ' font-weight="700"' : ''}${fade}>${esc(text)}</tspan>`)
       if (n >= MAX_COLS) break
     }
     return { parts, n }
@@ -222,8 +225,8 @@ export function svgOf(lines: string[]): string {
   const cols = Math.max(40, ...rows.map(r => r.n))
   const w = Math.ceil(cols * CELL_W + 2 * PAD), h = rows.length * LINE_H + 2 * PAD
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" `
-    + `font-family="ui-monospace, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="${FONT_PX}" fill="${FG}">`
-    + `<rect width="100%" height="100%" fill="${BG}" rx="4"/>`
+    + `font-family="ui-monospace, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="${FONT_PX}">`
+    + `<style>${STYLE}</style>`
     + rows.map((r, i) => `<text x="${PAD}" y="${PAD + (i + 1) * LINE_H - 4}" xml:space="preserve">${r.parts.join('')}</text>`).join('')
     + '</svg>'
 }

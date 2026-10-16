@@ -197,8 +197,10 @@ test('an interactive session opens the pane and draws the live view', async ($, 
     expect(svg[0]).toBe(svgOf(liveLines(ONCE)))
     expect(svg[0]!.startsWith('<svg xmlns="http://www.w3.org/2000/svg" ')).toBe(true)
     expect(svg[0]).toContain('<tspan font-weight="700">keeptabs</tspan>')
-    expect(svg[0]).toContain('<tspan fill="#8a8a8a">· live</tspan>')
-    expect(svg[0]).toContain('<tspan fill="#00cd00">██</tspan><tspan fill="#00cd00" opacity="0.6">····</tspan>')
+    expect(svg[0]).toContain('<tspan class="d">· live</tspan>')
+    expect(svg[0]).toContain('<tspan class="g">██</tspan><tspan class="g" opacity="0.6">····</tspan>')
+    expect(svg[0]).toContain('@media(prefers-color-scheme:light)')   // follows the app's theme; no ground of its own
+    expect(svg[0]).not.toContain('<rect')
     expect((svg[0]!.match(/<text /g) ?? []).length).toBe(5)       // one <text> per line, the blank one too
     expect(svg[0]).not.toContain('ctrl-c')
     expect(texts(remote).some(t => t.props.wrap === 'end')).toBe(false)
