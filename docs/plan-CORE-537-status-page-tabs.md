@@ -4,7 +4,7 @@ Ticket: [CORE-537](https://laterpay.atlassian.net/browse/CORE-537), "Add a UI co
 show usage in real time" (story, sprint Keeptabs, estimate S). First agreed between Jannes
 and the project manager on 2026-10-14 as a tabbed web page; rewritten 2026-10-15 around a
 Claude Code mod after the spike at the end of this document proved the mod route. Status:
-**draft for review; phase 0 done 2026-10-15, phase 1 done 2026-10-16**. The earlier plan is summarised in the last section.
+**draft for review; phase 0 done 2026-10-15, phase 1 done 2026-10-16, then the tabs, the flow and the live page the same day (below, after the phases)**. The earlier plan is summarised in the last section.
 
 ## In one paragraph
 
@@ -416,6 +416,61 @@ model-invocable.
 **Phase 4 (one day): graphics.** Chart as `Svg` in the Cost view on Desktop and VS Code,
 text table in the terminal; `sankey.py --snapshot` with refresh and the 30-minute
 regeneration rule. Later: Sankey diet to fit 128 KB; narrow layout for `render()`.
+
+**Tabs, the flow and the live page, done 2026-10-16 (branch `feature/mod-flow`).** Jannes
+set the phases aside and asked for three things: a simplified Sankey in the pane, the
+status page kept current *without a reload* (a reload loses the hover highlighting), and
+tabs with the configuration in the pane, as native to the mods API as it gets. What was
+built, and where it differs from the phase 3 and 4 text above:
+
+- **The pane has tabs**: `live`, `flow`, `options` as a row of `Button`s (hotkeys l, f,
+  p) with `open in browser` (o) beside them; the API has no tabs element. The tab that is
+  up is what a redraw fetches, one helper process per redraw as before.
+- **Flow tab.** `sankey.py --flow-svg` prints the page's Sankey in miniature: the same
+  page size and columns, every tool but a long tail (the 12 costliest stay, the rest fold
+  into "N other tools"), labels at 8 px cut at 30 characters, no hover layers and no hit
+  boxes. Those layers were the bulk of the page's markup (one hidden layer of sub-ribbons
+  per node and ribbon): the page's SVG is 160 to 430 KB, the miniature 20 to 25 KB, far
+  under the 128 KB `Svg` limit. The surface scales it to the pane's width; where that is
+  too small to read, the button opens the page. Its `<style>` follows the surface's
+  light or dark scheme as the Live view's does. The terminal has no `Svg`, so there the
+  tab says to open the page.
+- **The live page, no server.** A page from a `file:` URL may not fetch, but it may load
+  a sibling `<script>`, so the page polls `status/<session>.js` every 3 s with a
+  cache-busting query. That file (`sankey.py --push FILE`) calls `__keeptabs({at, parts})`
+  with the page's parts (`head`, `kpi`, `flow`, `chart`, `status`), each in a div of its
+  own, and the page swaps only a part whose markup changed, in place: hover highlighting
+  (the browser re-evaluates it on the swapped element), the scroll position and the
+  chart's axis survive. Node ids are the node name's slug now (`nBash`), not an index, so
+  the hover lands on the same node after a swap. The header dot says `live`, `stale` (no
+  push for 15 s) or `snapshot`. The module writes the file after every redraw for 30
+  minutes after the page was opened (`pageOpenedAt`, kept in `$.store` across a reload);
+  with the Flow tab up, the same `sankey.py` run prints the miniature and writes the
+  file. `--out` writes the page and its data file together. No meta refresh, no server:
+  the phase 4 refresh rule is done this way instead. Verified in the built-in browser
+  over a local HTTP server (a `file:` page cannot be driven there): the dot went live and
+  a push changed the figures without a reload. The `file:` script load itself is the
+  browsers' documented behaviour and was not driven by a test.
+- **Options tab.** Auto-open is the manifest's `userConfig` field `autoOpen` (a `title`
+  is required; `claude plugin validate` says so), read from `register(on, options)` and
+  written with `$.config.set({ key: '<plugin>.autoOpen' })`, so the install screen, the
+  `/config` menu and the pane show one value; the reload that follows re-runs the
+  idempotent `session.start`. The budget limits are `Input` fields (session, today and
+  per-request limits in USD and tokens, warn-at percent, the job's ask-over amount) and
+  `Button` switches (hard stop, the job's hard stop and ask), every write through a new
+  `keeptabs/budget.py set KEY VALUE`, the one validator: by the key's name (`_usd`,
+  `_tokens`, `_percent`, a switch), `off` for a limit switched off, dotted keys for the
+  job settings, unknown keys refused, the file's order and `_comment` keys kept. A
+  refused value is shown in `error` colour under its field and not written. Mobile has
+  no `Input`: the values are shown read-only. `/keeptabs-mod:budget` is model-invocable
+  now (explicit request in the same prompt only) and writes through the same validator.
+- **Not built**: the Cost tab (the chart as `Svg`) and the narrow layout for `render()`.
+- **Checks**: 12 module tests (`claude plugin test`, with `store.get`/`store.set` and
+  `config.set` stood in beneath the plugin; a press needs its surface named once two
+  surfaces have drawn the pane), `tsc`, `claude plugin validate`, the accounting test, a
+  tmux terminal run at 190 columns (tab row drawn, live view updated after a prompt),
+  the live page over HTTP. Not checked: Desktop (needs `CLAUDE_CODE_PLUGIN_DIRS` and a
+  restart) and the hotkeys by hand.
 
 ## Risks and how the plan handles them
 

@@ -8,6 +8,12 @@ report underneath. Renderers only; nothing here serves HTTP.
                             print its path (state/status.html in the data folder)
   sankey.py --session ID    pin it to one session
   sankey.py --out FILE      write it somewhere else
+  sankey.py --push FILE     write the page's data file: the same parts as a script the open
+                            page loads every few seconds and swaps in place (no reload, so
+                            hover and scroll survive); the hooks module runs this while the
+                            page was opened in the last 30 minutes
+  sankey.py --flow-svg      print the Sankey alone, compact and without the hover layers,
+                            for the pane beside the chat (an Svg there is 128 KB at most)
 
 Flow, left to right:  session total → model → kind (context / generation / fees) → rate
 → tool → where it went: tools, keeptabs overhead, prompts & replies, context re-reads (the
@@ -27,6 +33,8 @@ MIN_PX = 3       # every flow path is drawn at least this wide; labels still sho
 DIR = "ltr"      # ltr: left→right; ttb: top→bottom; btt: bottom→top (set by --direction)
 HIDE = frozenset()   # columns left out of the drawing (keys of COLUMNS; set by body())
 MODELS = True        # the model column is drawn (also drops the per-model split in the tools table)
+FONT_MAX = 13        # largest label size; the compact drawing for the pane caps it lower
+LABEL_MAX = None     # longest label drawn (a longer one is cut with an ellipsis); the compact drawing sets it
 
 # the columns that can be hidden, in flow order: key, toggle label, what it holds
 COLUMNS = [
@@ -93,7 +101,9 @@ def ribbon(u0, v0, h0, u1, v1, h1, color, bend_to=None):
 
 def node(u, v, h, color, label, value, right):
     u = flip(u)
-    fs = max(7, min(13, h + 1))   # font follows the node height, down to a readable floor
+    fs = max(7, min(FONT_MAX, h + 1))   # font follows the node height, down to a readable floor
+    if LABEL_MAX and len(label) > LABEL_MAX:
+        label = label[:LABEL_MAX - 1] + "…"
     text = f'<tspan font-size="{fs:.0f}">{html.escape(label)} <tspan class="v">{kt.money(value)}</tspan></tspan>'
     if DIR == "ltr":
         tx = u + NODE_W + 8 if right else u - 8
@@ -115,6 +125,32 @@ MODEL_COLORS = ["#d4a63a", "#4db6ac", "#ba68c8", "#7cb342", "#f06292", "#90a4ae"
 # fixed display order for the named nodes; models and tools sort by cost inside their column
 RANK = {n: i for i, n in enumerate(["session"] + list(TREE) + [l for ls in TREE.values() for l in ls]
                                    + ["tools", OVERHEAD, PROMPTS, REREADS])}
+
+
+def slug(n):
+    """An element id from a node name: letters, digits and underscores."""
+    return re.sub(r"[^A-Za-z0-9]+", "_", str(n)).strip("_") or "x"
+
+
+def fold_tools(paths, colors, labels, keep):
+    """The tool paths beyond the `keep` costliest tools, folded into one "other tools" node,
+    for the compact drawing. Paths with the same nodes are summed."""
+    OTHER = "other tools"
+    cost = {}
+    for nodes, v in paths:
+        if len(nodes) >= 2 and nodes[-1] == "tools":
+            cost[nodes[-2]] = cost.get(nodes[-2], 0.0) + v
+    top = {n for n, _ in sorted(cost.items(), key=lambda kv: -kv[1])[:keep]}
+    if len(cost) <= keep + 1:
+        return paths, colors, labels
+    merged = {}
+    for nodes, v in paths:
+        if len(nodes) >= 2 and nodes[-1] == "tools" and nodes[-2] not in top:
+            nodes = nodes[:-2] + (OTHER, "tools")
+        merged[nodes] = merged.get(nodes, 0.0) + v
+    colors = dict(colors, **{OTHER: "#9e9e9e"})
+    labels = dict(labels, **{OTHER: f"{len(cost) - len(top)} other tools"})
+    return list(merged.items()), colors, labels
 
 
 def short_model(mid):
@@ -302,8 +338,12 @@ def bar(u, v, h, color, cls=""):
     return f'<rect class="{cls}" x="{v:.1f}" y="{u}" width="{h:.1f}" height="{NODE_W}" fill="{color}"/>'
 
 
-def svg(b, tb=None):
+def svg(b, tb=None, traces=True, keep_tools=None):
+    """The Sankey. traces=False leaves out the hover tracing layers and hit boxes (the bulk
+    of the markup); keep_tools folds the long tail of tools into one node."""
     all_paths, colors, labels = flows(b, tb)
+    if keep_tools is not None:
+        all_paths, colors, labels = fold_tools(all_paths, colors, labels, keep_tools)
     cols, links = columns(all_paths)
     true_val = {n: v for col in cols for n, v in col.items()}   # labels show these
     # drawing values: every path is at least MIN_PX wide, so hairlines stay visible; node and
@@ -321,7 +361,7 @@ def svg(b, tb=None):
     cols = [{n: sum(v for nodes, _, v in all_paths if n in nodes) for n in col} for col in cols]
     w, pos = layout(cols, links, rpad)
     val = {n: v for col in cols for n, v in col.items()}
-    nid = {n: f"n{k}" for k, n in enumerate(val)}
+    nid = {n: "n" + slug(n) for n in val}
     scale = w[0] / links[0][2]
 
     # ribbons: slice each node in link order, sorted by the other end's position to limit crossings
@@ -343,7 +383,7 @@ def svg(b, tb=None):
         geom[i] = (su + NODE_W - 1, sv + out_off[src], du + 1, dv + in_off[dst], xs[colidx[src] + 1] if skips else None)
         # an invisible 6px-stroked copy makes hairline ribbons hoverable without changing the drawing
         rb = ribbon(geom[i][0], geom[i][1], w[i], geom[i][2], geom[i][3], w[i], f"url(#g{i})", bend_to=geom[i][4])
-        hit = rb.replace(f'fill="url(#g{i})" fill-opacity="0.45"', 'class="h" fill="none" stroke="#000" stroke-opacity="0" stroke-width="6" pointer-events="stroke"')
+        hit = rb.replace(f'fill="url(#g{i})" fill-opacity="0.45"', 'class="h" fill="none" stroke="#000" stroke-opacity="0" stroke-width="6" pointer-events="stroke"') if traces else ""
         parts.append(f'<g id="l{i}">{rb}{hit}</g>')
         out_off[src] += w[i]; in_off[dst] += w[i]
     # bars go under the trace layers, labels above everything; a label is a hover target too
@@ -353,9 +393,12 @@ def svg(b, tb=None):
             u, v, h = pos[n]
             rect, text = node(u, v, h, colors[n], labels[n], true_val[n], right=ci > 0).split("<text", 1)
             hh = max(h, HIT_H)   # transparent hit box so hairline nodes can be hovered
-            hit = bar(u, v + h / 2 - hh / 2, hh, "none", "h").replace('<rect class="h"', '<rect class="h" pointer-events="all"')
+            hit = bar(u, v + h / 2 - hh / 2, hh, "none", "h").replace('<rect class="h"', '<rect class="h" pointer-events="all"') if traces else ""
             parts.append(f'<g id="{nid[n]}">{rect}{hit}</g>')
             texts.append(f'<g id="k{nid[n][1:]}"><text{text}</g>')
+    pw, ph = size()
+    if not traces:
+        return f'<svg viewBox="0 0 {pw} {ph}" width="100%" xmlns="http://www.w3.org/2000/svg"><defs>{defs}</defs>{"".join(parts + texts)}</svg>'
 
     # hover tracing without JS: the flow is split into source-to-sink paths with a fixed
     # position inside every node, so a hover lights the same places every time. For each
@@ -385,8 +428,36 @@ def svg(b, tb=None):
                        f"svg:has({sel}) #t{h}{{display:block}}"
                        for h in all_traces for sel in [f"#{h}:hover" + (f",#k{h[1:]}:hover" if h.startswith("n") else "")]))
     parts.insert(0, f"<style>{style}</style><defs>{defs}</defs>")
-    pw, ph = size()
     return f'<svg viewBox="0 0 {pw} {ph}" width="100%" xmlns="http://www.w3.org/2000/svg">{"".join(parts + layers + texts)}</svg>'
+
+
+# The pane's drawing is the page's Sankey in miniature: the same page size and columns,
+# every tool but a long tail, labels small; the surface scales it to the pane's width, and
+# where that is too small to read, "open in browser" shows the page.
+FLOW_W, FLOW_H, FLOW_PAD, FLOW_FONT, FLOW_LABEL, FLOW_TOOLS = W, H, 110, 8, 30, 12
+FLOW_HIDE = ()
+FLOW_STYLE = ("text{font:8px -apple-system,system-ui,sans-serif;fill:#d4d4d4}.v{fill:#9a9a9a}"
+              "@media(prefers-color-scheme:light){text{fill:#1f1f1f}.v{fill:#6b6b6b}}")
+
+
+def flow_svg(R, keep_tools=FLOW_TOOLS, hide=FLOW_HIDE):
+    """The Sankey for the pane: small labels, the hover layers left out, a long tail of
+    tools folded, and a <style> of its own so it follows the surface's light or dark scheme."""
+    global W, H, PAD, FONT_MAX, LABEL_MAX, HIDE, MODELS, DIR
+    b, tb = R["bucket"], R["transcript"]
+    if not b or b.cost <= 0:
+        return (f'<svg viewBox="0 0 {FLOW_W} 40" width="{FLOW_W}" height="40" xmlns="http://www.w3.org/2000/svg">'
+                f'<style>{FLOW_STYLE}</style><text x="8" y="24">no usage for this session yet.</text></svg>')
+    saved = W, H, PAD, FONT_MAX, LABEL_MAX, HIDE, MODELS, DIR
+    W, H, PAD, FONT_MAX, LABEL_MAX, DIR = FLOW_W, FLOW_H, FLOW_PAD, FLOW_FONT, FLOW_LABEL, "ltr"
+    HIDE = frozenset(hide) & {k for k, _, _ in COLUMNS}
+    MODELS = "model" not in HIDE
+    try:
+        s = svg(b, tb, traces=False, keep_tools=keep_tools)
+    finally:
+        W, H, PAD, FONT_MAX, LABEL_MAX, HIDE, MODELS, DIR = saved
+    s = s.replace('width="100%"', f'width="{FLOW_W}" height="{FLOW_H}"', 1)
+    return s.replace("<defs>", f"<style>{FLOW_STYLE}</style><defs>", 1)
 
 
 def tools_table(R):
@@ -639,8 +710,13 @@ def timeline(R):
             f'dashed: your prompts</span>{seg}</h2>{draw("time")}{draw("calls")}</section>')
 
 
-def body(R, direction="ltr", models=True, hide=()):
-    """Everything below the page title, as one HTML fragment. hide: columns to leave out
+PARTS = ("head", "kpi", "flow", "chart", "status")
+
+
+def parts(R, direction="ltr", models=True, hide=()):
+    """Everything below the page title as named HTML fragments (PARTS, in page order). The
+    page holds each in a div of its own and the live data file carries the same names, so
+    an update swaps only the parts whose markup changed. hide: columns to leave out
     (models=False hides "model" too)."""
     global DIR, MODELS, HIDE
     DIR = direction
@@ -649,7 +725,7 @@ def body(R, direction="ltr", models=True, hide=()):
     s, b, tb = R["session"], R["bucket"], R["transcript"]
     if not s:
         head = f'<div class="sub">session {esc(R["sid"] or "?")} · waiting for activity…</div>'
-        return head
+        return {"head": head, "kpi": "", "flow": "", "chart": "", "status": ""}
     since = s["since"].strftime("%H:%M") if s["since"] else "?"
     name = f'<b title="{esc(R["sid"])}">{esc(s["title"])}</b>' if s["title"] else f'session {esc(R["sid"][:8])}'
     head = (f'<div class="sub">{name} · {esc(", ".join(s["models"]))} · since {since}'
@@ -661,7 +737,21 @@ def body(R, direction="ltr", models=True, hide=()):
            f'<div><b>{kt.num(t["tokens"])}</b><span>tokens</span></div>'
            f'<div><b>{t["msgs"]}</b><span>messages</span></div></div>')
     flow = svg(b, tb) if b and b.cost > 0 else "<p>no usage for this session yet.</p>"
-    return head + kpi + flow + timeline(R) + status_html(R)
+    return {"head": head, "kpi": kpi, "flow": flow, "chart": timeline(R), "status": status_html(R)}
+
+
+def body(R, direction="ltr", models=True, hide=()):
+    """Everything below the page title, as one HTML fragment: the parts in their divs."""
+    p = parts(R, direction, models, hide)
+    return "".join(f'<div id="p-{k}">{p[k]}</div>' for k in PARTS)
+
+
+def push_js(R, direction="ltr", models=True, hide=()):
+    """The live data file: one call of the page's `__keeptabs` with the parts. Loaded by
+    the open page as a script (a page from a file: URL may load a sibling script, where it
+    may not fetch one), so no server is needed to keep it current."""
+    data = {"at": R["now"].strftime("%H:%M:%S"), "parts": parts(R, direction, models, hide)}
+    return "window.__keeptabs && window.__keeptabs(" + json.dumps(data, ensure_ascii=False) + ");\n"
 
 
 CSS = """
@@ -719,21 +809,62 @@ try { const m = localStorage.getItem("keeptabs-x"); if (m) document.documentElem
 </script>"""
 
 
-def page(content):
-    """Full HTML document around one body(): the snapshot."""
+# Keeps the page current from its data file (`--push`): every few seconds a script tag
+# loads `<name>.js` beside the page (a cache-busting query on it), which calls
+# `__keeptabs` with the parts; only a part whose markup changed is swapped, in place, so
+# the Sankey's hover, the scroll position and the chart's axis survive. The dot says
+# whether a push arrived in the last 15 s.
+LIVE = """<script>
+(function () {
+  var src = SRC, last = {}, seen = 0, at = "", dot = document.getElementById("dot");
+  window.__keeptabs = function (d) {
+    seen = Date.now();
+    if (d.at === at) return;
+    at = d.at;
+    for (var k in d.parts) {
+      if (last[k] === d.parts[k]) continue;
+      var el = document.getElementById("p-" + k);
+      if (el) el.innerHTML = d.parts[k];
+      last[k] = d.parts[k];
+    }
+  };
+  function poll() {
+    var s = document.createElement("script");
+    s.src = src + "?t=" + Date.now();
+    s.onload = s.onerror = function () { s.remove(); };
+    document.head.appendChild(s);
+  }
+  setInterval(poll, 3000);
+  setInterval(function () {
+    var ok = Date.now() - seen < 15000;
+    dot.className = "dot " + (ok ? "on" : "off");
+    dot.textContent = ok ? "live" : (seen ? "stale" : "snapshot");
+  }, 1000);
+  poll();
+})();
+</script>"""
+
+
+def page(content, data_src=None):
+    """Full HTML document around one body(): the snapshot. data_src: the live data file's
+    name beside the page (`--push` writes it); without one the page is a plain snapshot."""
+    live = LIVE.replace("SRC", json.dumps(data_src)) if data_src else ""
     return f"""<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>keeptabs status</title>
 <style>{CSS.replace("SVGW", str(size()[0]))}</style></head><body>
-<h1>keeptabs · status <span class="dot">snapshot</span></h1>
+<h1>keeptabs · status <span class="dot" id="dot">snapshot</span></h1>
 <div id="app">{content}</div>
-{AXIS}</body></html>"""
+{AXIS}{live}</body></html>"""
 
 
 def main():
     ap = argparse.ArgumentParser(description="keeptabs status page, written as a snapshot file")
-    ap.add_argument("--out", default=os.path.join(kt.CFG, "state", "status.html"),
-                    help="where to write the snapshot (default: state/status.html in the data folder)")
+    ap.add_argument("--out", help="where to write the snapshot (default: state/status.html in the data "
+                                  "folder; with --push or --flow-svg the page is written only when given)")
+    ap.add_argument("--push", metavar="FILE", help="write the live data file for the open page (see above)")
+    ap.add_argument("--flow-svg", action="store_true", help="print the compact Sankey for the pane")
+    ap.add_argument("--keep-tools", type=int, default=FLOW_TOOLS, help=f"tools drawn on their own in the compact Sankey (default {FLOW_TOOLS})")
     ap.add_argument("--session", help="the session to show (default: the most recently active one)")
     ap.add_argument("--direction", choices=["ltr", "ttb", "btt"], default="ltr",
                     help="flow direction: left→right (default), top→bottom, bottom→top")
@@ -745,12 +876,29 @@ def main():
     live = Live()
     live.scan()
     sid = a.session or live.store.newest_session()
-    os.makedirs(os.path.dirname(a.out), exist_ok=True)
-    tmp = a.out + ".tmp"
+    R = report(live, sid)
+    if a.flow_svg:
+        sys.stdout.write(flow_svg(R, a.keep_tools))
+        sys.stdout.flush()
+    if a.push:
+        write(a.push, push_js(R, a.direction, hide=hide))
+    if a.out or not (a.flow_svg or a.push):
+        out = a.out or os.path.join(kt.CFG, "state", "status.html")
+        # the page's data file sits beside it under the same name
+        data = os.path.splitext(out)[0] + ".js"
+        write(data, push_js(R, a.direction, hide=hide))
+        write(out, page(body(R, a.direction, hide=hide), os.path.basename(data)))
+        if not a.flow_svg:
+            print(out, flush=True)
+
+
+def write(path, text):
+    """Writes the whole file, through a temporary twin, so a reader never sees a cut file."""
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    tmp = path + ".tmp"
     with open(tmp, "w") as f:
-        f.write(page(body(report(live, sid), a.direction, hide=hide)))
-    os.replace(tmp, a.out)
-    print(a.out, flush=True)
+        f.write(text)
+    os.replace(tmp, path)
 
 
 if __name__ == "__main__":
