@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 sankey.py — the status page as a snapshot file: spending as a Sankey diagram,
-Home-Assistant-energy style, the cost-over-time chart, and every figure of keeptabs.py's
+Home-Assistant-energy style, the cost-over-time chart, and every figure of tokentab.py's
 report underneath. Renderers only; nothing here serves HTTP.
 
   sankey.py                 write the snapshot for the most recently active session and
@@ -16,7 +16,7 @@ report underneath. Renderers only; nothing here serves HTTP.
                             for the pane beside the chat (an Svg there is 128 KB at most)
 
 Flow, left to right:  session total → model → kind (context / generation / fees) → rate
-→ tool → where it went: tools, keeptabs overhead, prompts & replies, context re-reads (the
+→ tool → where it went: tools, TokenTab overhead, prompts & replies, context re-reads (the
 last two are what no tool or hook accounts for). Every ribbon is built from the per-model
 bookkeeping, so hovering a model lights exactly its slices downstream and hovering a tool
 exactly the models that paid for it. Plain SVG computed here in Python. Every column but
@@ -25,7 +25,7 @@ the session can be hidden (--hide model,kind,...); its flows are summed over it.
 import argparse, bisect, html, json, math, os, re, sys, time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import keeptabs as kt  # noqa: E402
+import tokentab as kt  # noqa: E402
 
 W, H, PAD, NODE_W, GAP = 1200, 520, 150, 18, 14
 HIT_H = 6        # minimum hover target height in px (invisible)
@@ -42,7 +42,7 @@ COLUMNS = [
     ("kind", "kind", "context · generation · fees"),
     ("rate", "rate", "cache read and write, input, output, thinking"),
     ("tool", "tool", "the tool a slice went to"),
-    ("sink", "where it went", "tools · keeptabs overhead · prompts & replies · context re-reads"),
+    ("sink", "where it went", "tools · TokenTab overhead · prompts & replies · context re-reads"),
 ]
 ROLES = ("session", "model", "kind", "rate", "tool", "sink")   # a path's nodes; non-tool paths skip "tool"
 
@@ -116,7 +116,7 @@ def node(u, v, h, color, label, value, right):
             f'<text x="{v + h / 2:.1f}" y="{ty:.1f}" text-anchor="middle">{text}</text>')
 
 
-OVERHEAD, PROMPTS, REREADS = "keeptabs overhead", "prompts & replies", "context re-reads"
+OVERHEAD, PROMPTS, REREADS = "TokenTab overhead", "prompts & replies", "context re-reads"
 COLOR.update({OVERHEAD: "#e57373", PROMPTS: "#5c6f82", REREADS: "#3f7f7a"})
 LABEL.update({k: k for k in (OVERHEAD, PROMPTS, REREADS)})
 
@@ -164,7 +164,7 @@ def short_model(mid):
 def flows(b, tb=None):
     """Root-to-sink paths [(nodes, value)] read straight from the per-model bookkeeping:
     cost_bm gives each model's spend per rate, tools[name][model] and overhead[model] what
-    each tool (and keeptabs' own hook text) draws from it (TOOL_DRAWS). Links and columns
+    each tool (and TokenTab's own hook text) draws from it (TOOL_DRAWS). Links and columns
     are sums of these paths, so no mixing is assumed anywhere. What no tool or hook accounts
     for goes straight past the tool column: cache read to "context re-reads", the rest to
     "prompts & replies". The min() only guards a transcript bucket against a ledger one
@@ -479,7 +479,7 @@ def tools_table(R):
                  for k, v in rows)
     o = R["overhead"]
     if o["cost"]:
-        tr += (f'<tr class="m"><td>keeptabs overhead</td><td></td><td class="n">{kt.money(o["cost"])}</td>'
+        tr += (f'<tr class="m"><td>TokenTab overhead</td><td></td><td class="n">{kt.money(o["cost"])}</td>'
                + "<td></td>" * len(models) + f'<td></td><td class="n">{kt.money(o["cost"] - o["read"])}</td>'
                f'<td class="n">{kt.num(o["rtokens"])}</td><td class="n">{kt.money(o["read"])}</td></tr>')
     return (f'<section class="wide"><h2>tools <span>asking + answer into context + re-reading it (estimates)</span></h2>'
@@ -497,7 +497,7 @@ def meter(frac):
 
 
 def status_html(R):
-    """The terminal's live view (keeptabs.py render()) as panels: same report, same numbers."""
+    """The terminal's live view (tokentab.py render()) as panels: same report, same numbers."""
     out = []
     t = R["total"]
     rows = "".join(f'<tr><td>{esc(r["label"])}</td><td class="n">{kt.num(r["tokens"])}</td>'
@@ -747,11 +747,11 @@ def body(R, direction="ltr", models=True, hide=()):
 
 
 def push_js(R, direction="ltr", models=True, hide=()):
-    """The live data file: one call of the page's `__keeptabs` with the parts. Loaded by
+    """The live data file: one call of the page's `__tokentab` with the parts. Loaded by
     the open page as a script (a page from a file: URL may load a sibling script, where it
     may not fetch one), so no server is needed to keep it current."""
     data = {"at": R["now"].strftime("%H:%M:%S"), "parts": parts(R, direction, models, hide)}
-    return "window.__keeptabs && window.__keeptabs(" + json.dumps(data, ensure_ascii=False) + ");\n"
+    return "window.__tokentab && window.__tokentab(" + json.dumps(data, ensure_ascii=False) + ");\n"
 
 
 CSS = """
@@ -804,20 +804,20 @@ html:not([data-x=calls]) svg.xc,html[data-x=calls] svg.xt{display:none}
 # Which x-axis the cost-over-time chart shows. Kept on <html>, outside the body the live
 # page swaps on every push, and remembered in this browser where storage is allowed.
 AXIS = """<script>
-function kx(m) { document.documentElement.dataset.x = m; try { localStorage.setItem("keeptabs-x", m); } catch (e) {} }
-try { const m = localStorage.getItem("keeptabs-x"); if (m) document.documentElement.dataset.x = m; } catch (e) {}
+function kx(m) { document.documentElement.dataset.x = m; try { localStorage.setItem("tokentab-x", m); } catch (e) {} }
+try { const m = localStorage.getItem("tokentab-x"); if (m) document.documentElement.dataset.x = m; } catch (e) {}
 </script>"""
 
 
 # Keeps the page current from its data file (`--push`): every few seconds a script tag
 # loads `<name>.js` beside the page (a cache-busting query on it), which calls
-# `__keeptabs` with the parts; only a part whose markup changed is swapped, in place, so
+# `__tokentab` with the parts; only a part whose markup changed is swapped, in place, so
 # the Sankey's hover, the scroll position and the chart's axis survive. The dot says
 # whether a push arrived in the last 15 s.
 LIVE = """<script>
 (function () {
   var src = SRC, last = {}, seen = 0, at = "", dot = document.getElementById("dot");
-  window.__keeptabs = function (d) {
+  window.__tokentab = function (d) {
     seen = Date.now();
     if (d.at === at) return;
     at = d.at;
@@ -851,15 +851,15 @@ def page(content, data_src=None):
     live = LIVE.replace("SRC", json.dumps(data_src)) if data_src else ""
     return f"""<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>keeptabs status</title>
+<title>TokenTab status</title>
 <style>{CSS.replace("SVGW", str(size()[0]))}</style></head><body>
-<h1>keeptabs · status <span class="dot" id="dot">snapshot</span></h1>
+<h1>TokenTab · status <span class="dot" id="dot">snapshot</span></h1>
 <div id="app">{content}</div>
 {AXIS}{live}</body></html>"""
 
 
 def main():
-    ap = argparse.ArgumentParser(description="keeptabs status page, written as a snapshot file")
+    ap = argparse.ArgumentParser(description="TokenTab status page, written as a snapshot file")
     ap.add_argument("--out", help="where to write the snapshot (default: state/status.html in the data "
                                   "folder; with --push or --flow-svg the page is written only when given)")
     ap.add_argument("--push", metavar="FILE", help="write the live data file for the open page (see above)")

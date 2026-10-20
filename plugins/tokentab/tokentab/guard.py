@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""keeptabs budget guard - a Claude Code hook that warns, then stops.
+"""TokenTab budget guard - a Claude Code hook that warns, then stops.
 
 Three scopes, most restrictive wins:
   turn    one prompt and everything it sets off. Resets on the next prompt.
@@ -10,12 +10,12 @@ Plus a job budget, set by starting a prompt with "$2:", "beer:" or "200k:".
 It runs until the next one, or "nobudget:" to clear it.
 
 Wired to PreToolUse (the brake inside a turn) and UserPromptSubmit (the stop
-between turns). Config: budget.json in the plugin's data folder (/keeptabs-mod:budget)
+between turns). Config: budget.json in the plugin's data folder (/tokentab:budget)
 """
 import glob, json, os, re, sys, time
 from datetime import datetime
 
-from keeptabs import data_dir   # noqa: E402  (same folder; env var, else the folder in use)
+from tokentab import data_dir   # noqa: E402  (same folder; env var, else the folder in use)
 CFG   = data_dir()  # plugin: data in the plugin's data folder, shipped files next to this script
 HERE  = os.path.dirname(os.path.abspath(__file__))
 STATE = os.path.join(CFG, "state")
@@ -353,7 +353,7 @@ def main():
         payload = json.load(sys.stdin)
     except Exception:
         return 0
-    if os.environ.get("KEEPTABS_DEBUG") or os.path.exists(os.path.join(CFG, "state", "debug")):
+    if os.environ.get("TOKENTAB_DEBUG") or os.path.exists(os.path.join(CFG, "state", "debug")):
         try:
             with open(os.path.join(CFG, "state", "payloads.log"), "a") as fh:
                 fh.write(json.dumps({k: v for k, v in payload.items() if k not in ("tool_input", "prompt", "tool_response")}) + "\n")
@@ -371,7 +371,7 @@ def main():
             except Exception as e:
                 why = str(e)
             print(json.dumps({"systemMessage":
-                f"keeptabs: budget.json cannot be read ({why}). No budgets are being "
+                f"TokenTab: budget.json cannot be read ({why}). No budgets are being "
                 f"checked until it is fixed."}))
         return 0
     scopes_cfg = [
@@ -395,7 +395,7 @@ def main():
     helper = payload.get("agent_type") if payload.get("agent_id") else None
     if event == "PreToolUse" and payload.get("tool_name") == "Bash":
         cmd = str((payload.get("tool_input") or {}).get("command") or "")
-        if re.fullmatch(r"\s*python3\s+\S*keeptabs/(keeptabs|sankey)\.py(\s+--?[\w=-]+(\s+[\w-]+)?)*\s*", cmd):
+        if re.fullmatch(r"\s*python3\s+\S*tokentab/(tokentab|sankey)\.py(\s+--?[\w=-]+(\s+[\w-]+)?)*\s*", cmd):
             return 0
 
     prices = load(os.path.join(HERE, "prices.json"), {})
@@ -414,7 +414,7 @@ def main():
         st["subs"] = subs
 
     if tampered:
-        msg = (f"keeptabs: the usage record for this session shrank, which cannot happen "
+        msg = (f"TokenTab: the usage record for this session shrank, which cannot happen "
                f"in normal operation. Treating it as tampering, using the recorded "
                f"high-water mark, and refusing to continue. Clear state/{sid}.json to "
                f"reset once you know why.")
@@ -458,18 +458,18 @@ def main():
         j = parse_job(payload.get("prompt"), scale)
         if j and j[0] == "clear":
             st.pop("job", None)
-            job_msgs.append(("keeptabs: job budget cleared.",
+            job_msgs.append(("TokenTab: job budget cleared.",
                 "JOB NOTICE: the user cleared the job budget. Ignore the \"nobudget:\" prefix."))
         elif j:
             _, ju, jt, label = j
             st["job"] = {"usd": ju, "tokens": jt, "label": label, "base_cost": cost,
                          "base_tokens": toks, "at": time.time()}
             st["band_job"] = 0
-            job_msgs.append((f"keeptabs: job budget set to {label}.",
+            job_msgs.append((f"TokenTab: job budget set to {label}.",
                 f"JOB BUDGET: the user set this job's budget to {label}, counted from now, "
                 f"across prompts until they set a new one. The prefix before the colon is the "
                 f"budget, not part of the task. Plan the work to fit it and keep an eye on the "
-                f"budget hints keeptabs sends. If the job clearly will not fit, say so early and "
+                f"budget hints TokenTab sends. If the job clearly will not fit, say so early and "
                 f"offer a smaller version rather than running out halfway."))
     job = st.get("job")
 
@@ -511,25 +511,25 @@ def main():
         if frac >= 1.0 and hard_ and name == "job":
             st[band_key] = 100
             return ("deny",
-                f"keeptabs: this job used its budget ({detail}). Start your next prompt with "
+                f"TokenTab: this job used its budget ({detail}). Start your next prompt with "
                 f"a new budget, like \"$2:\" or \"beer:\", or \"nobudget:\" to carry on without one.",
                 f"This job has spent its budget ({detail}). Stop now. Tell the user what is "
                 f"done and what is left, and what a realistic budget for the rest would be. "
-                f"Do not raise the budget or edit keeptabs files yourself.")
+                f"Do not raise the budget or edit TokenTab files yourself.")
         if frac >= 1.0 and hard_:
             st[band_key] = 100
             if name == "request":
                 return ("deny",
-                    f"keeptabs: this request hit its own limit ({detail}, {pct}%). Send a "
+                    f"TokenTab: this request hit its own limit ({detail}, {pct}%). Send a "
                     f"new prompt to start a fresh turn, or raise turn_limit_* in "
-                    f"budget.json (/keeptabs-mod:budget shows where).",
+                    f"budget.json (/tokentab:budget shows where).",
                     f"This single request has spent {detail} and reached its per-request "
                     f"ceiling. Stop now and report what you finished and what is left. The "
                     f"user can continue with a new prompt. Do not raise the limit yourself.")
             scope = "session" if name == "session" else "daily"
             return ("deny",
-                f"keeptabs: {scope} budget exhausted. {detail} ({pct}%). Raise the "
-                f"{scope} limit in budget.json (/keeptabs-mod:budget) to continue.",
+                f"TokenTab: {scope} budget exhausted. {detail} ({pct}%). Raise the "
+                f"{scope} limit in budget.json (/tokentab:budget) to continue.",
                 f"The {scope} budget is exhausted: {detail}. No further tool calls are "
                 f"permitted. Stop work, tell the user, and do not attempt to raise the "
                 f"limit or edit the budget file yourself.")
@@ -543,13 +543,13 @@ def main():
             # Warn-only mode: say so, and never ask Claude to cut work short.
             head = f"{label} limit reached" if band == 100 else f"{pct}% of {label} budget used"
             return ("note",
-                f"keeptabs: {head} ({detail}). Warning only, nothing is blocked.",
+                f"TokenTab: {head} ({detail}). Warning only, nothing is blocked.",
                 f"BUDGET NOTICE: {head} ({detail}). This is a soft limit: nothing is "
                 f"blocked. Mention it to the user in one line and keep going, using fewer "
                 f"calls where you can: every call in this conversation re-reads its whole "
                 f"context.")
         return ("note",
-            f"keeptabs: {pct}% of {label} budget used ({detail}). "
+            f"TokenTab: {pct}% of {label} budget used ({detail}). "
             f"Claude has been asked to wrap up.",
             f"BUDGET NOTICE: {pct}% of {label} budget is gone ({detail}). Start "
             f"wrapping up. Prefer cheap actions, avoid re-reading large files or "
@@ -582,7 +582,7 @@ def main():
                         json.dump(st, fh)
                 except Exception:
                     pass
-                msg = (f"keeptabs: this session's prompt cache has expired (idle {ago(idle)}, "
+                msg = (f"TokenTab: this session's prompt cache has expired (idle {ago(idle)}, "
                        f"{ttl} cache). Sending now re-writes {ctx:,} tokens, about "
                        f"${ctx * wr / 1e6:,.2f}. A new session starts at about ${fresh * wr / 1e6:,.2f}. "
                        f"Nothing was sent. Send the prompt again within "
@@ -603,7 +603,7 @@ def main():
             st["ctx_band"] = hit[-1]
             per = ctx * rate(prices, model, "cache_read") / 1e6
             verdicts.append(("note",
-                f"keeptabs: context is {ctx:,} tokens, so every call re-reads it for about "
+                f"TokenTab: context is {ctx:,} tokens, so every call re-reads it for about "
                 f"${per:,.3f}. If the next thing is a different task, a new session is cheaper.",
                 f"CONTEXT NOTICE: this session's context is {ctx:,} tokens (about ${per:,.3f} per "
                 f"call to re-read). Mention it to the user in one line, then carry on as normal."))
@@ -623,7 +623,7 @@ def main():
             extra = max(0, ctx - fresh_tok) * rr / 1e6
             be = int(fresh / extra) + 1 if extra > 0 else None
             hints.append(
-                f"SESSION CHECK (from keeptabs, not the user): this conversation's context is "
+                f"SESSION CHECK (from TokenTab, not the user): this conversation's context is "
                 f"{ctx:,} tokens, about ${per:,.3f} per call to re-read. A new session would start "
                 f"at about ${fresh:,.2f}"
                 + (f" and pays off after about {be} calls." if be else ".") +
@@ -639,13 +639,13 @@ def main():
         floor = (last[1] * rate(prices, last[2], "cache_read") / 1e6) if last else 0.0
         calls = (f" Each call here costs at least ${floor:,.3f} just to re-read this context, so "
                  f"at most about {int(max(0.0, left) / floor)} more calls fit." if floor > 0 else "")
-        hints.append(f"BUDGET HINT (from keeptabs): job budget {job['label']}: ${spent_j:,.2f} spent, "
+        hints.append(f"BUDGET HINT (from TokenTab): job budget {job['label']}: ${spent_j:,.2f} spent, "
                      f"${max(0.0, left):,.2f} left.{calls} Plan the rest to fit.")
     if event == "UserPromptSubmit" and jcfg.get("ask", True) and not st.get("job") and first_prompt:
         rec = [x for x in (st.get("recent") or []) if x > 0]
         hist = (f" This user's recent requests averaged ${sum(rec) / len(rec):,.2f}." if rec else "")
         hints.append(
-            f"JOB CHECK (from keeptabs, not the user): no job budget is set. Before substantial "
+            f"JOB CHECK (from TokenTab, not the user): no job budget is set. Before substantial "
             f"work, estimate what this job will cost, in dollars and on this scale: "
             f"{scale_line(scale)}.{hist} If the estimate is under "
             f"${float(jcfg.get('ask_over_usd', 1.0)):,.2f}, state it in one line and proceed. If "
@@ -663,9 +663,9 @@ def main():
             and (waiting or spent >= ask_over) and helper):
         st["ask_fired"] = True
         verdicts.append(("deny",
-            f"keeptabs: paused a helper ({helper}) at ${spent:,.2f} for this request, waiting on "
+            f"TokenTab: paused a helper ({helper}) at ${spent:,.2f} for this request, waiting on "
             f"your budget decision.",
-            f"keeptabs has paused this job at ${spent:,.2f}: it passed the ${ask_over:,.2f} "
+            f"TokenTab has paused this job at ${spent:,.2f}: it passed the ${ask_over:,.2f} "
             f"check-in point with no budget from the user. Stop now. Report back to the agent "
             f"that started you: what is done, what is left, where the browser or files are now, "
             f"and your estimate for the rest. Do not retry, do not start other agents, and do "
@@ -675,7 +675,7 @@ def main():
         first = not waiting
         st["ask_fired"] = True
         verdicts.append(("deny",
-            f"keeptabs: this request passed ${ask_over:,.2f} (${spent:,.2f}) with no job budget. "
+            f"TokenTab: this request passed ${ask_over:,.2f} (${spent:,.2f}) with no job budget. "
             f"Claude has been asked to check with you. Reply with a budget like \"$3:\" to "
             f"continue, or \"nobudget:\" to carry on without one.",
             f"This request has spent ${spent:,.2f} with no job budget set, past the "
@@ -689,7 +689,7 @@ def main():
     if (helper and event == "PreToolUse" and not b.get("helpers_may_delegate", False)
             and payload.get("tool_name") in ("Agent", "Task", "SendMessage")):
         verdicts.append(("deny",
-            f"keeptabs: stopped a helper ({helper}) from starting another agent.",
+            f"TokenTab: stopped a helper ({helper}) from starting another agent.",
             f"Helpers may not start or message other agents here: each handoff loses "
             f"instructions and adds its own start-up cost. Do the work yourself, or stop and "
             f"report back to the agent that started you."))
@@ -709,7 +709,7 @@ def main():
 
     if helper:
         verdicts = [v for v in verdicts if v[0] == "deny"]
-        verdicts = [v if v[2].startswith(("keeptabs has paused", "Helpers may not")) else
+        verdicts = [v if v[2].startswith(("TokenTab has paused", "Helpers may not")) else
                     (v[0], v[1], v[2] + " You are a helper: stop and report back to the agent "
                      "that started you what is done and what is left. Do not start other agents.")
                     for v in verdicts]

@@ -327,13 +327,13 @@ the micro-dollar. What turned out differently from the text above:
 
 **Phase 1, done 2026-10-16 (branch `feature/mod-pane`): the pane.** ANSI-to-`Text`
 conversion of `render()`; pane opened at `session.start` with auto-open on; status line
-fallback; `/keeptabs-mod:status` as a registered command that opens the pane; redraw on
+fallback; `/tokentab:status` as a registered command that opens the pane; redraw on
 ledger writes and the 30 s clock; the "open in browser" button to a snapshot written on
 demand. Verified under `claude -p` (no pane, one ledger line), in a wide and a narrow
 terminal, and in Desktop with two sessions side by side. This is CORE-537's deliverable.
 What turned out differently from the text above:
 
-- Checked against the types **2.1.292** laid in `plugins/keeptabs-mod/.claude-plugin/types/`
+- Checked against the types **2.1.292** laid in `plugins/tokentab/.claude-plugin/types/`
   (the Desktop binary, 2.1.295, does not run on the host). Everything the plan relies
   on is there with the shapes in the API table: `$.ui.open`, `ui.render` for `Pane` with
   `title`, `isFocused`, `bodyColumns`, `placement`, `$.command.register` and
@@ -343,13 +343,13 @@ What turned out differently from the text above:
   rather than on the engine), and a remote surface draws a `Link` whose `href` is not
   `https:` as plain text, so the snapshot opens from a `Button` (hotkey `o`) that runs
   `sankey.py` and then `open`, on every surface.
-- **`/keeptabs-mod:status` is not a registered command.** `$.command.register({ name })`
+- **`/tokentab:status` is not a registered command.** `$.command.register({ name })`
   makes a flat `/<name>`: no plugin prefix, no colon allowed in the name, and the same
   namespace as the built-ins, so `status` is shadowed by Claude Code's own `/status` and
   never shows in the typeahead (tried; `keeptabs` as the name worked). The
   `<plugin>:<name>` convention is the engine's for what a plugin ships as files (skills,
   markdown commands, agents). So the command stays the `status` skill, and the module's
-  `command.run` hook matches `{ command: 'keeptabs-mod:status' }` and answers without
+  `command.run` hook matches `{ command: 'tokentab:status' }` and answers without
   `next`: the pane opens, the status line prints, the figures go to Claude as `context`,
   and the skill's prompt never runs. The skill's own text is the fallback where the module
   did not load (it says Claude Code 2.1.287 or later is needed). `validate` lists the
@@ -397,7 +397,7 @@ What turned out differently from the text above:
   module's unawaited redraws with `mock.clock`'s `settle()`, draws the pane through
   `$.ui.render` on `terminal` and `desktop` (a Text with no props comes back without a
   `props` key), and presses the button through `$.ui.press`. A test file may import the
-  module's pure functions. `tsc` runs as `npx -y -p typescript tsc -p plugins/keeptabs-mod`
+  module's pure functions. `tsc` runs as `npx -y -p typescript tsc -p plugins/tokentab`
   against the laid types; there is no global `tsc`.
 - A terminal of a known width for the behavioural checks came from `tmux` (installed for
   it); the Desktop check needed `CLAUDE_CODE_PLUGIN_DIRS` in `~/.claude/settings.json`
@@ -462,7 +462,7 @@ built, and where it differs from the phase 3 and 4 text above:
   `_tokens`, `_percent`, a switch), `off` for a limit switched off, dotted keys for the
   job settings, unknown keys refused, the file's order and `_comment` keys kept. A
   refused value is shown in `error` colour under its field and not written. Mobile has
-  no `Input`: the values are shown read-only. `/keeptabs-mod:budget` is model-invocable
+  no `Input`: the values are shown read-only. `/tokentab:budget` is model-invocable
   now (explicit request in the same prompt only) and writes through the same validator.
 - **Not built**: the Cost tab (the chart as `Svg`) and the narrow layout for `render()`.
 - **Checks**: 12 module tests (`claude plugin test`, with `store.get`/`store.set` and

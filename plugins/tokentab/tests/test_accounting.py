@@ -1,7 +1,7 @@
-"""Regression fixture for keeptabs cost accounting.
+"""Regression fixture for TokenTab cost accounting.
 
 Builds a synthetic transcript with (1) two models, (2) one assistant message that calls
-several tools, (3) a compaction/summary turn, feeds it to keeptabs.Store in two scans
+several tools, (3) a compaction/summary turn, feeds it to tokentab.Store in two scans
 (before / after the compaction, which also exercises incremental tailing), and asserts:
   sum(cost_by) == cost, per-model cost sums, per-tool fields <= the rate they draw from,
   every Sankey column (plus pass-through ribbons) sums to the session total, and node
@@ -9,14 +9,14 @@ several tools, (3) a compaction/summary turn, feeds it to keeptabs.Store in two 
 
 No dependencies, no pytest; run from anywhere, exits non-zero on a failure:
 
-  python3 plugins/keeptabs-mod-mod/tests/test_accounting.py
+  python3 plugins/tokentab/tests/test_accounting.py
 """
 import json, os, sys, tempfile
 from xml.dom import minidom
 
 PLUGIN = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(PLUGIN, "keeptabs"))
-import keeptabs as kt
+sys.path.insert(0, os.path.join(PLUGIN, "tokentab"))
+import tokentab as kt
 import sankey
 
 OPUS, SONNET = "claude-opus-5-5", "claude-sonnet-5"
@@ -62,14 +62,14 @@ def tr(i, text):
 uA = usage(i=10, w1=20000, o=1000, th=400)
 part1 = [
     user("fix the bug"),
-    hook("JOB CHECK (from keeptabs, not the user): " + "x" * 300),
+    hook("JOB CHECK (from TokenTab, not the user): " + "x" * 300),
     # (2) one message, several content lines, several tools; (1) model one
     asst("rA", OPUS, uA, {"type": "thinking", "thinking": "t" * 800}),
     asst("rA", OPUS, uA, {"type": "text", "text": "I'll look."}),
     asst("rA", OPUS, uA, tu("t1", "Bash", {"command": "ls -la"})),
     asst("rA", OPUS, uA, tu("t2", "Read", {"file_path": "/a/" + "p" * 200})),
     user([tr("t1", "a" * 4000), tr("t2", "b" * 1000)]),
-    hook("BUDGET HINT (from keeptabs): " + "y" * 300),
+    hook("BUDGET HINT (from TokenTab): " + "y" * 300),
     # (1) model two, mixed 1h/5m write
     asst("rB", SONNET, usage(i=5, r=20010, w1=1500, w5=500, o=300), tu("t3", "Grep", {"pattern": "foo"})),
     user([tr("t3", "c" * 2000)]),

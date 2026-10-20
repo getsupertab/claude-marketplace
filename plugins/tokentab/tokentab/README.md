@@ -1,4 +1,4 @@
-# keeptabs (local prototype)
+# TokenTab (local prototype)
 
 > This is the POC as written for a standalone install. In the plugin it is installed,
 > updated and removed as described in the [plugin README](../README.md): `setup.py`,
@@ -16,50 +16,50 @@ Three parts:
 |---|---|---|
 | Collector | `collector.py` | Receives Claude Code's telemetry and writes one ledger line per API call |
 | Guard | `guard.py` | Claude Code hook: warns, stops, asks for budgets, sends budget hints |
-| Live view | `keeptabs.py` | Terminal view of spend: session, requests, budgets, tools |
+| Live view | `tokentab.py` | Terminal view of spend: session, requests, budgets, tools |
 
 Plus `health.py` (is telemetry flowing?), `setup.py` (install) and `gate/` (a
 gateway prototype, see the end).
 
 ## Install
 
-1. Unzip so the folder sits at **`~/.claude/keeptabs`**. `guard.py` looks for its
+1. Unzip so the folder sits at **`~/.claude/tokentab`**. `guard.py` looks for its
    files there, so any other location will not work.
 
-       cd ~/.claude && unzip ~/Downloads/keeptabs.zip
+       cd ~/.claude && unzip ~/Downloads/tokentab.zip
 
 2. Set your own limits in `budget.json` (see Budgets below). The file in the zip
    carries someone else's limits.
 
 3. Run setup. It is safe to re-run, and it backs up `~/.claude/settings.json` first.
 
-       python3 ~/.claude/keeptabs/setup.py
+       python3 ~/.claude/tokentab/setup.py
 
    It does three things:
    - adds the telemetry env vars to `~/.claude/settings.json`
      (`CLAUDE_CODE_ENABLE_TELEMETRY=1`, OTLP over HTTP/JSON to `127.0.0.1:4318`)
    - registers `guard.py` as a `UserPromptSubmit` and `PreToolUse` hook
-   - registers `collector.py` with launchd (`co.supertab.keeptabs.collector`), so it
+   - registers `collector.py` with launchd (`co.supertab.tokentab.collector`), so it
      runs at login and restarts if it dies. Log: `state/collector.log`
 
 4. **Start a new Claude Code session.** Sessions that were already open do not send
    telemetry. Then check it:
 
-       python3 ~/.claude/keeptabs/health.py
+       python3 ~/.claude/tokentab/health.py
 
    Three checks: telemetry is switched on in settings, the collector's heartbeat is
    fresh, and Claude has not replied since the collector last heard anything.
 
 To remove everything setup added (env vars, hooks, launchd job):
 
-    python3 ~/.claude/keeptabs/setup.py uninstall
+    python3 ~/.claude/tokentab/setup.py uninstall
 
 ## Live view
 
-    python3 ~/.claude/keeptabs/keeptabs.py            # live, follows the active session
-    python3 ~/.claude/keeptabs/keeptabs.py --once     # one snapshot
-    python3 ~/.claude/keeptabs/keeptabs.py --json     # machine-readable
-    python3 ~/.claude/keeptabs/keeptabs.py --session <id>
+    python3 ~/.claude/tokentab/tokentab.py            # live, follows the active session
+    python3 ~/.claude/tokentab/tokentab.py --once     # one snapshot
+    python3 ~/.claude/tokentab/tokentab.py --json     # machine-readable
+    python3 ~/.claude/tokentab/tokentab.py --session <id>
 
 Shows: the session's cost by rate (input, cache write, cache read, output, web search
 fees), spend by call source (main loop, prompt suggestions, web search, helpers),
@@ -80,7 +80,7 @@ context size and what each call costs to re-read it, and cost per tool.
 - The guard uses **the larger of the two**, so switching source never lowers a total.
 - **Prices** come from `prices.json` (published per-token rates; `_verified: true`).
   Five rates matter: input, output, cache write 5m, cache write 1h, cache read.
-  Thinking is billed as output; keeptabs files it apart (see below).
+  Thinking is billed as output; TokenTab files it apart (see below).
 - **Fees.** Web search is billed per search ($0.01), not per token. The collector
   records it as `fees_usd`: whatever Claude Code's own cost figure has on top of the
   token price. `cost_usd` stays tokens only. Older ledger lines are corrected on read.
@@ -118,14 +118,14 @@ the ledger has no content. Each figure is kept per tool and per model:
 Why the rest are estimates: usage is reported per API call, never per content block, so any
 split of one call's tokens among its parts has to come from transcript sizes (characters,
 not a tokenizer: no dependencies). Each estimate lives in one named function in
-`keeptabs.py` (`block_chars`, `size_shares`, `resident_shares`). Known biases:
+`tokentab.py` (`block_chars`, `size_shares`, `resident_shares`). Known biases:
 - When a call writes more tokens than its visible characters explain (a cache miss
   re-writing the whole context, the system prompt), the excess stays unattributed.
 - Re-reads assume a tool result stays in the cached prefix until a compaction. Claude Code
   clearing old tool results mid-session is not visible in the transcript, so those results
   keep collecting re-read cost.
-- keeptabs' own hook text (budget hints, job checks) is found by its marker words and shown
-  as "keeptabs overhead". What no tool or hook accounts for is "prompts & replies" (or
+- TokenTab's own hook text (budget hints, job checks) is found by its marker words and shown
+  as "TokenTab overhead". What no tool or hook accounts for is "prompts & replies" (or
   "context re-reads" for cache read).
 
 `tests/test_accounting.py` checks the invariants: `cost_by` sums to the cost, no tool draws
@@ -214,7 +214,7 @@ A helper's tool calls carry `agent_id`, so the guard can tell them apart.
 
 ### Never blocked
 
-Reading keeptabs' own numbers (`python3 .../keeptabs.py` or `health.py` with plain
+Reading TokenTab's own numbers (`python3 .../tokentab.py` or `health.py` with plain
 flags) always goes through, even during a pause or a hard stop.
 
 ## Findings so far
@@ -245,7 +245,7 @@ flags) always goes through, even during a pause or a hard stop.
 
 ### The claim
 
-> keeptabs binds a spend limit for an agent running as an unprivileged user on a
+> TokenTab binds a spend limit for an agent running as an unprivileged user on a
 > machine where the enforcement chain is root-owned and the usage record cannot be
 > rewritten. It does not bind an agent that can escalate privilege.
 
