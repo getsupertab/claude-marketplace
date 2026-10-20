@@ -90,7 +90,8 @@ claude plugin uninstall tokentab@supertab
 
 That is all of it: TokenTab changes nothing outside Claude Code's plugin folders. Its
 data (ledger, guard state and your `budget.json`) stays in
-`~/.claude/plugins/data/tokentab-supertab/`; delete that folder to remove it too.
+`plugins/data/tokentab-supertab/` in Claude Code's config folder, `$CLAUDE_CONFIG_DIR` or
+`~/.claude`; delete that folder to remove it too.
 
 ## What runs where
 
@@ -102,7 +103,7 @@ data (ledger, guard state and your `budget.json`) stays in
 | `tokentab/tokentab.py`, `tokentab/sankey.py` | Python, run by the hooks module, the spend skill or by hand | The accounting, the terminal live view (`--once`) and the status line (`--status`); the status page (`--out`), its live data file (`--push`) and the pane's Sankey (`--flow-svg`); `budget.py` validates and writes one limit |
 | `skills/status` | `/tokentab:status`, answered by the hooks module | Opens the pane and hands Claude the figures; the skill's own text runs only where the module did not load |
 | `skills/spend`, `skills/budget` | Claude, when asked what was spent; `/tokentab:budget` | Answer in words from `tokentab.py --once`; show or change the limits |
-| Data: `budget.json`, `ledger/<day>/<session>.jsonl`, `state/`, `status/<session>.html` | `~/.claude/plugins/data/tokentab-supertab/`, one fixed path, separate from keeptabs' folder | Kept across updates; the status page and its data file `status/<session>.js` are rewritten on each "open in browser", the data file on every redraw for 30 minutes after |
+| Data: `budget.json`, `ledger/<day>/<session>.jsonl`, `state/`, `status/<session>.html` | `plugins/data/tokentab-supertab/` under `$CLAUDE_CONFIG_DIR`, else under `~/.claude`, one fixed path, separate from keeptabs' folder | Kept across updates; the status page and its data file `status/<session>.js` are rewritten on each "open in browser", the data file on every redraw for 30 minutes after |
 
 Code runs from the plugin folder, `${CLAUDE_PLUGIN_ROOT}`
 (`~/.claude/plugins/cache/supertab/tokentab/<version>/`, the version being the git
@@ -131,8 +132,8 @@ See [AGENTS.md](../../AGENTS.md) for the edit-and-reload loop and the checks.
 `budget.json`, `prices.json`, `README.md`) and runs in place, from the plugin folder.
 The POC's `collector.py`, `health.py` and `setup.py` are replaced by the hooks module;
 `gate/` is left out. Each change to the POC files is marked `# plugin: ...`: data goes
-to the plugin's data folder (`~/.claude/plugins/data/tokentab-supertab`, the path the
-module builds from `HOME`), `prices.json` comes from the script's own folder, and messages point to
+to the plugin's data folder (`plugins/data/tokentab-supertab` under `$CLAUDE_CONFIG_DIR` or `~/.claude`,
+the path the module builds), `prices.json` comes from the script's own folder, and messages point to
 `/tokentab:budget`. The plugin copies only `budget.json` into the data folder, once, as
 your starting limits.
 

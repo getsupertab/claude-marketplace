@@ -26,7 +26,7 @@ If the user wants the status page and has no pane, run on its own, the same way:
     python3 ${CLAUDE_PLUGIN_ROOT}/tokentab/sankey.py
 
 It writes the page for the most recently active session as a snapshot file and prints
-its path (`~/.claude/plugins/data/tokentab-supertab/state/status.html`). It is a
+its path (`state/status.html` in TokenTab's data folder). It is a
 file, so it shows the moment it was written; run the command again for a fresh one. In
 Claude Desktop you can open it in the app's browser pane if they ask.
 
@@ -36,4 +36,5 @@ hooks module did not load; Claude Code 2.1.287 or later is needed, and the first
 prompt of the session says so.
 
 For budgets, point the user to `/tokentab:budget`. Do not edit anything in
-`~/.claude/plugins/data/tokentab-supertab` unless the user explicitly asks you to.
+TokenTab's data folder, `plugins/data/tokentab-supertab` under `$CLAUDE_CONFIG_DIR` or
+`~/.claude`, unless the user explicitly asks you to.
