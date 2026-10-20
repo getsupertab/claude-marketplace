@@ -470,7 +470,11 @@ export const register: Register = (on, pluginOptions) => {
     drawsSvg = e.surface !== null && e.surface !== 'terminal'
     if (e.isInteractive && e.surface !== null) {   // `claude -p` and a bare host: nothing visual
       try { pageOpenedAt = num(await $.store.get(`pageOpenedAt:${await sid($)}`)) || undefined } catch { /* none */ }
-      if (autoOpen()) await openPane($)
+      if (autoOpen()) {
+        const opened = await openPane($)
+        // Not placed: say why, so a session where the pane stays shut is not silent.
+        if (!opened.isPlaced) $.ui.toast(`TokenTab: pane not opened (${opened.reason})`)
+      }
       startClock($)
       void refresh($)
     }
