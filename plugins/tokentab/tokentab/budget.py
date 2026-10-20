@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-budget.py — the one validator for keeptabs' budget.json, used by the pane's Options view
+budget.py — the one validator for TokenTab's budget.json, used by the pane's Options view
 and the budget skill alike.
 
   budget.py get [KEY]       print the value under KEY (dotted: job.ask_over_usd), or the
@@ -17,7 +17,7 @@ A key that is not in the file is refused too, so a typo never adds one. Lists
 import json, os, sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import keeptabs as kt  # noqa: E402
+import tokentab as kt  # noqa: E402
 
 PATH = os.path.join(kt.CFG, "budget.json")
 TRUE, FALSE = ("on", "true", "yes", "1"), ("off", "false", "no", "0")

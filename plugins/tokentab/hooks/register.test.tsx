@@ -22,7 +22,7 @@ function world(on: On, initial: Record<string, string>, placed = { is: true }) {
   on('telemetry.log', { to: 'collector' }, () => ({ value: undefined }))
   const ui: Ui = { opens: 0, commands: [], status: [], invalidates: 0, runs: [], toasts: [], config: [], store: new Map() }
   on('ui.open', () => { ui.opens++; return { value: placed.is ? { isPlaced: true } : { isPlaced: false, reason: 'narrower than 144 columns' } } })
-  on('ui.panes', () => ({ value: [{ id: 'keeptabs', title: 'keeptabs', isShown: placed.is, isFocused: false, isPlaced: placed.is }] }))
+  on('ui.panes', () => ({ value: [{ id: 'tokentab', title: 'TokenTab', isShown: placed.is, isFocused: false, isPlaced: placed.is }] }))
   on('ui.status', ($, e) => { ui.status.push(e.text); return { value: undefined } })
   on('ui.invalidate', () => { ui.invalidates++; return { value: undefined } })
   on('ui.toast', ($, e) => { ui.toasts.push(e.text); return { value: undefined } })
@@ -35,7 +35,7 @@ function world(on: On, initial: Record<string, string>, placed = { is: true }) {
     ui.runs.push(argv)
     const script = (argv[1] ?? '').split('/').pop()
     let exitCode = 0, stdout = '', stderr = ''
-    if (script === 'keeptabs.py') stdout = argv.includes('--status') ? STATUS + '\n' : argv.includes('--once') ? ONCE : ''
+    if (script === 'tokentab.py') stdout = argv.includes('--status') ? STATUS + '\n' : argv.includes('--once') ? ONCE : ''
     else if (script === 'sankey.py') stdout = argv.includes('--flow-svg') ? FLOW : argv.includes('--out') ? argv[argv.indexOf('--out') + 1] + '\n' : ''
     else if (script === 'budget.py') {
       if (argv[argv.length - 1] === 'bad') { exitCode = 1; stderr = `${argv[3]}: a number is needed, not 'bad'\n` }
@@ -46,10 +46,10 @@ function world(on: On, initial: Record<string, string>, placed = { is: true }) {
   return { fs, ui }
 }
 
-// What `keeptabs.py --once` prints (cut down): the header, a dim line, a bold total, a
+// What `tokentab.py --once` prints (cut down): the header, a dim line, a bold total, a
 // green budget bar, the blank line and the `ctrl-c to quit` line a pane has no use for.
 const ONCE = [
-  '\x1b[1mkeeptabs\x1b[0m \x1b[2m· live\x1b[0m\x1b[2m        12:43:54\x1b[0m',
+  '\x1b[1mTokenTab\x1b[0m \x1b[2m· live\x1b[0m\x1b[2m        12:43:54\x1b[0m',
   '',
   '  \x1b[2mdata: ledger (every API call)\x1b[0m',
   '    \x1b[1mtotal                  960,195     $2.0228\x1b[0m   \x1b[2m11 msgs\x1b[0m',
@@ -66,7 +66,7 @@ const BUDGET = JSON.stringify({
   job: { ask: true, ask_over_usd: 1.0, hard_stop: true },
 }, null, 2)
 
-const PANE_PROPS = { title: 'keeptabs', isFocused: false, bodyColumns: 80, placement: 'dock' as const, scroll: { offset: 0, bodyRows: 40 }, view: {} }
+const PANE_PROPS = { title: 'TokenTab', isFocused: false, bodyColumns: 80, placement: 'dock' as const, scroll: { offset: 0, bodyRows: 40 }, view: {} }
 
 /** The `source` of every element of one type (Svg, Code) in a tree. */
 function sources(node: RenderNode, type: string): string[] {
@@ -99,10 +99,10 @@ const PRICES = {
   models: { 'claude-fable-5-1': { input: 10, output: 50, cache_write_5m: 12.5, cache_write_1h: 20, cache_read: 0.25 } },
   default: { input: 4, output: 20, cache_write_5m: 5, cache_write_1h: 8, cache_read: 0.2 },
 }
-const DATA = '/home/t/.claude/plugins/data/keeptabs-mod-supertab'
+const DATA = '/home/t/.claude/plugins/data/tokentab-supertab'
 const T0 = Date.UTC(2026, 9, 15, 14, 3, 11, 412)
-const FILES = { '/keeptabs/prices.json': JSON.stringify(PRICES), '/keeptabs/budget.json': BUDGET }
-const press = (key: string, surface?: 'terminal' | 'desktop') => ({ plugin: 'keeptabs-mod', key, requestId: 'keeptabs', ...(surface ? { surface } : {}) })
+const FILES = { '/tokentab/prices.json': JSON.stringify(PRICES), '/tokentab/budget.json': BUDGET }
+const press = (key: string, surface?: 'terminal' | 'desktop') => ({ plugin: 'tokentab', key, requestId: 'tokentab', ...(surface ? { surface } : {}) })
 
 function request(attributes: Record<string, string | number>) {
   return {
@@ -117,7 +117,7 @@ function request(attributes: Record<string, string | number>) {
 test('session.start writes the loaded marker and a first budget.json', async ($, on) => {
   mock.env(on, { HOME: '/home/t' })
   mock.clock(on, { now: T0 })
-  const { fs } = world(on, { '/keeptabs/budget.json': '{"session_limit_usd": 25}\n' })
+  const { fs } = world(on, { '/tokentab/budget.json': '{"session_limit_usd": 25}\n' })
   await $.session.start({ cwd: '/w', surface: null, isInteractive: false })
   expect(fs.get(`${DATA}/state/loaded/${SID}`)).toBe('2026-10-15T14:03:11.412Z\n')
   expect(fs.get(`${DATA}/budget.json`)).toBe('{"session_limit_usd": 25}\n')
@@ -129,7 +129,7 @@ test('session.start writes the loaded marker and a first budget.json', async ($,
 test('an api_request record becomes one priced ledger line per request', async ($, on) => {
   mock.env(on, { HOME: '/home/t' })
   mock.clock(on, { now: T0 })
-  const { fs } = world(on, { '/keeptabs/prices.json': JSON.stringify(PRICES) })
+  const { fs } = world(on, { '/tokentab/prices.json': JSON.stringify(PRICES) })
   const path = `${DATA}/ledger/2026-10-15/${SID}.jsonl`
 
   // tokens: 12 in, 480 out, 71000 cache read, 2100 cache write (at the 1h rate)
@@ -175,8 +175,8 @@ test('records that are not api_request, and a failure in the module, leave the r
 
 test('the ANSI codes of the live view become spans: bold, dim and the four colours as hex', async () => {
   expect(spansOf('plain')).toEqual([{ text: 'plain' }])
-  expect(spansOf('\x1b[1mkeeptabs\x1b[0m \x1b[2m· live\x1b[0m')).toEqual([
-    { text: 'keeptabs', bold: true }, { text: ' ' }, { text: '· live', dim: true },
+  expect(spansOf('\x1b[1mTokenTab\x1b[0m \x1b[2m· live\x1b[0m')).toEqual([
+    { text: 'TokenTab', bold: true }, { text: ' ' }, { text: '· live', dim: true },
   ])
   // a colour and dim side by side, as the budget bar is drawn; a reset ends both
   expect(spansOf('\x1b[32m██\x1b[2m··\x1b[0m 8%')).toEqual([
@@ -186,7 +186,7 @@ test('the ANSI codes of the live view become spans: bold, dim and the four colou
   expect(spansOf('\x1b[33mwarn\x1b[39m \x1b[36mcyan\x1b[22m')).toEqual([{ text: 'warn', color: '#cdcd00' }, { text: ' ' }, { text: 'cyan', color: '#00cdcd' }])
   // the ctrl-c line and the blank lines after the view are dropped; nothing else is
   expect(liveLines(ONCE).map(stripAnsi)).toEqual([
-    'keeptabs · live        12:43:54', '', '  data: ledger (every API call)',
+    'TokenTab · live        12:43:54', '', '  data: ledger (every API call)',
     '    total                  960,195     $2.0228   11 msgs', '    session   ██····     8%   $2.0228 of $25.00',
   ])
   // the budget fields: dotted keys, "off" for a limit switched off, grouped tokens
@@ -211,14 +211,14 @@ test('an interactive session opens the pane and draws the live view', async ($, 
   expect(ui.status).toEqual([undefined])
 
   // the terminal: one Text per line (wrap end), the blank line a space so it keeps its row
-  const tree = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'keeptabs', props: PANE_PROPS })
+  const tree = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   const drawn = texts(tree)
   const lines = drawn.filter(t => t.props.wrap === 'end')
   expect(lines.length).toBe(5)
-  expect(drawn.find(t => t.text === 'keeptabs')?.props).toEqual({ bold: true })
+  expect(drawn.find(t => t.text === 'TokenTab')?.props).toEqual({ bold: true })
   expect(drawn.find(t => t.text === '· live')?.props).toEqual({ dimColor: true })
   expect(drawn.find(t => t.text === '██')?.props).toEqual({ color: '#00cd00' })
-  expect(drawn.filter(t => t.text === ' ').length).toBe(2)     // the space after 'keeptabs', and the blank line
+  expect(drawn.filter(t => t.text === ' ').length).toBe(2)     // the space after 'TokenTab', and the blank line
   expect(drawn.some(t => t.text.includes('ctrl-c'))).toBe(false)
   // the tab row: live is the primary one, then options and the browser button
   expect(elements(tree, 'Button').map(b => [b.key, b.variant])).toEqual([
@@ -229,11 +229,11 @@ test('an interactive session opens the pane and draws the live view', async ($, 
   // a remote surface: the live view as the last Svg (the flow above it once fetched),
   // monospace text with the spans as fills and weights
   for (const surface of ['desktop', 'vscode', 'mobile'] as const) {
-    const remote = await $.ui.render({ surface, component: 'Pane', requestId: 'keeptabs', props: PANE_PROPS })
+    const remote = await $.ui.render({ surface, component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
     const svg = sources(remote, 'Svg').slice(-1)
     expect(svg[0]).toBe(svgOf(liveLines(ONCE)))
     expect(svg[0]!.startsWith('<svg xmlns="http://www.w3.org/2000/svg" ')).toBe(true)
-    expect(svg[0]).toContain('<tspan font-weight="700">keeptabs</tspan>')
+    expect(svg[0]).toContain('<tspan font-weight="700">TokenTab</tspan>')
     expect(svg[0]).toContain('<tspan class="d">· live</tspan>')
     expect(svg[0]).toContain('<tspan class="g">██</tspan><tspan class="g" opacity="0.6">····</tspan>')
     expect(svg[0]).toContain('@media(prefers-color-scheme:light)')   // follows the app's theme; no ground of its own
@@ -290,16 +290,16 @@ test('with autoOpen off, an interactive session does not open the pane; the stat
   expect(ui.status).toEqual([STATUS])
 })
 
-test('/keeptabs-mod:status (the skill) is answered by the hook: the pane opens, the figures go to the person and to Claude', async ($, on) => {
+test('/tokentab:status (the skill) is answered by the hook: the pane opens, the figures go to the person and to Claude', async ($, on) => {
   mock.env(on, { HOME: '/home/t' })
   mock.clock(on, { now: T0 })
   const { ui } = world(on, FILES)
   await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
   const opens = ui.opens
-  const r = await $.command.run({ command: 'keeptabs-mod:status', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 200 } })
+  const r = await $.command.run({ command: 'tokentab:status', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 200 } })
   expect(ui.opens).toBe(opens + 1)
-  expect(r.text).toBe(`${STATUS}\nThe keeptabs pane is open beside the chat; "open in browser" there writes the status page.`)
-  expect(r.context).toEqual([`keeptabs, this session's figures as of now:\n${liveLines(ONCE).map(stripAnsi).join('\n')}`])
+  expect(r.text).toBe(`${STATUS}\nThe TokenTab pane is open beside the chat; "open in browser" there writes the status page.`)
+  expect(r.context).toEqual([`TokenTab, this session's figures as of now:\n${liveLines(ONCE).map(stripAnsi).join('\n')}`])
 })
 
 test('on a remote surface the live tab draws the flow above the live view, and the flow opens the page', async ($, on) => {
@@ -310,15 +310,15 @@ test('on a remote surface the live tab draws the flow above the live view, and t
   await clock.settle()
   // the live view and the drawing, the session pinned, no page push (none is open)
   expect(ui.runs.map(a => [a[1]!.split('/').pop(), ...a.slice(2)])).toEqual([
-    ['keeptabs.py', '--once', '--session', SID], ['sankey.py', '--session', SID, '--flow-svg'],
+    ['tokentab.py', '--once', '--session', SID], ['sankey.py', '--session', SID, '--flow-svg'],
   ])
-  const desktop = await $.ui.render({ surface: 'desktop', component: 'Pane', requestId: 'keeptabs', props: PANE_PROPS })
+  const desktop = await $.ui.render({ surface: 'desktop', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   expect(sources(desktop, 'Svg')).toEqual([FLOW, svgOf(liveLines(ONCE))])
   expect(elements(desktop, 'Button').map(b => [b.key, b.variant])).toEqual([
     ['tab-live', 'primary'], ['tab-options', 'secondary'], ['open-browser', undefined], ['open-flow', undefined],
   ])
   // the terminal has no Svg: the lines alone
-  const terminal = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'keeptabs', props: PANE_PROPS })
+  const terminal = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   expect(sources(terminal, 'Svg')).toEqual([])
   expect(texts(terminal).filter(t => t.props.wrap === 'end').length).toBe(5)
   // the button under the drawing opens the status page
@@ -333,7 +333,7 @@ test('the open-in-browser button writes the page for this session, opens it, and
   const { ui } = world(on, FILES)
   await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
   await clock.settle()
-  await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'keeptabs', props: PANE_PROPS })
+  await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   const runs = ui.runs.length
   await $.ui.press(press('open-browser'))
   const page = `${DATA}/status/${SID}.html`
@@ -342,7 +342,7 @@ test('the open-in-browser button writes the page for this session, opens it, and
     ['python3', 'sankey.py', '--session', SID, '--out', page],
     ['open', page],
   ])
-  expect(ui.toasts).toEqual([`keeptabs: status page opened (${page}); it stays live for 30 minutes`])
+  expect(ui.toasts).toEqual([`TokenTab: status page opened (${page}); it stays live for 30 minutes`])
   expect(ui.store.get(`pageOpenedAt:${SID}`)).toBe(T0)
 
   // from now on a redraw writes the page's data file beside it too, in a second run
@@ -350,17 +350,17 @@ test('the open-in-browser button writes the page for this session, opens it, and
   await $.telemetry.log(request({}))
   await clock.settle()
   expect(ui.runs.slice(before).map(named)).toEqual([
-    ['python3', 'keeptabs.py', '--once', '--session', SID],
+    ['python3', 'tokentab.py', '--once', '--session', SID],
     ['python3', 'sankey.py', '--session', SID, '--push', `${DATA}/status/${SID}.js`],
   ])
   // with the flow drawn (a remote surface showed the pane), its run writes the data file too
-  await $.ui.render({ surface: 'desktop', component: 'Pane', requestId: 'keeptabs', props: PANE_PROPS })
+  await $.ui.render({ surface: 'desktop', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   await clock.settle()
   const later = ui.runs.length
   await $.telemetry.log(request({}))
   await clock.settle()
   expect(ui.runs.slice(later).map(named)).toEqual([
-    ['python3', 'keeptabs.py', '--once', '--session', SID],
+    ['python3', 'tokentab.py', '--once', '--session', SID],
     ['python3', 'sankey.py', '--session', SID, '--flow-svg', '--push', `${DATA}/status/${SID}.js`],
   ])
 })
@@ -371,9 +371,9 @@ test('the options tab: auto-open through the config menu, the limits through the
   const { ui } = world(on, FILES)
   await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
   await clock.settle()
-  await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'keeptabs', props: PANE_PROPS })
+  await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   await $.ui.press(press('tab-options'))
-  const tree = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'keeptabs', props: PANE_PROPS })
+  const tree = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   const t = texts(tree)
   expect(t.some(x => x.text === 'open at session start')).toBe(true)
   expect(t.filter(x => x.props.bold).map(x => x.text)).toEqual(['pane', 'this session', 'today', 'per request', 'at the limit', 'jobs'])
@@ -390,20 +390,20 @@ test('the options tab: auto-open through the config menu, the limits through the
 
   // the switch is the manifest's userConfig field, written as the menu would
   await $.ui.press(press('auto-open'))
-  expect(ui.config).toEqual([['keeptabs-mod.autoOpen', false]])
+  expect(ui.config).toEqual([['tokentab.autoOpen', false]])
 
   // a limit goes through budget.py; a refused value is shown under its field
-  await $.ui.input({ plugin: 'keeptabs-mod', key: 'b-daily_limit_usd', text: '30' })
+  await $.ui.input({ plugin: 'tokentab', key: 'b-daily_limit_usd', text: '30' })
   expect(ui.runs[ui.runs.length - 1]!.slice(1).map((s, i) => i === 0 ? s.split('/').pop() : s)).toEqual(['budget.py', 'set', 'daily_limit_usd', '30'])
-  await $.ui.input({ plugin: 'keeptabs-mod', key: 'b-turn_limit_usd', text: 'bad' })
-  const after = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'keeptabs', props: PANE_PROPS })
+  await $.ui.input({ plugin: 'tokentab', key: 'b-turn_limit_usd', text: 'bad' })
+  const after = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   expect(texts(after).find(x => x.props.color === 'error')?.text.trim()).toBe("turn_limit_usd: a number is needed, not 'bad'")
   await $.ui.press(press('b-hard_stop'))
   expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'hard_stop', 'on'])
 
   // mobile has no Input: the values are shown, with where to edit them
-  const mobile = await $.ui.render({ surface: 'mobile', component: 'Pane', requestId: 'keeptabs', props: PANE_PROPS })
+  const mobile = await $.ui.render({ surface: 'mobile', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   expect(elements(mobile, 'Input')).toEqual([])
   expect(texts(mobile).some(x => x.text === '40')).toBe(true)
-  expect(texts(mobile).some(x => x.text.includes('/keeptabs-mod:budget'))).toBe(true)
+  expect(texts(mobile).some(x => x.text.includes('/tokentab:budget'))).toBe(true)
 })

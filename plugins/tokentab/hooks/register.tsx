@@ -1,6 +1,6 @@
 import type { EngineInterface, PluginOptions, Register, RenderChildren, TelemetryRecordEntry, Timer, UiOpenResult } from 'claude-code'
 
-// keeptabs' hooks module (docs/plan-CORE-537-status-page-tabs.md), three parts:
+// TokenTab's hooks module (docs/plan-CORE-537-status-page-tabs.md), three parts:
 //
 // The ledger (phase 0). Every API request the engine makes reaches `telemetry.log` as
 // an `api_request` record for the operator's collector, with or without telemetry
@@ -8,10 +8,10 @@ import type { EngineInterface, PluginOptions, Register, RenderChildren, Telemetr
 // line to the session's ledger file; the Python accounting reads those.
 //
 // The pane (phase 1, tabs and the flow 2026-10-16). `session.start` opens a pane beside
-// the chat (the `autoOpen` option); `/keeptabs-mod:status` (the status skill, answered by
+// the chat (the `autoOpen` option); `/tokentab:status` (the status skill, answered by
 // a hook) opens it asked. `ui.render` draws one of two tabs: Live, the compact Sankey
 // (`sankey.py --flow-svg`, on the surfaces that draw Svg) above the terminal live view
-// (`keeptabs.py --once` with its ANSI codes turned into Text spans, so the pane and the
+// (`tokentab.py --once` with its ANSI codes turned into Text spans, so the pane and the
 // standalone view cannot drift apart); Options, the auto-open switch and the budget
 // limits. While the pane is not placed (a narrow terminal) one status line
 // carries the numbers instead. Redrawn after every ledger write and on a 30 s clock;
@@ -51,7 +51,7 @@ const ROLL_BYTES = 3.5 * 1024 * 1024
 /** The plugin's data folder (`${CLAUDE_PLUGIN_DATA}` for shell hooks and skills). `$.plugin`
  *  has no data path, so it is built from HOME here, the same path the Python falls back to. */
 export function dataDir(home: string): string {
-  return `${home.replace(/\/$/, '')}/.claude/plugins/data/keeptabs-mod-supertab`
+  return `${home.replace(/\/$/, '')}/.claude/plugins/data/tokentab-supertab`
 }
 
 /** `YYYY-MM-DD` of an instant, the module environment's local date. */
@@ -107,7 +107,7 @@ let queue: Promise<void> = Promise.resolve()   // $.fs.write replaces the file: 
 const part = new Map<string, number>()         // session id -> which -N file is current
 
 async function loadPrices($: EngineInterface): Promise<Prices> {
-  if (prices === undefined) prices = JSON.parse(await $.fs.read(`${$.plugin.root}/keeptabs/prices.json`)) as Prices
+  if (prices === undefined) prices = JSON.parse(await $.fs.read(`${$.plugin.root}/tokentab/prices.json`)) as Prices
   return prices
 }
 
@@ -140,20 +140,20 @@ function append($: EngineInterface, data: string, line: LedgerLine): Promise<voi
 
 // ---------- the pane ----------
 
-const PANE = 'keeptabs'
-const TITLE = 'keeptabs'
+const PANE = 'tokentab'
+const TITLE = 'TokenTab'
 // The slash command is the `status` skill's name: a registered command (`$.command.register`)
 // runs as a flat `/<name>` with no plugin prefix and `status` is the built-in's, so the
 // `command.run` hook below answers the skill's command in its place instead. The skill's own
 // text runs only where the module did not load.
-const COMMAND = 'keeptabs-mod:status'
+const COMMAND = 'tokentab:status'
 const REDRAW_MS = 30_000
 const HELPER_TIMEOUT_MS = 20_000
 // The status page is kept current (its data file written on every redraw) this long
 // after it was last opened from the pane; the page says "stale" once the pushes stop.
 const PAGE_MS = 30 * 60_000
 
-/** The four colours keeptabs.py uses, as hex from the xterm palette rather than theme keys
+/** The four colours tokentab.py uses, as hex from the xterm palette rather than theme keys
  *  or colour names, so every surface (Desktop's light mode included) draws the terminal look. */
 export const PALETTE: Record<string, string> = { '31': '#cd0000', '32': '#00cd00', '33': '#cdcd00', '36': '#00cdcd' }
 
@@ -164,7 +164,7 @@ export const stripAnsi = (s: string): string => s.replace(ANSI, '')
 
 /** One rendered line as styled spans: SGR 1 → bold, 2 → dim, 31/32/33/36 → the palette
  *  colour, 0 (and a bare `ESC[m`) → everything off, 22 → bold and dim off, 39 → colour
- *  off. Anything else is dropped; keeptabs.py writes nothing else. */
+ *  off. Anything else is dropped; tokentab.py writes nothing else. */
 export function spansOf(line: string): Span[] {
   const out: Span[] = []
   let bold = false, dim = false, color: string | undefined
@@ -193,7 +193,7 @@ export function spansOf(line: string): Span[] {
   return out
 }
 
-/** `keeptabs.py --once` as the pane's lines: the `ctrl-c to quit` line goes (there is no
+/** `tokentab.py --once` as the pane's lines: the `ctrl-c to quit` line goes (there is no
  *  ctrl-c in a pane) and so do blank lines at the end. */
 export function liveLines(text: string): string[] {
   const lines = text.replace(/\r/g, '').split('\n').filter(l => stripAnsi(l).trim() !== 'ctrl-c to quit')
@@ -248,7 +248,7 @@ export const TABS: { view: View; label: string; hotkey: string }[] = [
 
 // The budget limits the Options tab edits, in budget.json's keys (dotted below the
 // top level), as sections of rows: a limit is an Input, a switch an on/off Button.
-// Every write goes through keeptabs/budget.py, the one validator.
+// Every write goes through tokentab/budget.py, the one validator.
 export type Setting = { key: string; label: string; kind: 'limit' | 'switch' }
 export const SECTIONS: { title: string; rows: Setting[] }[] = [
   { title: 'this session', rows: [
@@ -316,7 +316,7 @@ async function sid($: EngineInterface): Promise<string> {
 
 /** Runs one of the plugin's Python helpers; its stdout, or the last line of stderr as the error. */
 async function python($: EngineInterface, script: string, args: readonly string[]): Promise<string> {
-  const r = await $.process.run(['python3', `${$.plugin.root}/keeptabs/${script}`, ...args], { timeoutMs: HELPER_TIMEOUT_MS })
+  const r = await $.process.run(['python3', `${$.plugin.root}/tokentab/${script}`, ...args], { timeoutMs: HELPER_TIMEOUT_MS })
   if (r.exitCode !== 0) throw new Error(r.stderr.trim().split('\n').pop() || `${script} exited ${r.exitCode}`)
   return r.stdout
 }
@@ -354,7 +354,7 @@ async function refreshNow($: EngineInterface): Promise<void> {
       if (view === 'options') {
         await readBudget($)
       } else {
-        const lines = liveLines(await python($, 'keeptabs.py', ['--once', '--session', id]))
+        const lines = liveLines(await python($, 'tokentab.py', ['--once', '--session', id]))
         live = { lines, status: live?.status ?? '' }
         if (drawsSvg) {
           flow = await python($, 'sankey.py', ['--session', id, '--flow-svg', ...push])
@@ -363,7 +363,7 @@ async function refreshNow($: EngineInterface): Promise<void> {
       }
       $.ui.status(undefined)
     } else {
-      const status = (await python($, 'keeptabs.py', ['--status', '--session', id])).trim()
+      const status = (await python($, 'tokentab.py', ['--status', '--session', id])).trim()
       live = { lines: live?.lines ?? [], status }
       $.ui.status(status)
     }
@@ -414,10 +414,10 @@ async function openSnapshot($: EngineInterface): Promise<void> {
     if (opened.exitCode !== 0) throw new Error(opened.stderr.trim() || `open exited ${opened.exitCode}`)
     pageOpenedAt = await $.clock.now()
     await $.store.set(`pageOpenedAt:${id}`, pageOpenedAt)
-    $.ui.toast(`keeptabs: status page opened (${path}); it stays live for 30 minutes`)
+    $.ui.toast(`TokenTab: status page opened (${path}); it stays live for 30 minutes`)
     if (tick === undefined) startClock($)
   } catch (err) {
-    $.ui.toast(`keeptabs: could not open the status page: ${err instanceof Error ? err.message : String(err)}`)
+    $.ui.toast(`TokenTab: could not open the status page: ${err instanceof Error ? err.message : String(err)}`)
   }
 }
 
@@ -427,9 +427,9 @@ async function openSnapshot($: EngineInterface): Promise<void> {
 async function setAutoOpen($: EngineInterface, value: boolean): Promise<void> {
   try {
     const r = await $.config.set({ key: `${$.plugin.name}.autoOpen`, value })
-    if ('deny' in r && r.deny !== undefined) $.ui.toast(`keeptabs: auto-open not changed: ${r.deny}`)
+    if ('deny' in r && r.deny !== undefined) $.ui.toast(`TokenTab: auto-open not changed: ${r.deny}`)
   } catch (err) {
-    $.ui.toast(`keeptabs: auto-open not changed: ${err instanceof Error ? err.message : String(err)}`)
+    $.ui.toast(`TokenTab: auto-open not changed: ${err instanceof Error ? err.message : String(err)}`)
   }
 }
 
@@ -458,7 +458,7 @@ export const register: Register = (on, pluginOptions) => {
       await $.fs.write(`${data}/state/loaded/${await $.session.id()}`, new Date(await $.clock.now()).toISOString() + '\n')
       // First run: the shipped limits become the user's budget.json, never touched again.
       if (!(await $.fs.exists(`${data}/budget.json`))) {
-        await $.fs.write(`${data}/budget.json`, await $.fs.read(`${$.plugin.root}/keeptabs/budget.json`))
+        await $.fs.write(`${data}/budget.json`, await $.fs.read(`${$.plugin.root}/tokentab/budget.json`))
       }
     } catch { /* nothing to track yet; the shell gate reports a module that did not load */ }
 
@@ -526,7 +526,7 @@ export const register: Register = (on, pluginOptions) => {
                 <Button key="open-flow" plain dimColor label="open the full flow in the browser ↗" onPress={() => { void openSnapshot($) }} />
               </Box>
             )}
-            {lines.length > 0 && <Svg source={svgOf(lines)} alt={`keeptabs live view: ${lines.map(stripAnsi).join(' / ')}`} />}
+            {lines.length > 0 && <Svg source={svgOf(lines)} alt={`TokenTab live view: ${lines.map(stripAnsi).join(' / ')}`} />}
           </Box>
         )
       }
@@ -535,13 +535,13 @@ export const register: Register = (on, pluginOptions) => {
       <Box flexDirection="column">
         {tabs}
         {l === undefined && view === 'live' && <Text dimColor>loading...</Text>}
-        {l?.error !== undefined && <Text color="error">keeptabs: {l.error}</Text>}
+        {l?.error !== undefined && <Text color="error">TokenTab: {l.error}</Text>}
         {body}
       </Box>
     )
   })
 
-  // `/keeptabs-mod:status`: asked, so the pane is placed at any width. Answered here without
+  // `/tokentab:status`: asked, so the pane is placed at any width. Answered here without
   // `next`, so the skill's text never runs while the module is loaded. The figures go back
   // as `context` too, so Claude can answer "what have I spent" from them.
   on('command.run', { command: COMMAND }, async $ => {
@@ -551,17 +551,17 @@ export const register: Register = (on, pluginOptions) => {
     let status = ''
     let figures = ''
     try {
-      status = (await python($, 'keeptabs.py', ['--status', '--session', id])).trim()
-      figures = liveLines(await python($, 'keeptabs.py', ['--once', '--session', id])).map(stripAnsi).join('\n')
+      status = (await python($, 'tokentab.py', ['--status', '--session', id])).trim()
+      figures = liveLines(await python($, 'tokentab.py', ['--once', '--session', id])).map(stripAnsi).join('\n')
     } catch (err) {
-      status = `keeptabs: ${err instanceof Error ? err.message : String(err)}`
+      status = `TokenTab: ${err instanceof Error ? err.message : String(err)}`
     }
     void refresh($)
     const where = opened.isPlaced
-      ? 'The keeptabs pane is open beside the chat; "open in browser" there writes the status page.'
-      : `The keeptabs pane is not placed here (${opened.reason}).`
-    return { text: `${status}\n${where}`, context: figures === '' ? undefined : [`keeptabs, this session's figures as of now:\n${figures}`] }
-  }).catch(() => ({ text: 'keeptabs: the status command failed' }))
+      ? 'The TokenTab pane is open beside the chat; "open in browser" there writes the status page.'
+      : `The TokenTab pane is not placed here (${opened.reason}).`
+    return { text: `${status}\n${where}`, context: figures === '' ? undefined : [`TokenTab, this session's figures as of now:\n${figures}`] }
+  }).catch(() => ({ text: 'TokenTab: the status command failed' }))
 
   // Every API request's usage, in-process. The record goes on first (`next`), then our
   // line is written: the hook never denies, and a failure here never touches the record.
@@ -629,7 +629,7 @@ function optionsTab($: EngineInterface, e: RenderEvent): RenderChildren {
       {o?.error !== undefined && <Text color="error">{o.error}</Text>}
       {SECTIONS.map(sec => section(sec.title, sec.rows.map(s => row(s.key, s.label, control(s), o?.errors[s.key]))))}
       <Text dimColor>
-        {mobile ? 'edit the limits from a desktop or the terminal, or ask: /keeptabs-mod:budget daily 30'
+        {mobile ? 'edit the limits from a desktop or the terminal, or ask: /tokentab:budget daily 30'
           : '"off" switches a limit off; Enter or save writes it, from the next prompt on.'}
       </Text>
       <Text dimColor>{o?.path ?? 'budget.json'}</Text>

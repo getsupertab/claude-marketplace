@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""keeptabs - live token and cost monitor for Claude Code sessions.
+"""TokenTab - live token and cost monitor for Claude Code sessions.
 
 Totals come from the ledger the plugin's hooks module writes, one line per API
 request (ledger/YYYY-MM-DD/<session-id>.jsonl in the data folder): every call, helpers
@@ -7,12 +7,12 @@ and Claude Code's own background calls included. The JSONL transcripts under
 ~/.claude/projects are read for what the ledger does not have: thinking tokens and the
 per-tool attribution. No dependencies.
 
-  keeptabs.py                 live view of the most recently active session
-  keeptabs.py --session ID    pin to one session
-  keeptabs.py --once          print one snapshot and exit
-  keeptabs.py --json          machine-readable snapshot (for hooks)
-  keeptabs.py --status        one plain line for a status bar (for the hooks module)
-  keeptabs.py --all           live view across every project
+  tokentab.py                 live view of the most recently active session
+  tokentab.py --session ID    pin to one session
+  tokentab.py --once          print one snapshot and exit
+  tokentab.py --json          machine-readable snapshot (for hooks)
+  tokentab.py --status        one plain line for a status bar (for the hooks module)
+  tokentab.py --all           live view across every project
 """
 import argparse, bisect, glob, json, os, re, sys, time
 from datetime import datetime, timezone
@@ -22,10 +22,10 @@ ROOT = os.path.expanduser("~/.claude/projects")
 def data_dir():
     """The plugin's data folder: one fixed path, the same the hooks module builds from HOME
     (dataDir in hooks/register.ts) and the shell gate uses. Not ${CLAUDE_PLUGIN_DATA}: that
-    one is named after the marketplace the plugin was installed from (keeptabs-mod-supertab,
-    keeptabs-inline under --plugin-dir), the module cannot read it, and the ledger, the
+    one is named after the marketplace the plugin was installed from (tokentab-supertab,
+    tokentab-inline under --plugin-dir), the module cannot read it, and the ledger, the
     guard and the skills must all look in the same place."""
-    return os.path.expanduser("~/.claude/plugins/data/keeptabs-mod-supertab")
+    return os.path.expanduser("~/.claude/plugins/data/tokentab-supertab")
 
 CFG  = data_dir()  # plugin: data in the plugin's data folder, shipped files next to this script
 PRICES_PATH = os.path.join(HERE, "prices.json")
@@ -70,7 +70,7 @@ THINKING_TO_TOOLS = False
 
 CHARS_PER_TOKEN = 3.5      # code/JSON is ~3, prose ~4
 IMAGE_CHARS = 1600 * CHARS_PER_TOKEN   # an image block costs ~1.6k tokens, whatever its base64 size
-KEEPTABS_TEXT = re.compile(r"^(JOB|BUDGET|CONTEXT|SESSION) (CHECK|NOTICE|HINT|BUDGET)\b|keeptabs", re.I | re.M)
+TOKENTAB_TEXT = re.compile(r"^(JOB|BUDGET|CONTEXT|SESSION) (CHECK|NOTICE|HINT|BUDGET)\b|TokenTab", re.I | re.M)
 
 def block_chars(x):
     """Rough size in characters of a content block, tool result or attachment, as it
@@ -115,7 +115,7 @@ def resident_shares(res, ctx):
     return {k: v / tot for k, v in res.items() if v > 0} if tot > 0 else {}
 
 def overhead_total(b):
-    """keeptabs' own hook text (budget hints, job checks), summed over models."""
+    """TokenTab's own hook text (budget hints, job checks), summed over models."""
     return tool_totals({None: b.overhead} if b and b.overhead else {None: {}})[0][1]
 
 def tool_totals(tools):
@@ -146,7 +146,7 @@ class Bucket:
         self.first = None
         self.last = None
         self.tools = {}       # name -> model -> {calls, ask, think, result_1h, result_5m, rtokens}
-        self.overhead = {}    # model -> {result_1h, result_5m, read, rtokens}: keeptabs' own hook text
+        self.overhead = {}    # model -> {result_1h, result_5m, read, rtokens}: TokenTab's own hook text
         self.threads = {}     # transcripts only: per conversation (main, each helper) attribution state
         self.cost_by = {}     # rate key -> USD, summed over models (output = text only)
         self.cost_bm = {}     # model -> rate key -> USD, priced where the model is known
@@ -156,14 +156,14 @@ class Bucket:
         self._open = None     # the series entry _charge adds to: the call being priced
 
     def _tool(self, name, model):
-        if name is None:                      # None: keeptabs' own hook text, not a tool
+        if name is None:                      # None: TokenTab's own hook text, not a tool
             return self.overhead.setdefault(model, {"result_1h": 0.0, "result_5m": 0.0, "read": 0.0, "rtokens": 0})
         return self.tools.setdefault(name, {}).setdefault(model, {
             "calls": 0, "ask": 0.0, "think": 0.0, "result_1h": 0.0, "result_5m": 0.0, "read": 0.0, "rtokens": 0})
 
     def _thread(self, agent):
         # since: what entered context after the last call, sized; it is in the next call's write.
-        # res: tokens each tool (None: keeptabs) has resident in context. ctx: the last call's.
+        # res: tokens each tool (None: TokenTab) has resident in context. ctx: the last call's.
         # ids: tool_use id -> name. req: the open call, whose lines may still be coming.
         return self.threads.setdefault(agent or "", {"since": {"tools": {}, "other": 0, "kt": 0},
                                                      "res": {}, "ctx": 0, "ids": {}, "req": None})
@@ -185,7 +185,7 @@ class Bucket:
                     s["other"] += block_chars(blk)
         elif o.get("type") == "attachment":
             a = o.get("attachment") or {}
-            ours = a.get("type") == "hook_additional_context" and KEEPTABS_TEXT.search(
+            ours = a.get("type") == "hook_additional_context" and TOKENTAB_TEXT.search(
                 " ".join(x for x in (a.get("content") or []) if isinstance(x, str)))
             s["kt" if ours else "other"] += block_chars(a)
 
@@ -195,7 +195,7 @@ class Bucket:
         if not dup or req is None or req["key"] != key:
             # A new call. It re-reads what is resident (cache read, by resident share),
             # then writes what entered context since the last call: tools get their
-            # tool_result share, keeptabs its hook text, the rest stays unattributed.
+            # tool_result share, TokenTab its hook text, the rest stays unattributed.
             ctx = i + r + w1 + w5
             if ctx < t["ctx"] * COMPACT_DROP:  # compacted without a marker line we saw
                 t["res"] = {}
@@ -753,7 +753,7 @@ def render(store, sid, prices, budget, show_all, led=None):
     R = report(store, sid, prices, budget, show_all, led)
     L = []
     warn = "" if R["prices_verified"] else f"  {YELLOW}prices unverified{RESET}"
-    L.append(f"{BOLD}keeptabs{RESET} {DIM}· live{RESET}{warn}"
+    L.append(f"{BOLD}TokenTab{RESET} {DIM}· live{RESET}{warn}"
              f"{DIM}{R['now'].strftime('%H:%M:%S').rjust(max(1, 62 - 22 - len(warn)))}{RESET}")
     L.append("")
 
@@ -831,7 +831,7 @@ def render(store, sid, prices, budget, show_all, led=None):
             L.append(f"    {DIM}+{len(rows)-8} more{RESET}")
         kt_ = R["overhead"]
         if kt_["cost"]:
-            L.append(f"    {DIM}{'keeptabs overhead':<30}{money(kt_['cost']):>11}   its hook text in context"
+            L.append(f"    {DIM}{'TokenTab overhead':<30}{money(kt_['cost']):>11}   its hook text in context"
                      f" ({num(kt_['rtokens'])} tok) · re-read {money(kt_['read'])}{RESET}")
 
     tt = R["totals"]
@@ -868,7 +868,7 @@ def snapshot(store, sid, prices, led=None):
                       "by_model": {m: {f: (round(x, 6) if isinstance(x, float) else x) for f, x in d.items()}
                                    for m, d in tb.tools[k].items()}}
                   for k, v in tool_totals(tb.tools if tb else {})},
-        "keeptabs_overhead_usd": round(overhead_total(tb)["cost"], 6),
+        "tokentab_overhead_usd": round(overhead_total(tb)["cost"], 6),
         "by_source": {k: {"calls": n, "cost_usd": round(c, 6)}
                       for k, (n, c) in sorted(b.by_source.items(), key=lambda kv: -kv[1][1])},
         "prices_verified": bool(prices.get("_verified")),
