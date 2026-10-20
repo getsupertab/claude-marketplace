@@ -15,7 +15,7 @@ between turns). Config: budget.json in the plugin's data folder (/tokentab:budge
 import glob, json, os, re, sys, time
 from datetime import datetime
 
-from tokentab import data_dir   # noqa: E402  (same folder; env var, else the folder in use)
+from tokentab import ROOT, data_dir   # noqa: E402  (same folder; env var, else the folder in use)
 CFG   = data_dir()  # plugin: data in the plugin's data folder, shipped files next to this script
 HERE  = os.path.dirname(os.path.abspath(__file__))
 STATE = os.path.join(CFG, "state")
@@ -746,7 +746,7 @@ def rebuild():
         if not name.endswith(".json") or name.startswith("collector"):
             continue
         sid = name[:-5]
-        tp = glob.glob(os.path.expanduser(f"~/.claude/projects/*/{sid}.jsonl"))
+        tp = glob.glob(os.path.join(ROOT, "*", f"{sid}.jsonl"))
         if tp:
             jobs.append((os.stat(tp[0]).st_birthtime, sid, tp[0]))
     for _, sid, tp in sorted(jobs):
