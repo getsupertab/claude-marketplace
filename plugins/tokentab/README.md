@@ -52,9 +52,9 @@ getsupertab/claude-marketplace` and `claude plugin install tokentab@supertab`.
 
 The live view opens in a **pane beside the chat** when a session starts: in Claude
 Desktop and in a terminal of 144 columns or more (110 once you have opened it yourself).
-In a narrower terminal the pane waits and TokenTab's **status line** under the prompt
-shows session cost and today's cost; `/tokentab:status`
-opens the pane at any width. The pane is the terminal live view, redrawn after every
+In a narrower terminal the pane opens with your first prompt, at any width; until then
+TokenTab's **status line** under the prompt shows session cost and today's cost, and
+`/tokentab:status` opens the pane at any width too. The pane is the terminal live view, redrawn after every
 API call and every 30 seconds. Its "open in browser" button writes the status page
 (where the money went as a flow diagram, cost over time, and every figure TokenTab
 tracks) as a snapshot file and opens it. Ask Claude what you have spent and it answers
@@ -68,7 +68,7 @@ is the live view (`--once` for one snapshot, `--json` for the raw numbers), and
 `sankey.py` next to it writes the status page and prints its path.
 
 The pane opens beside the chat when a session starts (in a terminal, from 144 columns;
-narrower, the status line carries the numbers and `/tokentab:status` opens it). It
+narrower, it opens with your first prompt and the status line carries the numbers until then). It
 has three tabs, each a button (hotkeys `s`, `b`, `t`): **Spend**, this session's cost as
 one figure with a bar against its limit, the cost by rate (input, cache writes, cache
 reads, output, thinking) as a bar and a table, and every session today and this month;
