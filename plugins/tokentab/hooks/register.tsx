@@ -323,6 +323,7 @@ let tick: Timer | undefined             // set while this load draws anything (t
 let running: Promise<void> | undefined  // one refresh at a time; a request during one runs after it
 let again = false
 let columns = 60                        // the pane body's width in cells, from the last render
+let waiting = false                     // session.start's open left the pane undrawn: the first prompt opens it
 
 const autoOpen = () => opts.autoOpen !== false
 
@@ -472,12 +473,17 @@ export const register: Register = (on, pluginOptions) => {
     error = undefined
     options = undefined
     sessionId = undefined
+    waiting = false
     if (e.isInteractive && e.surface !== null) {   // `claude -p` and a bare host: nothing visual
       try { pageOpenedAt = num(await $.store.get(`pageOpenedAt:${await sid($)}`)) || undefined } catch { /* none */ }
       if (autoOpen()) {
         const opened = await openPane($)
-        // Not placed: say why, so a session where the pane stays shut is not silent.
-        if (!opened.isPlaced) $.ui.toast(`TokenTab: pane not opened (${opened.reason})`)
+        // Unasked, the engine places it only from 144 columns (110 once opened before).
+        // Not placed: the first prompt opens it asked (`prompt.submit`), and the toast says so.
+        if (!opened.isPlaced) {
+          waiting = true
+          $.ui.toast(`TokenTab: the pane opens with your first prompt (${opened.reason})`)
+        }
       }
       startClock($)
       void refresh($)
@@ -539,6 +545,17 @@ export const register: Register = (on, pluginOptions) => {
       : `The TokenTab pane is not placed here (${opened.reason}).`
     return { text: `${status}\n${where}`, context: figures === '' ? undefined : [`TokenTab, this session's figures as of now:\n${figures}`] }
   }).catch(() => ({ text: 'TokenTab: the status command failed' }))
+
+  // The person's first prompt after an auto-open the engine left undrawn: an open from
+  // their own Enter is asked, so placed at any width. Once a session; the pane is opened
+  // before the prompt enters, and a failure never holds the prompt back.
+  on('prompt.submit', async ($, e, next) => {
+    if (waiting && (e.origin.kind === 'composer' || e.origin.kind === 'bridge')) {
+      waiting = false
+      if (!(await isPlaced($)) && (await openPane($)).isPlaced) void refresh($)
+    }
+    return next(e)
+  }).catch(($, e, next) => next(e))
 
   // Every API request's usage, in-process. The record goes on first (`next`), then our
   // line is written: the hook never denies, and a failure here never touches the record.

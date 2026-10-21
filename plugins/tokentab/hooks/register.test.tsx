@@ -349,6 +349,37 @@ test('while the pane is not placed, the status line carries the numbers', async 
   expect(ui.status).toEqual([STATUS])
 })
 
+test('an auto-open the engine left undrawn is opened again, asked, by the first prompt the person enters', async ($, on) => {
+  mock.env(on, { HOME: '/home/t' })
+  const clock = mock.clock(on, { now: T0 })
+  const { ui } = world(on, FILES, { is: false })
+  on('prompt.submit', ($, e) => ({ text: e.text }))
+  await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  expect(ui.opens).toBe(1)
+  expect(ui.toasts).toEqual(['TokenTab: the pane opens with your first prompt (narrower than 144 columns)'])
+  // a prompt the person did not type is not an ask
+  await $.prompt.submit({ text: 'from a schedule', wait: false, origin: { kind: 'scheduled-trigger' } })
+  expect(ui.opens).toBe(1)
+  const r = await $.prompt.submit({ text: 'hello', wait: false, origin: { kind: 'composer' } })
+  expect(r).toEqual({ text: 'hello' })
+  expect(ui.opens).toBe(2)
+  // once a session
+  await $.prompt.submit({ text: 'again', wait: false, origin: { kind: 'composer' } })
+  expect(ui.opens).toBe(2)
+})
+
+test('with autoOpen off, the first prompt does not open the pane either', { options: { autoOpen: false } }, async ($, on) => {
+  mock.env(on, { HOME: '/home/t' })
+  const clock = mock.clock(on, { now: T0 })
+  const { ui } = world(on, FILES, { is: false })
+  on('prompt.submit', ($, e) => ({ text: e.text }))
+  await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  await $.prompt.submit({ text: 'hello', wait: false, origin: { kind: 'composer' } })
+  expect(ui.opens).toBe(0)
+})
+
 test('under claude -p, or with no surface, nothing visual happens and the ledger is written', async ($, on) => {
   mock.env(on, { HOME: '/home/t' })
   const clock = mock.clock(on, { now: T0 })
