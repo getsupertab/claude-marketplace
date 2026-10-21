@@ -58,4 +58,5 @@ that a session they already had open runs the old copy's shell hooks until it en
 - A headless end-to-end check that the module sees API calls on the installed Claude
   Code (also the regression check after a Claude Code update):
   `claude -p "Reply with the single word ok" --model haiku --settings dev/usage-probe/notelemetry.json --plugin-dir plugins/tokentab`,
-  then read the newest line under `~/.claude/plugins/data/tokentab-supertab/ledger/`.
+  then read the newest line under `plugins/data/tokentab-supertab/ledger/` in `$CLAUDE_CONFIG_DIR`,
+  else in `~/.claude`.
