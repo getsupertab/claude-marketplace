@@ -271,6 +271,7 @@ export const SECTIONS: { title: string; rows: Setting[] }[] = [
   { title: 'jobs', rows: [
     { key: 'job.ask', label: 'ask for an estimate', kind: 'switch' },
     { key: 'job.ask_over_usd', label: 'ask over, USD', kind: 'limit' },
+    { key: 'job.ask_mid_request', label: 'check in mid-request', kind: 'switch' },
     { key: 'job.hard_stop', label: 'hard stop', kind: 'switch' },
   ] },
 ]

@@ -1,11 +1,11 @@
 {
-  "_comment": "session_limit_usd depends on prices.json being right. session_limit_tokens is exact. Set either or both; whichever is closest to its limit governs. null disables that one.",
-  "session_limit_usd": 25,
-  "session_limit_tokens": 90000000,
-  "turn_limit_usd": 2,
-  "turn_limit_tokens": 100000,
-  "daily_limit_usd": 40,
-  "daily_limit_tokens": 40000000,
+  "_comment": "Budgets are off until you set a limit (/tokentab:budget). session_limit_usd depends on prices.json being right. session_limit_tokens is exact. Set either or both; whichever is closest to its limit governs. null disables that one.",
+  "session_limit_usd": null,
+  "session_limit_tokens": null,
+  "turn_limit_usd": null,
+  "turn_limit_tokens": null,
+  "daily_limit_usd": null,
+  "daily_limit_tokens": null,
   "warn_at_percent": 70,
   "hard_stop": false,
   "_context_comment": "Context size of the last call. Every call re-reads it all, so this is what each call costs. Warns once per threshold; resets after a compact.",
@@ -21,9 +21,9 @@
     "confirm_seconds": 120,
     "fresh_session_tokens": 75000
   },
-  "_job_comment": "Job budget: start a prompt with \"$2:\", \"beer:\" or \"200k:\". Runs until the next one; \"nobudget:\" clears it. ask: estimate on a session's first prompt when no budget is set, and ask only when the estimate is over ask_over_usd. hard_stop true blocks at 100% and pauses every agent at the mid-request check-in; false (the default) only tells you.",
+  "_job_comment": "Job budget: start a prompt with \"$2:\", \"beer:\" or \"200k:\". Runs until the next one; \"nobudget:\" clears it. ask (off by default): estimate on a session's first prompt when no budget is set, and ask only when the estimate is over ask_over_usd. ask_mid_request (off by default): one notice when a request passes ask_over_usd with no job budget. hard_stop true blocks at 100% and pauses every agent at the mid-request check-in; false (the default) only tells you.",
   "job": {
-    "ask": true,
+    "ask": false,
     "ask_over_usd": 1.0,
     "hard_stop": false,
     "scale": {
@@ -33,7 +33,7 @@
       "wine": 50,
       "champagne": 100
     },
-    "ask_mid_request": true
+    "ask_mid_request": false
   },
   "_new_session_comment": "Sends Claude the context size, cost per call and break-even for a new session with every prompt, so it can suggest one when the new prompt does not need this conversation.",
   "new_session": {

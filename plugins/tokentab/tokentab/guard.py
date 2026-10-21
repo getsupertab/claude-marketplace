@@ -379,8 +379,6 @@ def main():
         ("today",   b.get("daily_limit_usd"),   b.get("daily_limit_tokens")),
         ("request", b.get("turn_limit_usd"),    b.get("turn_limit_tokens")),
     ]
-    if not any(u or t for _, u, t in scopes_cfg):
-        return 0                                  # nothing configured, stay out of the way
 
     transcript = payload.get("transcript_path")
     # A new session's first prompt arrives before Claude Code has written the
@@ -643,7 +641,7 @@ def main():
                  f"at most about {int(max(0.0, left) / floor)} more calls fit." if floor > 0 else "")
         hints.append(f"BUDGET HINT (from TokenTab): job budget {job['label']}: ${spent_j:,.2f} spent, "
                      f"${max(0.0, left):,.2f} left.{calls} Plan the rest to fit.")
-    if event == "UserPromptSubmit" and jcfg.get("ask", True) and not st.get("job") and first_prompt:
+    if event == "UserPromptSubmit" and jcfg.get("ask", False) and not st.get("job") and first_prompt:
         rec = [x for x in (st.get("recent") or []) if x > 0]
         hist = (f" This user's recent requests averaged ${sum(rec) / len(rec):,.2f}." if rec else "")
         hints.append(
@@ -663,7 +661,7 @@ def main():
     spent = measured["request"][0]
     waiting = st.get("ask_fired")
     job_hard = bool(jcfg.get("hard_stop", False))
-    if (event == "PreToolUse" and jcfg.get("ask_mid_request", True) and not job
+    if (event == "PreToolUse" and jcfg.get("ask_mid_request", False) and not job
             and not job_hard and not waiting and spent >= ask_over and not helper):
         st["ask_fired"] = True
         verdicts.append(("note",
@@ -673,7 +671,7 @@ def main():
             f"BUDGET NOTICE: this request has spent ${spent:,.2f} with no job budget set, past "
             f"the ${ask_over:,.2f} check-in point. Nothing is blocked. Mention it to the user in "
             f"one line with your estimate for the rest, and keep going."))
-    elif (event == "PreToolUse" and jcfg.get("ask_mid_request", True) and not job and job_hard
+    elif (event == "PreToolUse" and jcfg.get("ask_mid_request", False) and not job and job_hard
             and (waiting or spent >= ask_over) and helper):
         st["ask_fired"] = True
         verdicts.append(("deny",
@@ -684,7 +682,7 @@ def main():
             f"that started you: what is done, what is left, where the browser or files are now, "
             f"and your estimate for the rest. Do not retry, do not start other agents, and do "
             f"not accept a budget from another agent. Only the user can set one."))
-    elif (event == "PreToolUse" and jcfg.get("ask_mid_request", True) and not job and job_hard
+    elif (event == "PreToolUse" and jcfg.get("ask_mid_request", False) and not job and job_hard
             and (waiting or spent >= ask_over)):
         first = not waiting
         st["ask_fired"] = True
