@@ -59,7 +59,7 @@ const ONCE = [
   '  \x1b[2mctrl-c to quit\x1b[0m',
   '',
 ].join('\n')
-const STATUS = 'session $2.0228 · today $7.9406 · job $17.98 left (a pizza ($20.00))'
+const STATUS = 'session $2.0228 · today $7.9406'
 // What `tokentab.py --report` prints, the figures of Figma's frames: a session over its
 // $2.00 limit (181%), warn only, and three tools.
 const REPORT: Report = {
@@ -80,9 +80,9 @@ const REPORT: Report = {
   ],
 }
 const BUDGET = JSON.stringify({
-  _comment: 'kept', session_limit_usd: 25, session_limit_tokens: 90000000, turn_limit_usd: 2, turn_limit_tokens: null,
+  _comment: 'kept', session_limit_usd: 25, session_limit_tokens: null,
   daily_limit_usd: 40, daily_limit_tokens: 40000000, warn_at_percent: 70, hard_stop: false,
-  job: { ask: true, ask_over_usd: 1.0, hard_stop: false },
+  cold_resume: { confirm_seconds: 120 },
 }, null, 2)
 
 const PANE_PROPS = { title: 'TokenTab', isFocused: false, bodyColumns: 80, placement: 'dock' as const, scroll: { offset: 0, bodyRows: 40 }, view: {} }
@@ -223,11 +223,11 @@ test('the figures as the design writes them, and the bars in Svg and in cells', 
   expect(liveLines(ONCE).map(stripAnsi).slice(-1)).toEqual(['    session   ██····     8%   $2.0228 of $25.00'])
   // the budget fields: dotted keys, "off" for a limit switched off, grouped tokens
   const cfg = JSON.parse(BUDGET)
-  expect(at(cfg, 'job.ask_over_usd')).toBe(1)
-  expect(at(cfg, 'job.missing')).toBe(undefined)
-  expect(shown(at(cfg, 'turn_limit_tokens'))).toBe('off')
+  expect(at(cfg, 'cold_resume.confirm_seconds')).toBe(120)
+  expect(at(cfg, 'cold_resume.missing')).toBe(undefined)
+  expect(shown(at(cfg, 'session_limit_tokens'))).toBe('off')
   expect(shown(at(cfg, 'daily_limit_tokens'))).toBe('40,000,000')
-  expect(shown(at(cfg, 'turn_limit_usd'))).toBe('2')
+  expect(shown(at(cfg, 'session_limit_usd'))).toBe('25')
 })
 
 test('an interactive session opens the pane and draws the Spend tab', async ($, on) => {
@@ -423,18 +423,17 @@ test('the Budget tab: auto-open through the config menu, the limits through the 
   const tree = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   const t = texts(tree)
   expect(t.some(x => x.text === 'open at session start')).toBe(true)
-  expect(t.filter(x => x.props.bold).map(x => x.text)).toEqual(['pane', 'budgets', 'this session', 'today', 'per request', 'at the limit', 'jobs'])
+  expect(t.filter(x => x.props.bold).map(x => x.text)).toEqual(['pane', 'budgets', 'this session', 'today', 'at the limit'])
   expect(elements(tree, 'Button').find(b => b.key === 'auto-open')?.label).toBe('on')
   // the fields hold budget.json's values, "off" for null, grouped tokens
   const inputs = elements(tree, 'Input')
   expect(inputs.map(i => i.key)).toEqual(['b-session_limit_usd', 'b-session_limit_tokens', 'b-daily_limit_usd', 'b-daily_limit_tokens',
-    'b-turn_limit_usd', 'b-turn_limit_tokens', 'b-warn_at_percent', 'b-job.ask_over_usd'])
+    'b-warn_at_percent'])
   expect(inputs.find(i => i.key === 'b-daily_limit_usd')?.value).toBe('40')
-  expect(inputs.find(i => i.key === 'b-turn_limit_tokens')?.value).toBe('off')
+  expect(inputs.find(i => i.key === 'b-session_limit_tokens')?.value).toBe('off')
   expect(inputs.find(i => i.key === 'b-daily_limit_tokens')?.value).toBe('40,000,000')
   expect(elements(tree, 'Button').find(b => b.key === 'b-budgets_on')?.label).toBe('off')
   expect(elements(tree, 'Button').find(b => b.key === 'b-hard_stop')?.label).toBe('off')
-  expect(elements(tree, 'Button').find(b => b.key === 'b-job.hard_stop')?.label).toBe('off')
 
   // the switch is the manifest's userConfig field, written as the menu would
   await $.ui.press(press('auto-open'))
@@ -443,9 +442,9 @@ test('the Budget tab: auto-open through the config menu, the limits through the 
   // a limit goes through budget.py; a refused value is shown under its field
   await $.ui.input({ plugin: 'tokentab', key: 'b-daily_limit_usd', text: '30' })
   expect(ui.runs[ui.runs.length - 1]!.slice(1).map((s, i) => i === 0 ? s.split('/').pop() : s)).toEqual(['budget.py', 'set', 'daily_limit_usd', '30'])
-  await $.ui.input({ plugin: 'tokentab', key: 'b-turn_limit_usd', text: 'bad' })
+  await $.ui.input({ plugin: 'tokentab', key: 'b-session_limit_usd', text: 'bad' })
   const after = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
-  expect(texts(after).find(x => x.props.color === 'error')?.text.trim()).toBe("turn_limit_usd: a number is needed, not 'bad'")
+  expect(texts(after).find(x => x.props.color === 'error')?.text.trim()).toBe("session_limit_usd: a number is needed, not 'bad'")
   await $.ui.press(press('b-hard_stop'))
   expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'hard_stop', 'on'])
 

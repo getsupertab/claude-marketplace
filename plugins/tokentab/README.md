@@ -40,9 +40,8 @@ working from its first prompt:
 
 Budgets are off out of the box: one switch, `budgets_on`, turns them on with
 `/tokentab:budget` or the pane's Options tab. They then start from the POC author's limits
-(warn-only, $25 per session, $40 per day, $2 per request, and a job budget check-in at
-$1); a limit warns at 70% and at 100%, and `hard_stop` or `job.hard_stop` makes it stop
-tool calls. A `$2:` or `beer:` prefix sets a job budget for that job either way. Out of the box nothing is blocked except a prompt
+(warn-only, $25 per session, $40 per day); a limit warns at 70% and at 100%, and
+`hard_stop` makes it stop tool calls. Out of the box nothing is blocked except a prompt
 sent after the prompt cache has expired. See Budgets in the POC README.
 
 In two steps instead (`/plugin marketplace add getsupertab/claude-marketplace`, then
@@ -54,7 +53,7 @@ getsupertab/claude-marketplace` and `claude plugin install tokentab@supertab`.
 The live view opens in a **pane beside the chat** when a session starts: in Claude
 Desktop and in a terminal of 144 columns or more (110 once you have opened it yourself).
 In a narrower terminal the pane waits and TokenTab's **status line** under the prompt
-shows session cost, today's cost and what is left of the job budget; `/tokentab:status`
+shows session cost and today's cost; `/tokentab:status`
 opens the pane at any width. The pane is the terminal live view, redrawn after every
 API call and every 30 seconds. Its "open in browser" button writes the status page
 (where the money went as a flow diagram, cost over time, and every figure TokenTab

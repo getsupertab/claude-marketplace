@@ -64,7 +64,7 @@ To remove everything setup added (env vars, hooks, launchd job):
 Shows: the session's cost by rate (input, cache write, cache read, output, web search
 fees), spend by call source (main loop, prompt suggestions, web search, helpers),
 **requests** (latest, previous, average: one prompt and everything it set off,
-including the prompt suggestion after it), budget bars (session, today, job), the
+including the prompt suggestion after it), budget bars (session, today), the
 context size and what each call costs to re-read it, and cost per tool.
 
 `--json` includes `requests` (last 5) and `by_source`.
@@ -124,7 +124,7 @@ not a tokenizer: no dependencies). Each estimate lives in one named function in
 - Re-reads assume a tool result stays in the cached prefix until a compaction. Claude Code
   clearing old tool results mid-session is not visible in the transcript, so those results
   keep collecting re-read cost.
-- TokenTab's own hook text (budget hints, job checks) is found by its marker words and shown
+- TokenTab's own hook text (budget notices, session checks) is found by its marker words and shown
   as "TokenTab overhead". What no tool or hook accounts for is "prompts & replies" (or
   "context re-reads" for cache read).
 
@@ -136,66 +136,26 @@ more from a (model, rate) than it holds, every Sankey column sums to the session
 All in `budget.json`, in USD, tokens, or both. Whichever is closest to its limit
 governs. `null` turns one off.
 
-`budgets_on` is the switch for all of it: the limits below, the job estimate and the
-mid-request check-in. It ships `false`, so a fresh install checks no budget until you turn
-it on (`/tokentab:budget` or the pane's Options tab); the limits keep their values while it
-is off. A file without the key reads as off. Job prefixes, context warnings, the
-cold-resume check and the new-session check work either way.
+`budgets_on` is the switch for the limits below. It ships `false`, so a fresh install
+checks no budget until you turn it on (`/tokentab:budget` or the pane's Options tab); the
+limits keep their values while it is off. A file without the key reads as off. Context
+warnings, the cold-resume check and the new-session check work either way.
 
 | Scope | Keys | Resets |
 |---|---|---|
 | Session | `session_limit_usd`, `session_limit_tokens` | new session |
 | Today | `daily_limit_usd`, `daily_limit_tokens` | midnight, all sessions and projects |
-| Request | `turn_limit_usd`, `turn_limit_tokens` | every prompt |
-| Job | set from the prompt (below) | when you set a new one |
 
 `warn_at_percent` (default 70) starts warnings, once per 10% band. `hard_stop: true`
-blocks at 100%; `false` (the default) only warns. Job budgets have their own
-`job.hard_stop`, also `false` by default. Every warning names `/tokentab:budget`, which
-changes the limit.
-
-### Job budgets
-
-Start a prompt with a budget and a colon:
-
-    $2: find me a comparable plan
-    beer: tidy up this module
-    200k: summarise these docs
-    nobudget: carry on without one
-
-- Counted from the moment it is set, across prompts, until you set a new one.
-- Words map to the scale in `job.scale` (water $0.50, beer $6, pizza $20, wine $50,
-  champagne $100). Other words before a colon (`note:`, `todo:`) are ignored.
-- A prompt that is only pasted text still picks up its prefix.
-- At 100% Claude is told and carries on. With `job.hard_stop` on, tool calls are
-  refused instead and Claude reports what is done, what is left, and a realistic
-  budget for the rest.
-
-### Asking for a budget
-
-Both need `budgets_on`; `job.ask` and `job.ask_mid_request` turn each off on its own.
-
-- **First prompt of a session, no job budget:** Claude is asked to estimate the job
-  in dollars and on the scale. Under `job.ask_over_usd` (default $1) it states the
-  estimate and proceeds; over it, it asks first.
-- **Mid-request check-in** (`job.ask_mid_request`): when one request passes
-  `ask_over_usd` with no job budget, you and Claude get one notice and nothing is
-  blocked; helpers are not told. With `job.hard_stop` on it is a pause instead: every
-  tool call is refused, main conversation and helpers alike, until you send a new
-  message. Claude says what is done, what is left and what the rest would cost. A
-  helper is told to stop and report back, and that only the user can set a budget.
-- Estimates start from real history: each request's cost is kept in state.
+blocks at 100%; `false` (the default) only warns. Every warning names
+`/tokentab:budget`, which changes the limit.
 
 ### Budget hints
 
 The guard gives Claude numbers, not tactics. We do not yet have the data to say which
-method is cheapest for a given job, so it does not recommend one.
-
-- With every prompt while a job budget runs:
-  `$0.80 spent, $1.20 left. Each call here costs at least $0.022 just to re-read this
-  context, so at most about 53 more calls fit.` The per-call figure is a true floor
-  (the re-read alone), so the call count is a ceiling, not a guess.
-- Warnings are always shown in dollars.
+method is cheapest for a given job, so it does not recommend one. Warnings are always
+shown in dollars. Each request's cost is still measured and kept in state; no limit
+reads it.
 
 ### New session check
 
@@ -234,8 +194,7 @@ flags) always goes through, even during a pause or a hard stop.
 - **Prompt suggestions cost money you did not ask for.** After each turn Claude Code
   makes a call to suggest your next prompt. It re-reads the whole context: about 2¢
   in a short chat, about 5¢ in a long one.
-- **A $1+ job usually starts mid-session**, not on the first prompt. The mid-request
-  check-in exists because of that.
+- **A $1+ job usually starts mid-session**, not on the first prompt.
 - **A cheaper model is not automatically cheaper.** On one browser-form job a Haiku
   helper made 4x the calls of Opus, took longer and did not finish. One site is not a
   rule, which is why the hints carry numbers only.

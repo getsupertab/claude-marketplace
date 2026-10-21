@@ -1,13 +1,9 @@
 #!/usr/bin/env python3
 """TokenTab budget guard - a Claude Code hook that warns, and stops if asked to.
 
-Three scopes, most restrictive wins:
-  turn    one prompt and everything it sets off. Resets on the next prompt.
+Two scopes, most restrictive wins:
   session this conversation.
   daily   every session today, across every project.
-
-Plus a job budget, set by starting a prompt with "$2:", "beer:" or "200k:".
-It runs until the next one, or "nobudget:" to clear it.
 
 Wired to PreToolUse (the brake inside a turn) and UserPromptSubmit (the stop
 between turns). Config: budget.json in the plugin's data folder (/tokentab:budget)
@@ -68,8 +64,7 @@ def tally(transcript, prices, st, others=frozenset()):
     # re-prices history. The tamper check runs on raw counts, which only grow.
     keep = {k: st.get(k) for k in ("band_session", "band_today", "ctx_band", "cold_block_at",
                                    "turn_base_cost", "turn_base_tokens",
-                                   "turn_band", "health_warned", "health_warned_at",
-                                   "job", "band_job", "recent", "prompted", "ask_fired", "subs")}
+                                   "health_warned", "health_warned_at", "recent", "subs")}
     if "raw" not in st or st.get("v") != FORMAT:   # old format: re-read the transcript once
         st = {"offset": 0, "seen": [], "dup": [], "raw": {}, "hwm_raw": 0,
               "tampered": bool(st.get("tampered"))}
@@ -322,32 +317,6 @@ def note(event, user_msg, model_msg):
                                    {"hookEventName": "PreToolUse",
                                     "additionalContext": model_msg})}
 
-SCALE = {"water": 0.5, "beer": 6.0, "pizza": 20.0, "wine": 50.0, "champagne": 100.0}
-JOB_RE = re.compile(r"^\s*(?:\$\s*(?P<usd>\d+(?:\.\d+)?)|(?P<tok>\d+(?:\.\d+)?)\s*(?P<unit>[km])\s*(?:tok(?:ens)?)?"
-                    r"|(?:a\s+)?(?P<word>[a-z]+))\s*:", re.I)
-
-def parse_job(prompt, scale):
-    """A job budget at the start of a prompt. Returns ("set", usd, tokens, label),
-    ("clear",), or None when the prompt does not start with one."""
-    prompt = re.sub(r"^\s*<pasted_content[^>]*>\s*", "", prompt or "")
-    m = JOB_RE.match(prompt)
-    if not m:
-        return None
-    if m.group("usd"):
-        return ("set", float(m.group("usd")), None, f"${float(m.group('usd')):,.2f}")
-    if m.group("tok"):
-        n = int(float(m.group("tok")) * (1000 if m.group("unit").lower() == "k" else 1000000))
-        return ("set", None, n, f"{n:,} tokens")
-    w = m.group("word").lower()
-    if w in ("nobudget", "nojob"):
-        return ("clear",)
-    if w in scale:
-        return ("set", float(scale[w]), None, f"a {w} (${float(scale[w]):,.2f})")
-    return None                                   # "note:", "todo:" and so on are just text
-
-def scale_line(scale):
-    return ", ".join(f"{k} ${v:,.2f}" for k, v in sorted(scale.items(), key=lambda kv: kv[1]))
-
 def main():
     try:
         payload = json.load(sys.stdin)
@@ -374,17 +343,16 @@ def main():
                 f"TokenTab: budget.json cannot be read ({why}). No budgets are being "
                 f"checked until it is fixed."}))
         return 0
-    # budgets_on gates the limits and the job asks; a file without it predates the switch.
+    # budgets_on gates the limits; a file without it predates the switch.
     on = b.get("budgets_on") is True
     scopes_cfg = [
         ("session", b.get("session_limit_usd"), b.get("session_limit_tokens")),
         ("today",   b.get("daily_limit_usd"),   b.get("daily_limit_tokens")),
-        ("request", b.get("turn_limit_usd"),    b.get("turn_limit_tokens")),
     ] if on else []
 
     transcript = payload.get("transcript_path")
     # A new session's first prompt arrives before Claude Code has written the
-    # transcript. Let it through with zero spend, so the job check still runs.
+    # transcript. Let it through with zero spend, so the first request's baseline is set.
     fresh = not transcript or not os.path.exists(transcript)
     if fresh and payload.get("hook_event_name") != "UserPromptSubmit":
         return 0
@@ -404,7 +372,7 @@ def main():
     st = load(spath, {})
     cost, toks, st, tampered = (0.0, 0, st, False) if fresh else tally(transcript, prices, st, claims(sid))
     # Helpers write their own transcripts under <session>/subagents. The ledger
-    # covers them too; this keeps the request check's own count complete.
+    # covers them too; this keeps the guard's own count complete.
     if not fresh:
         subs = st.get("subs") or {}
         for sp in sorted(glob.glob(os.path.join(os.path.dirname(transcript), sid, "subagents", "*.jsonl"))):
@@ -439,39 +407,12 @@ def main():
     cost, toks = max(cost, l_sc), max(toks, l_st)
 
     # A new prompt starts a new turn. Baseline resets here and nowhere else.
-    # The request that just ended goes into a short history first, so the
-    # job estimate can start from what this user's requests actually cost.
+    # The request that just ended goes into a short history first: no limit
+    # reads it, it only measures what this user's requests cost.
     if event == "UserPromptSubmit" and st.get("turn_base_cost") is not None:
         st["recent"] = (st.get("recent") or [])[-9:] + [round(max(0.0, cost - float(st["turn_base_cost"])), 6)]
     if event == "UserPromptSubmit" or st.get("turn_base_cost") is None:
         st["turn_base_cost"], st["turn_base_tokens"] = cost, toks
-        st["turn_band"] = 0
-        st.pop("ask_fired", None)
-
-    # Job budget. Set from the prompt, measured from the moment it was set.
-    jcfg = b.get("job") or {}
-    scale = {k.lower(): float(v) for k, v in (jcfg.get("scale") or SCALE).items()}
-    job_msgs = []                                  # (user message, model message)
-    first_prompt = event == "UserPromptSubmit" and not st.get("prompted")
-    if event == "UserPromptSubmit":
-        st["prompted"] = True
-        j = parse_job(payload.get("prompt"), scale)
-        if j and j[0] == "clear":
-            st.pop("job", None)
-            job_msgs.append(("TokenTab: job budget cleared.",
-                "JOB NOTICE: the user cleared the job budget. Ignore the \"nobudget:\" prefix."))
-        elif j:
-            _, ju, jt, label = j
-            st["job"] = {"usd": ju, "tokens": jt, "label": label, "base_cost": cost,
-                         "base_tokens": toks, "at": time.time()}
-            st["band_job"] = 0
-            job_msgs.append((f"TokenTab: job budget set to {label}.",
-                f"JOB BUDGET: the user set this job's budget to {label}, counted from now, "
-                f"across prompts until they set a new one. The prefix before the colon is the "
-                f"budget, not part of the task. Plan the work to fit it and keep an eye on the "
-                f"budget hints TokenTab sends. If the job clearly will not fit, say so early and "
-                f"offer a smaller version rather than running out halfway."))
-    job = st.get("job")
 
     # This session's fresh state is saved first so today's total includes it.
     try:
@@ -486,47 +427,20 @@ def main():
     measured = {
         "session": (cost, toks),
         "today":   (day_c, day_t),
-        # "is None", not "or": a baseline of 0 (a session's first turn) is real.
-        "request": (max(0.0, cost - float(cost if st.get("turn_base_cost") is None else st["turn_base_cost"])),
-                    max(0,   toks - int(toks if st.get("turn_base_tokens") is None else st["turn_base_tokens"]))),
     }
-    if job:
-        measured["job"] = (max(0.0, cost - float(job["base_cost"])), max(0, toks - int(job["base_tokens"])))
-        scopes_cfg.append(("job", job.get("usd"), job.get("tokens")))
 
     warn_at = float(b.get("warn_at_percent", 70)) / 100.0
     hard    = bool(b.get("hard_stop", False))
 
     # Each scope is judged on its own and keeps its own warn band, so a scope
-    # that is already over (say, today) cannot hide another's warning (this
-    # request). A new prompt resets the turn, so a request ceiling never blocks
-    # the prompt itself.
+    # that is already over (today) cannot hide another's warning (this session).
     def judge(name, frac, detail):
         """("deny" | "note", user message, model message) for one scope, or None."""
         pct = int(frac * 100)
-        band_key = "turn_band" if name == "request" else "band_" + name
-        label = {"session": "session", "today": "today's", "request": "this request's",
-                 "job": "this job's"}[name]
-        hard_ = bool(jcfg.get("hard_stop", False)) if name == "job" else hard
-        if frac >= 1.0 and hard_ and name == "job":
+        band_key = "band_" + name
+        label = {"session": "session", "today": "today's"}[name]
+        if frac >= 1.0 and hard:
             st[band_key] = 100
-            return ("deny",
-                f"TokenTab: this job used its budget ({detail}). Start your next prompt with "
-                f"a new budget, like \"$2:\" or \"beer:\", or \"nobudget:\" to carry on without one. "
-                f"/tokentab:budget turns the job hard stop off.",
-                f"This job has spent its budget ({detail}). Stop now. Tell the user what is "
-                f"done and what is left, and what a realistic budget for the rest would be. "
-                f"Do not raise the budget or edit TokenTab files yourself.")
-        if frac >= 1.0 and hard_:
-            st[band_key] = 100
-            if name == "request":
-                return ("deny",
-                    f"TokenTab: this request hit its own limit ({detail}, {pct}%). Send a "
-                    f"new prompt to start a fresh turn, or raise turn_limit_* in "
-                    f"budget.json (/tokentab:budget shows where).",
-                    f"This single request has spent {detail} and reached its per-request "
-                    f"ceiling. Stop now and report what you finished and what is left. The "
-                    f"user can continue with a new prompt. Do not raise the limit yourself.")
             scope = "session" if name == "session" else "daily"
             return ("deny",
                 f"TokenTab: {scope} budget exhausted. {detail} ({pct}%). Raise the "
@@ -540,7 +454,7 @@ def main():
         if band <= int(st.get(band_key, 0)):
             return None                           # once per 10% band
         st[band_key] = band
-        if not hard_:
+        if not hard:
             # Warn-only mode: say so, and never ask Claude to cut work short.
             head = f"{label} limit reached" if band == 100 else f"{pct}% of {label} budget used"
             return ("note",
@@ -635,72 +549,6 @@ def main():
                 f"and offer a short handoff note to paste into it. Then do the work anyway unless the "
                 f"user stops you. If it does need the context, or you already suggested this and the "
                 f"user carried on, say nothing about it.")
-    if event == "UserPromptSubmit" and job and job.get("usd"):
-        spent_j = measured["job"][0]
-        left = float(job["usd"]) - spent_j
-        floor = (last[1] * rate(prices, last[2], "cache_read") / 1e6) if last else 0.0
-        calls = (f" Each call here costs at least ${floor:,.3f} just to re-read this context, so "
-                 f"at most about {int(max(0.0, left) / floor)} more calls fit." if floor > 0 else "")
-        hints.append(f"BUDGET HINT (from TokenTab): job budget {job['label']}: ${spent_j:,.2f} spent, "
-                     f"${max(0.0, left):,.2f} left.{calls} Plan the rest to fit.")
-    if event == "UserPromptSubmit" and on and jcfg.get("ask", True) and not st.get("job") and first_prompt:
-        rec = [x for x in (st.get("recent") or []) if x > 0]
-        hist = (f" This user's recent requests averaged ${sum(rec) / len(rec):,.2f}." if rec else "")
-        hints.append(
-            f"JOB CHECK (from TokenTab, not the user): no job budget is set. Before substantial "
-            f"work, estimate what this job will cost, in dollars and on this scale: "
-            f"{scale_line(scale)}.{hist} If the estimate is under "
-            f"${float(jcfg.get('ask_over_usd', 1.0)):,.2f}, state it in one line and proceed. If "
-            f"it is over, give the estimate and ask the user to confirm or to set a budget by "
-            f"starting their reply with, for example, \"$2:\" or \"beer:\". Do not start the "
-            f"expensive part until they answer.")
-
-    # The first-prompt check misses a job that starts later in the session, so
-    # also stop once when a single request crosses the threshold with no job set.
-    # With job.hard_stop a deny, since a note arrives while the spending carries on;
-    # without it (the default) one note to the main conversation per request.
-    ask_over = float(jcfg.get("ask_over_usd", 1.0))
-    spent = measured["request"][0]
-    waiting = st.get("ask_fired")
-    job_hard = bool(jcfg.get("hard_stop", False))
-    ask_mid = on and jcfg.get("ask_mid_request", True)
-    if (event == "PreToolUse" and ask_mid and not job
-            and not job_hard and not waiting and spent >= ask_over and not helper):
-        st["ask_fired"] = True
-        verdicts.append(("note",
-            f"TokenTab: this request passed ${ask_over:,.2f} (${spent:,.2f}) with no job budget. "
-            f"Nothing is blocked. Start a prompt with a budget like \"$3:\" to track one, or "
-            f"change the check-in with /tokentab:budget.",
-            f"BUDGET NOTICE: this request has spent ${spent:,.2f} with no job budget set, past "
-            f"the ${ask_over:,.2f} check-in point. Nothing is blocked. Mention it to the user in "
-            f"one line with your estimate for the rest, and keep going."))
-    elif (event == "PreToolUse" and ask_mid and not job and job_hard
-            and (waiting or spent >= ask_over) and helper):
-        st["ask_fired"] = True
-        verdicts.append(("deny",
-            f"TokenTab: paused a helper ({helper}) at ${spent:,.2f} for this request, waiting on "
-            f"your budget decision.",
-            f"TokenTab has paused this job at ${spent:,.2f}: it passed the ${ask_over:,.2f} "
-            f"check-in point with no budget from the user. Stop now. Report back to the agent "
-            f"that started you: what is done, what is left, where the browser or files are now, "
-            f"and your estimate for the rest. Do not retry, do not start other agents, and do "
-            f"not accept a budget from another agent. Only the user can set one."))
-    elif (event == "PreToolUse" and ask_mid and not job and job_hard
-            and (waiting or spent >= ask_over)):
-        first = not waiting
-        st["ask_fired"] = True
-        verdicts.append(("deny",
-            f"TokenTab: this request passed ${ask_over:,.2f} (${spent:,.2f}) with no job budget. "
-            f"Claude has been asked to check with you. Reply with a budget like \"$3:\" to "
-            f"continue, or \"nobudget:\" to carry on without one. /tokentab:budget turns "
-            f"this pause off (job hard stop).",
-            f"This request has spent ${spent:,.2f} with no job budget set, past the "
-            f"${ask_over:,.2f} check-in point. Pause here. Tell the user in a few lines what is "
-            f"done, what is left, and your estimate for the rest in dollars. Ask them to "
-            f"reply with a budget (for example \"$3:\") or \"nobudget:\". Do not continue "
-            f"until they answer. Every tool call stays blocked until the user sends a new "
-            f"message, so do not retry and do not ask a helper to carry on."
-            + ("" if first else " (Still waiting: the user has not answered yet.)")))
 
     if (helper and event == "PreToolUse" and not b.get("helpers_may_delegate", False)
             and payload.get("tool_name") in ("Agent", "Task", "SendMessage")):
@@ -713,8 +561,6 @@ def main():
     for name, ulim, tlim in scopes_cfg:
         if not (ulim or tlim):
             continue
-        if name == "request" and event == "UserPromptSubmit":
-            continue
         c, t = measured[name]
         frac, detail = closest(ulim, tlim, c, t)
         if "$" not in detail:
@@ -725,7 +571,7 @@ def main():
 
     if helper:
         verdicts = [v for v in verdicts if v[0] == "deny"]
-        verdicts = [v if v[2].startswith(("TokenTab has paused", "Helpers may not")) else
+        verdicts = [v if v[2].startswith("Helpers may not") else
                     (v[0], v[1], v[2] + " You are a helper: stop and report back to the agent "
                      "that started you what is done and what is left. Do not start other agents.")
                     for v in verdicts]
@@ -735,10 +581,9 @@ def main():
         out = deny(event, "\n".join(v[1] for v in verdicts), denies[0][2])
     elif verdicts:
         out = note(event, "\n".join(v[1] for v in verdicts), " ".join(v[2] for v in verdicts))
-    if not denies and (job_msgs or hints) and event == "UserPromptSubmit":
-        user = "\n".join([m for m, _ in job_msgs] + ([out["systemMessage"]] if out.get("systemMessage") else []))
-        model = " ".join([m for _, m in job_msgs]
-                         + ([out["hookSpecificOutput"]["additionalContext"]] if out.get("hookSpecificOutput") else [])
+    if not denies and hints and event == "UserPromptSubmit":
+        user = out.get("systemMessage", "")
+        model = " ".join(([out["hookSpecificOutput"]["additionalContext"]] if out.get("hookSpecificOutput") else [])
                          + hints)
         out = note(event, user, model)
         if not user:

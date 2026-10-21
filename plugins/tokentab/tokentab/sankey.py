@@ -530,22 +530,17 @@ def status_html(R):
         out.append(f'<section><h2>by call source <span>what in Claude Code made the call</span></h2><table>{rows}</table></section>')
 
     bg = R["budget"]
-    if bg and (bg["lines"] or bg["request"] or bg["check_in"] or bg["context"]):
+    if bg and (bg["lines"] or bg["context"]):
         rows = "".join(f'<tr><td>{esc(r["name"])}</td><td>{meter(r["frac"])}</td>'
                        f'<td class="m">{esc(" · ".join(r["parts"]))}'
-                       + (' <b class="over">OVER</b>' if r["frac"] >= 1 else "")
-                       + (f' · {esc(r["note"])}' if r["note"] else "") + "</td></tr>"
+                       + (' <b class="over">OVER</b>' if r["frac"] >= 1 else "") + "</td></tr>"
                        for r in bg["lines"])
-        if bg["check_in"]:
-            rows += '<tr><td>check-in</td><td colspan="2" class="warn">paused: waiting for your budget reply</td></tr>'
         c = bg["context"]
         if c:
             cache = (f'<span class="over">cache COLD</span>: next prompt re-writes it, ~{kt.money(c["rewrite"])}'
                      if c["cold"] else f'cache warm, {c["minutes_left"]}m left')
             rows += (f'<tr><td>context</td><td class="{c["level"]}">{kt.num(c["tokens"])} tok</td>'
                      f'<td class="m">{kt.money(c["per_call"])}/call to re-read · {cache}</td></tr>')
-        if bg["request"]:
-            rows += f'<tr class="m"><td>request</td><td colspan="2">{esc(bg["request"])}, warned in the chat by guard.py</td></tr>'
         mode = ((f'{"hard stop" if bg["hard_stop"] else "warn only"} · warns at {bg["warn_at"]}%')
                 if bg["on"] else "off · /tokentab:budget turns budgets on")
         out.append(f'<section class="wrap"><h2>budget <span>{esc(mode)}</span></h2><table>{rows}</table></section>')
