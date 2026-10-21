@@ -547,7 +547,7 @@ def status_html(R):
         if bg["request"]:
             rows += f'<tr class="m"><td>request</td><td colspan="2">{esc(bg["request"])}, warned in the chat by guard.py</td></tr>'
         mode = ((f'{"hard stop" if bg["hard_stop"] else "warn only"} · warns at {bg["warn_at"]}%')
-                if bg["lines"] or bg["request"] else "off · /tokentab:budget sets limits")
+                if bg["on"] else "off · /tokentab:budget turns budgets on")
         out.append(f'<section class="wrap"><h2>budget <span>{esc(mode)}</span></h2><table>{rows}</table></section>')
 
     w, tt = R["window"], R["totals"]

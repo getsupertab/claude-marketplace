@@ -36,10 +36,11 @@ working from its first prompt:
   included, whether or not telemetry is switched on;
 - the budget guard runs on every prompt and tool call.
 
-Budgets are off out of the box: no limits, no job estimate, no check-in. Turn them on
-with `/tokentab:budget` or the pane's Options tab; a limit warns at 70% and at 100%, and
-`hard_stop` or `job.hard_stop` makes it stop tool calls. A `$2:` or `beer:` prefix sets a
-job budget for that job either way. Out of the box nothing is blocked except a prompt
+Budgets are off out of the box: one switch, `budgets_on`, turns them on with
+`/tokentab:budget` or the pane's Options tab. They then start from the POC author's limits
+(warn-only, $25 per session, $40 per day, $2 per request, and a job budget check-in at
+$1); a limit warns at 70% and at 100%, and `hard_stop` or `job.hard_stop` makes it stop
+tool calls. A `$2:` or `beer:` prefix sets a job budget for that job either way. Out of the box nothing is blocked except a prompt
 sent after the prompt cache has expired. See Budgets in the POC README.
 
 In two steps instead (`/plugin marketplace add getsupertab/claude-marketplace`, then

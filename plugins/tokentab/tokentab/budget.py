@@ -79,6 +79,8 @@ def main():
         print(json.dumps(node[leaf])); return
     if len(a) == 3 and a[0] == "set":
         cfg = load()
+        if a[1] == "budgets_on" and a[1] not in cfg:
+            cfg = {"budgets_on": False, **cfg}     # a file from before the switch
         node, leaf = lookup(cfg, a[1])
         node[leaf] = parse(a[1], node[leaf], a[2])
         tmp = PATH + ".tmp"

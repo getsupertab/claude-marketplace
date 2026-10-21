@@ -252,6 +252,9 @@ export const TABS: { view: View; label: string; hotkey: string }[] = [
 // Every write goes through tokentab/budget.py, the one validator.
 export type Setting = { key: string; label: string; kind: 'limit' | 'switch' }
 export const SECTIONS: { title: string; rows: Setting[] }[] = [
+  { title: 'budgets', rows: [
+    { key: 'budgets_on', label: 'check the limits below', kind: 'switch' },
+  ] },
   { title: 'this session', rows: [
     { key: 'session_limit_usd', label: 'USD', kind: 'limit' },
     { key: 'session_limit_tokens', label: 'tokens', kind: 'limit' },
