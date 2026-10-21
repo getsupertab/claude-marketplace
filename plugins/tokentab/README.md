@@ -77,7 +77,7 @@ saved through the plugin's validator (`tokentab/budget.py`), a refused value sho
 its field; **Tools**, per tool its calls and cost and a bar of what it drew (asking, its
 answer into context, re-reading it). Bars are drawings in Claude Desktop, VS Code and
 mobile and block characters in the terminal. Auto-open is on unless you switch it off
-there or in `/config` (`tokentab.autoOpen`). "open in browser" (`o`) writes the status
+there or, in a terminal, in `/config` (`tokentab.autoOpen`; the Desktop app has no `/config`, so the switch there is kept by TokenTab itself). "open in browser" (`o`) writes the status
 page (the flow, the cost chart, requests, call sources) and opens it; for 30 minutes
 after, the page stays live without a reload: it loads a data file beside itself every
 few seconds and swaps only what changed, so hovering the Sankey keeps working. The dot
@@ -105,7 +105,7 @@ data (ledger, guard state and your `budget.json`) stays in
 
 | Part | Where it runs | What it does |
 |---|---|---|
-| `hooks/register.tsx`, the hooks module | Inside Claude Code, loaded from `hooks/hooks.json` (`modules`) | Sees every API request in-process (`telemetry.log`), prices it from `tokentab/prices.json` and appends one line to the session's ledger file. At session start it writes the loaded marker, on first run copies `budget.json` into the data folder and opens the pane; answers `/tokentab:status` by opening it. Draws the pane's tabs: Spend and Tools (`tokentab.py --report`), Budget (budget.json, written through `budget.py set`, and the `autoOpen` config row); or sets the status line (`tokentab.py --status`). "open in browser" runs `sankey.py --out`, opens the file and, for 30 minutes, has every redraw write the page's data file (`sankey.py --push`) |
+| `hooks/register.tsx`, the hooks module | Inside Claude Code, loaded from `hooks/hooks.json` (`modules`) | Sees every API request in-process (`telemetry.log`), prices it from `tokentab/prices.json` and appends one line to the session's ledger file. At session start it writes the loaded marker, on first run copies `budget.json` into the data folder and opens the pane; answers `/tokentab:status` by opening it. Draws the pane's tabs: Spend and Tools (`tokentab.py --report`), Budget (budget.json, written through `budget.py set`, and the `autoOpen` config row, kept in the plugin's store where an SDK host such as Desktop has no row); or sets the status line (`tokentab.py --status`). "open in browser" runs `sankey.py --out`, opens the file and, for 30 minutes, has every redraw write the page's data file (`sankey.py --push`) |
 | `scripts/guard.sh` → `tokentab/guard.py` | Shell hooks on `UserPromptSubmit` and `PreToolUse` | The budget guard: reads the ledger and the session's transcript, warns or stops, gives Claude the budget hints |
 | `scripts/loaded-check.sh` | Shell hook on `UserPromptSubmit` | The version gate: says once, on the first prompt, when the module did not load |
 | `tokentab/tokentab.py`, `tokentab/sankey.py` | Python, run by the hooks module, the spend skill or by hand | The accounting, the terminal live view (`--once`), the pane's data (`--report`) and the status line (`--status`); the status page (`--out`), its live data file (`--push`) and the pane's Sankey (`--flow-svg`); `budget.py` validates and writes one limit |

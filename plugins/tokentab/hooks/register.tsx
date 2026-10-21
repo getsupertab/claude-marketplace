@@ -324,8 +324,14 @@ let running: Promise<void> | undefined  // one refresh at a time; a request duri
 let again = false
 let columns = 60                        // the pane body's width in cells, from the last render
 let waiting = false                     // session.start's open left the pane undrawn: the first prompt opens it
+let showing = false                     // this session's auto-open and clock have started (startShowing)
+let autoOpenHere: boolean | undefined   // the switch set where /config had no row for it, `$.store`'s AUTO_OPEN
 
-const autoOpen = () => opts.autoOpen !== false
+// An SDK host (the Desktop app, `claude -p`) lists no plugin's /config row, so there the
+// Budget tab's switch is kept in `$.store` and stands over the manifest's option, until a
+// change through /config clears it.
+const AUTO_OPEN = 'autoOpen'
+const autoOpen = () => autoOpenHere ?? opts.autoOpen !== false
 
 async function sid($: EngineInterface): Promise<string> {
   return (sessionId ??= await $.session.id())
@@ -429,11 +435,25 @@ async function openSnapshot($: EngineInterface): Promise<void> {
 
 /** The auto-open switch is the manifest's `userConfig` field: written as the config menu
  *  would, so the menu, the install screen and the pane show one value. The write reloads
- *  the module with the new options; `session.start` then runs again and is idempotent. */
+ *  the module with the new options; `session.start` then runs again and is idempotent.
+ *  Where /config has no row for it (an SDK host), it is kept in `$.store` instead. A stored
+ *  value is cleared before the /config write, so the reload cannot read it back. */
 async function setAutoOpen($: EngineInterface, value: boolean): Promise<void> {
+  const key = `${$.plugin.name}.autoOpen`
   try {
-    const r = await $.config.set({ key: `${$.plugin.name}.autoOpen`, value })
-    if ('deny' in r && r.deny !== undefined) $.ui.toast(`TokenTab: auto-open not changed: ${r.deny}`)
+    if (!(await $.config.list()).some(row => row.key === key)) {
+      autoOpenHere = value
+      await $.store.set(AUTO_OPEN, value)
+      $.ui.invalidate('ui.render')
+      return
+    }
+    const stored = autoOpenHere
+    await $.store.delete(AUTO_OPEN)
+    const r = await $.config.set({ key, value })
+    if ('deny' in r && r.deny !== undefined) {
+      if (stored !== undefined) await $.store.set(AUTO_OPEN, stored)
+      $.ui.toast(`TokenTab: auto-open not changed: ${r.deny}`)
+    }
   } catch (err) {
     $.ui.toast(`TokenTab: auto-open not changed: ${err instanceof Error ? err.message : String(err)}`)
   }
@@ -451,6 +471,26 @@ async function setBudget($: EngineInterface, key: string, value: string): Promis
   }
   await readBudget($)
   $.ui.invalidate('ui.render')
+}
+
+/** Once a session someone looks at, from whichever comes first, `session.start` with a
+ *  surface or the first `session.attach`: the auto-open, the 30 s clock and a first
+ *  redraw. Once, so a second client joining does not reopen a pane closed by hand. */
+async function startShowing($: EngineInterface): Promise<void> {
+  if (showing) return
+  showing = true
+  try { pageOpenedAt = num(await $.store.get(`pageOpenedAt:${await sid($)}`)) || undefined } catch { /* none */ }
+  if (autoOpen()) {
+    const opened = await openPane($)
+    // Unasked, the engine places it only from 144 columns (110 once opened before).
+    // Not placed: the first prompt opens it asked (`prompt.submit`), and the toast says so.
+    if (!opened.isPlaced) {
+      waiting = true
+      $.ui.toast(`TokenTab: the pane opens with your first prompt (${opened.reason})`)
+    }
+  }
+  startClock($)
+  void refresh($)
 }
 
 export const register: Register = (on, pluginOptions) => {
@@ -474,20 +514,21 @@ export const register: Register = (on, pluginOptions) => {
     options = undefined
     sessionId = undefined
     waiting = false
-    if (e.isInteractive && e.surface !== null) {   // `claude -p` and a bare host: nothing visual
-      try { pageOpenedAt = num(await $.store.get(`pageOpenedAt:${await sid($)}`)) || undefined } catch { /* none */ }
-      if (autoOpen()) {
-        const opened = await openPane($)
-        // Unasked, the engine places it only from 144 columns (110 once opened before).
-        // Not placed: the first prompt opens it asked (`prompt.submit`), and the toast says so.
-        if (!opened.isPlaced) {
-          waiting = true
-          $.ui.toast(`TokenTab: the pane opens with your first prompt (${opened.reason})`)
-        }
-      }
-      startClock($)
-      void refresh($)
-    }
+    try {
+      const v = await $.store.get(AUTO_OPEN)
+      autoOpenHere = typeof v === 'boolean' ? v : undefined
+    } catch { autoOpenHere = undefined }
+    showing = false
+    // The REPL starts with its terminal; an SDK host (the Desktop app) with none, so its
+    // first `session.attach` starts the pane, or, on a reload, the surfaces already there.
+    // A `-p` run never has one: nothing visual.
+    if ((e.isInteractive && e.surface !== null) || (await $.session.surfaces()).length > 0) await startShowing($)
+    return r
+  })
+
+  on('session.attach', async ($, e, next) => {
+    const r = await next(e)
+    try { await startShowing($) } catch { /* the pane waits for /tokentab:status */ }
     return r
   })
 
@@ -546,11 +587,24 @@ export const register: Register = (on, pluginOptions) => {
     return { text: `${status}\n${where}`, context: figures === '' ? undefined : [`TokenTab, this session's figures as of now:\n${figures}`] }
   }).catch(() => ({ text: 'TokenTab: the status command failed' }))
 
+  // The person's change to the switch in /config: it stands over a value the Budget tab
+  // kept in `$.store` where /config had no row. Cleared before the write, which reloads
+  // the module (this module's own `$.config.set` does not come through here).
+  on('config.set', async ($, e, next) => {
+    if (e.key === `${$.plugin.name}.autoOpen`) {
+      autoOpenHere = undefined
+      await $.store.delete(AUTO_OPEN)
+    }
+    return next(e)
+  }).catch(($, e, next) => next(e))
+
   // The person's first prompt after an auto-open the engine left undrawn: an open from
   // their own Enter is asked, so placed at any width. Once a session; the pane is opened
   // before the prompt enters, and a failure never holds the prompt back.
   on('prompt.submit', async ($, e, next) => {
-    if (waiting && (e.origin.kind === 'composer' || e.origin.kind === 'bridge')) {
+    // `sdk`: a prompt typed in the Desktop app, an SDK host; `waiting` is only ever set
+    // once a surface is there, so a `-p` run's prompt never opens anything.
+    if (waiting && (e.origin.kind === 'composer' || e.origin.kind === 'bridge' || e.origin.kind === 'sdk')) {
       waiting = false
       if (!(await isPlaced($)) && (await openPane($)).isPlaced) void refresh($)
     }
@@ -790,7 +844,7 @@ function budgetTab($: EngineInterface, e: RenderEvent): RenderChildren {
       {section('pane', [
         row('auto-open', 'open at session start',
           <Button key="auto-open" label={autoOpen() ? 'on' : 'off'} onPress={() => { void setAutoOpen($, !autoOpen()) }} />),
-        <Text size="footnote" key="auto-open-note" dimColor>also in /config as {$.plugin.name}.autoOpen</Text>,
+        <Text size="footnote" key="auto-open-note" dimColor>in a terminal also in /config as {$.plugin.name}.autoOpen</Text>,
       ])}
       {o?.error !== undefined && <Text color="error">{o.error}</Text>}
       {SECTIONS.map(sec => section(sec.title, sec.rows.map(s => row(s.key, s.label, control(s), o?.errors[s.key]))))}
