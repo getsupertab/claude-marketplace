@@ -144,7 +144,9 @@ governs. `null` turns one off.
 | Job | set from the prompt (below) | when you set a new one |
 
 `warn_at_percent` (default 70) starts warnings, once per 10% band. `hard_stop: true`
-blocks at 100%; `false` only warns. Job budgets have their own `job.hard_stop`.
+blocks at 100%; `false` (the default) only warns. Job budgets have their own
+`job.hard_stop`, also `false` by default. Every warning names `/tokentab:budget`, which
+changes the limit.
 
 ### Job budgets
 
@@ -159,8 +161,9 @@ Start a prompt with a budget and a colon:
 - Words map to the scale in `job.scale` (water $0.50, beer $6, pizza $20, wine $50,
   champagne $100). Other words before a colon (`note:`, `todo:`) are ignored.
 - A prompt that is only pasted text still picks up its prefix.
-- At 100% (with `job.hard_stop`) tool calls are refused and Claude reports what is
-  done, what is left, and a realistic budget for the rest.
+- At 100% Claude is told and carries on. With `job.hard_stop` on, tool calls are
+  refused instead and Claude reports what is done, what is left, and a realistic
+  budget for the rest.
 
 ### Asking for a budget
 
@@ -168,10 +171,11 @@ Start a prompt with a budget and a colon:
   in dollars and on the scale. Under `job.ask_over_usd` (default $1) it states the
   estimate and proceeds; over it, it asks first.
 - **Mid-request check-in** (`job.ask_mid_request`): when one request passes
-  `ask_over_usd` with no job budget, every tool call is refused, main conversation
-  and helpers alike, until you send a new message. Claude says what is done, what is
-  left and what the rest would cost. A helper is told to stop and report back, and
-  that only the user can set a budget.
+  `ask_over_usd` with no job budget, you and Claude get one notice and nothing is
+  blocked; helpers are not told. With `job.hard_stop` on it is a pause instead: every
+  tool call is refused, main conversation and helpers alike, until you send a new
+  message. Claude says what is done, what is left and what the rest would cost. A
+  helper is told to stop and report back, and that only the user can set a budget.
 - Estimates start from real history: each request's cost is kept in state.
 
 ### Budget hints

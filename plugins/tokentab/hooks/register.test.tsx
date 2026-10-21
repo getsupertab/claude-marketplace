@@ -63,7 +63,7 @@ const FLOW = '<svg viewBox="0 0 760 380" width="760" height="380" xmlns="http://
 const BUDGET = JSON.stringify({
   _comment: 'kept', session_limit_usd: 25, session_limit_tokens: 90000000, turn_limit_usd: 2, turn_limit_tokens: null,
   daily_limit_usd: 40, daily_limit_tokens: 40000000, warn_at_percent: 70, hard_stop: false,
-  job: { ask: true, ask_over_usd: 1.0, hard_stop: true },
+  job: { ask: true, ask_over_usd: 1.0, hard_stop: false },
 }, null, 2)
 
 const PANE_PROPS = { title: 'TokenTab', isFocused: false, bodyColumns: 80, placement: 'dock' as const, scroll: { offset: 0, bodyRows: 40 }, view: {} }
@@ -386,7 +386,7 @@ test('the options tab: auto-open through the config menu, the limits through the
   expect(inputs.find(i => i.key === 'b-turn_limit_tokens')?.value).toBe('off')
   expect(inputs.find(i => i.key === 'b-daily_limit_tokens')?.value).toBe('40,000,000')
   expect(elements(tree, 'Button').find(b => b.key === 'b-hard_stop')?.label).toBe('off')
-  expect(elements(tree, 'Button').find(b => b.key === 'b-job.hard_stop')?.label).toBe('on')
+  expect(elements(tree, 'Button').find(b => b.key === 'b-job.hard_stop')?.label).toBe('off')
 
   // the switch is the manifest's userConfig field, written as the menu would
   await $.ui.press(press('auto-open'))

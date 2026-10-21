@@ -38,7 +38,9 @@ working from its first prompt:
 
 Set your own limits with `/tokentab:budget`. The defaults are the POC author's limits
 (warn-only, $25 per session, $40 per day, $2 per request, and a job budget check-in at
-$1). See Budgets in the POC README.
+$1). Out of the box nothing is blocked except a prompt sent after the prompt cache has
+expired; turn `hard_stop` or `job.hard_stop` on to have limits stop tool calls. See
+Budgets in the POC README.
 
 In two steps instead (`/plugin marketplace add getsupertab/claude-marketplace`, then
 `/plugin install tokentab@supertab`), or from a shell: `claude plugin marketplace add
