@@ -285,19 +285,9 @@ export const SECTIONS: { title: string; rows: Setting[] }[] = [
     { key: 'daily_limit_usd', label: 'USD', kind: 'limit' },
     { key: 'daily_limit_tokens', label: 'tokens', kind: 'limit' },
   ] },
-  { title: 'per request', rows: [
-    { key: 'turn_limit_usd', label: 'USD', kind: 'limit' },
-    { key: 'turn_limit_tokens', label: 'tokens', kind: 'limit' },
-  ] },
   { title: 'at the limit', rows: [
     { key: 'warn_at_percent', label: 'warn at, %', kind: 'limit' },
     { key: 'hard_stop', label: 'hard stop at 100%', kind: 'switch' },
-  ] },
-  { title: 'jobs', rows: [
-    { key: 'job.ask', label: 'ask for an estimate', kind: 'switch' },
-    { key: 'job.ask_over_usd', label: 'ask over, USD', kind: 'limit' },
-    { key: 'job.ask_mid_request', label: 'check in mid-request', kind: 'switch' },
-    { key: 'job.hard_stop', label: 'hard stop', kind: 'switch' },
   ] },
 ]
 

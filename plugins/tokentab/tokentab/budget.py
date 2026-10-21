@@ -3,7 +3,7 @@
 budget.py — the one validator for TokenTab's budget.json, used by the pane's Options view
 and the budget skill alike.
 
-  budget.py get [KEY]       print the value under KEY (dotted: job.ask_over_usd), or the
+  budget.py get [KEY]       print the value under KEY (dotted: cold_resume.confirm_seconds), or the
                             whole file, as JSON
   budget.py set KEY VALUE   change one existing key and write the file back, its order and
                             its _comment keys kept. VALUE: a number; "off", "none" or "" for

@@ -1,6 +1,6 @@
 ---
 name: budget
-description: Show or change TokenTab's spending limits (session, daily, per request, job budgets, warnings, hard stop). Use when the user asks, in the same prompt, to see or change a TokenTab limit, e.g. "raise my daily limit to 30" or "hard stop on". Never change a limit unasked.
+description: Show or change TokenTab's spending limits (session, daily, warnings, hard stop). Use when the user asks, in the same prompt, to see or change a TokenTab limit, e.g. "raise my daily limit to 30" or "hard stop on". Never change a limit unasked.
 argument-hint: "[what to change]"
 ---
 
@@ -19,13 +19,10 @@ Arguments: $ARGUMENTS
 ## No arguments: show the limits
 
 Read the file and show, in a short list: whether `budgets_on` is on (off, or missing,
-means none of the limits or job asks below are checked), session, daily and per-request limits (USD and
-tokens, `null` means off), `warn_at_percent`, `hard_stop` (true blocks at 100%, false only
-warns), and the job budget settings (`job.ask`, `job.ask_mid_request`, `job.ask_over_usd`,
-`job.hard_stop`, the word scale). "Turn budgets on/off" means `budgets_on`.
-Say that a job budget is set by starting a prompt with, for example, `$2:` or `beer:`,
-and cleared with `nobudget:`. Give the file path, and mention that the user can ask for a
-change with `/tokentab:budget <what to change>`.
+means none of the limits below are checked), session and daily limits (USD and tokens,
+`null` means off), `warn_at_percent` and `hard_stop` (true blocks at 100%, false only
+warns). "Turn budgets on/off" means `budgets_on`. Give the file path, and mention that
+the user can ask for a change with `/tokentab:budget <what to change>`.
 
 ## With arguments: change the limits
 
@@ -35,7 +32,7 @@ change with `/tokentab:budget <what to change>`.
 
        python3 "${CLAUDE_PLUGIN_ROOT}/tokentab/budget.py" set KEY VALUE
 
-   KEY is dotted for the job settings (`job.ask_over_usd`); VALUE is a number, `off` for a
+   KEY is dotted for nested settings (`cold_resume.confirm_seconds`); VALUE is a number, `off` for a
    limit switched off, `on`/`off` for a switch. It refuses a value that does not fit or a
    key that does not exist, and keeps the file's order and comments. `budget.py get` prints
    the file.

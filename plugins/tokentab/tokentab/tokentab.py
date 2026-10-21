@@ -639,7 +639,7 @@ def budget_row(name, c, t, ulim, tlim):
         fracs.append(t / float(tlim)); parts.append(f"{num(t)} of {num(int(tlim))} tok")
     if not fracs:
         return None
-    return {"name": name, "frac": max(fracs), "parts": parts, "note": ""}
+    return {"name": name, "frac": max(fracs), "parts": parts}
 
 
 def budget_line(name, c, t, ulim, tlim):
@@ -651,9 +651,8 @@ def budget_line(name, c, t, ulim, tlim):
 def budget_text(r):
     frac = r["frac"]
     over = f"  {RED}{BOLD}OVER{RESET}" if frac >= 1.0 else ""
-    note = f"  {DIM}{r['note']}{RESET}" if r["note"] else ""
     return (f"    {r['name']:<9} {bar(frac, 20)} {frac*100:5.0f}%   "
-            f"{DIM}{' · '.join(r['parts'])}{RESET}{over}{note}")
+            f"{DIM}{' · '.join(r['parts'])}{RESET}{over}")
 
 
 SOURCE_LINE = "data: ledger (every API call, helpers and background calls included)"
@@ -676,8 +675,7 @@ def report(store, sid, prices, budget, show_all, led=None):
     tb = store.sessions.get(sid)          # transcripts: only source of tool detail
     b, src = source(store, led, sid)
     R = {"sid": sid, "now": datetime.now(), "prices_verified": bool(prices.get("_verified")), "session": None,
-         "bucket": b, "transcript": tb,   # the buckets themselves, for the Sankey
-         "job": None}                      # the job budget as numbers, for status_line()
+         "bucket": b, "transcript": tb}   # the buckets themselves, for the Sankey
     if not b:
         return R
     R["session"] = {"title": store.title(sid), "models": sorted(b.models), "since": b.first.astimezone() if b.first else None,
@@ -719,20 +717,6 @@ def report(store, sid, prices, budget, show_all, led=None):
                  for name, key, c, t in (("session", "session", b.cost, b.wtok),
                                          ("today", "daily", dc, dt))] if on else []
         lines = [x for x in lines if x]
-        # The job budget lives in guard.py's state for this session.
-        try:
-            gs = json.load(open(os.path.join(CFG, "state", sid + ".json")))
-        except Exception:
-            gs = {}
-        job = gs.get("job")
-        if job:
-            R["job"] = {"spent": max(0.0, b.cost - float(job["base_cost"])), "usd": job.get("usd"),
-                        "label": job.get("label", "")}
-            jl = budget_row("job", max(0.0, b.cost - float(job["base_cost"])),
-                            max(0, b.wtok - int(job["base_tokens"])), job.get("usd"), job.get("tokens"))
-            if jl:
-                jl["note"] = job.get("label", "")
-                lines.append(jl)
         ctx = None
         if tb and tb.ctx:
             # Same rules as guard.py: re-read cost per call, and whether the
@@ -745,11 +729,8 @@ def report(store, sid, prices, budget, show_all, led=None):
                    "per_call": tb.ctx * rate(prices, tb.ctx_model, "cache_read") / 1e6,
                    "cold": idle >= lim, "minutes_left": int((lim - idle) // 60),
                    "rewrite": tb.ctx * rate(prices, tb.ctx_model, "cache_write_" + tb.ttl) / 1e6}
-        tu, tt = (budget.get("turn_limit_usd"), budget.get("turn_limit_tokens")) if on else (None, None)
         R["budget"] = {"on": on, "hard_stop": bool(budget.get("hard_stop")), "warn_at": budget.get("warn_at_percent", 70),
-                       "lines": lines, "check_in": bool(gs.get("ask_fired")), "context": ctx,
-                       "request": " · ".join(x for x in ((f"${float(tu):,.2f}" if tu else ""),
-                                                         (f"{int(tt):,} tok" if tt else "")) if x)}
+                       "lines": lines, "context": ctx}
 
     R["tools"] = tool_totals(tb.tools) if tb and tb.tools else []
     R["overhead"] = overhead_total(tb) if tb else {"cost": 0}
@@ -809,9 +790,7 @@ def render(store, sid, prices, budget, show_all, led=None):
     bg = R["budget"]
     if bg:
         lines = [budget_text(r) for r in bg["lines"]]
-        if bg["check_in"]:
-            lines.append(f"    {YELLOW}{'check-in':<9} paused: waiting for your budget reply{RESET}")
-        if lines or bg["request"] or bg["context"]:
+        if lines or bg["context"]:
             L.append("")
             mode = ((f"{'hard stop' if bg['hard_stop'] else 'warn only'} · warns at {bg['warn_at']}%")
                     if bg["on"] else "off · /tokentab:budget turns budgets on")
@@ -826,8 +805,6 @@ def render(store, sid, prices, budget, show_all, led=None):
                     cache = f"cache warm, {c['minutes_left']}m left"
                 L.append(f"    {'context':<9} {color}{num(c['tokens'])} tok{RESET}{DIM} · "
                          f"{money(c['per_call'])}/call to re-read · {cache}{RESET}")
-            if bg["request"]:
-                L.append(f"    {DIM}{'request':<9} {bg['request']}, warned in the chat by guard.py{RESET}")
 
     if R["tools"]:
         rows = R["tools"]
@@ -921,20 +898,14 @@ def pane_report(store, sid, prices, budget, led=None):
 
 def status_line(store, sid, prices, budget, led=None):
     """One plain line for Claude Code's status bar while the pane is not placed (the hooks
-    module runs `--status`): this session's cost, today's over every session, and what is
-    left of the job budget. The same report() as the live view, so the figures agree."""
+    module runs `--status`): this session's cost and today's over every session. The same
+    report() as the live view, so the figures agree."""
     R = report(store, sid, prices, budget, True, led)
     if R.get("total"):
         sess, today = R["total"]["cost"], R["totals"]["today"]
     else:
         sess, today = 0.0, source(store, led, sid)[1].day_total()[0]
-    parts = [f"session {money(sess)}", f"today {money(today)}"]
-    job = R.get("job")
-    if job and job.get("usd"):
-        left = float(job["usd"]) - job["spent"]
-        parts.append((f"job ${left:,.2f} left" if left >= 0 else f"job ${-left:,.2f} OVER")
-                      + (f" ({job['label']})" if job.get("label") else ""))
-    return " · ".join(parts)      # the engine draws the plugin name before the line
+    return f"session {money(sess)} · today {money(today)}"      # the engine draws the plugin name before the line
 
 
 def main():
@@ -943,7 +914,7 @@ def main():
     ap.add_argument("--once", action="store_true", help="print one snapshot and exit")
     ap.add_argument("--json", action="store_true", help="machine-readable snapshot, implies --once")
     ap.add_argument("--status", action="store_true",
-                    help="one plain line (session, today, job budget left) for a status bar, implies --once")
+                    help="one plain line (session, today) for a status bar, implies --once")
     ap.add_argument("--report", action="store_true",
                     help="the pane's tabs as JSON (spend, tools), for the hooks module, implies --once")
     ap.add_argument("--all", action="store_true", help="include cross-project totals")
