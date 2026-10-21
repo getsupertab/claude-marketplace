@@ -14,9 +14,10 @@ import type { EngineInterface, PluginOptions, Register, RenderChildren, Telemetr
 // Budget, the auto-open switch and the budget limits; Tools, what each tool cost. Spend
 // and Tools draw `tokentab.py --report`, the same report() the terminal live view and
 // the status line print, so the figures cannot drift apart. While the pane is not placed
-// (a narrow terminal) one status line carries the numbers instead. Redrawn after every
-// ledger write and on a 30 s clock; nothing polls the data folder. Under `claude -p`, or
-// with no surface, nothing visual happens and the ledger is written as before.
+// (a narrow terminal) one status line carries the numbers instead. Redrawn a second after
+// a ledger write and on a 30 s clock, both by the clock; nothing polls the data folder.
+// Under `claude -p`, or with no surface, nothing visual happens and the ledger is
+// written as before.
 //
 // The status page. "open in browser" writes `status/<session>.html` and opens it; for
 // 30 minutes after, every redraw also writes its data file beside it (`sankey.py --push`),
@@ -149,6 +150,7 @@ const TITLE = 'TokenTab'
 // text runs only where the module did not load.
 const COMMAND = 'tokentab:status'
 const REDRAW_MS = 30_000
+const BEAT_MS = 1_000                   // how soon after a ledger write the pane redraws
 const HELPER_TIMEOUT_MS = 20_000
 // The status page is kept current (its data file written on every redraw) this long
 // after it was last opened from the pane; the page says "stale" once the pushes stop.
@@ -319,7 +321,9 @@ let error: string | undefined           // the last refresh's failure, drawn abo
 let options: Options | undefined        // the last budget.json read
 let pageOpenedAt: number | undefined    // ms; the page's data file is written while within PAGE_MS
 let sessionId: string | undefined
-let tick: Timer | undefined             // set while this load draws anything (the 30 s clock)
+let tick: Timer | undefined             // set while this load draws anything (the clock's beat)
+let beats = 0                           // beats since the clock started; every REDRAW_MS worth redraws
+let stale = false                       // a ledger line written since the last redraw: the next beat redraws
 let running: Promise<void> | undefined  // one refresh at a time; a request during one runs after it
 let again = false
 let columns = 60                        // the pane body's width in cells, from the last render
@@ -396,9 +400,21 @@ function refresh($: EngineInterface): Promise<void> {
   return running
 }
 
+/** The clock that keeps the pane current: on the beat after a ledger write, else every
+ *  REDRAW_MS. A ledger write only marks the pane stale, so the redraw runs here, on the
+ *  `$` of the hook that started the clock, never on the `telemetry.log` dispatch's: a
+ *  subagent's API request raises that in the subagent's loop, and while subagents work
+ *  their requests would start nearly every redraw, a tab press's and the clock's folded
+ *  in. One beat also takes a burst of parallel subagents' requests as one redraw. */
 function startClock($: EngineInterface): void {
   tick?.cancel()
-  tick = $.clock.every(REDRAW_MS, () => { void refresh($) })
+  beats = 0
+  tick = $.clock.every(BEAT_MS, () => {
+    if (!stale && ++beats % (REDRAW_MS / BEAT_MS) !== 0) return
+    stale = false
+    beats = 0
+    void refresh($)
+  })
 }
 
 function show($: EngineInterface, v: View): void {
@@ -620,7 +636,7 @@ export const register: Register = (on, pluginOptions) => {
         const id = str(e.attributes['session.id']) ?? await $.session.id()
         const ts = e.loggedAt || new Date(await $.clock.now()).toISOString()
         await append($, await home($), toLine(e, await loadPrices($), id, ts))
-        if (tick !== undefined) void refresh($)
+        if (tick !== undefined) stale = true   // the clock's next beat redraws, see startClock
       } catch { /* see above */ }
     }
     return r

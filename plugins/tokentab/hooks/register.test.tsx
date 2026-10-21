@@ -283,13 +283,23 @@ test('an interactive session opens the pane and draws the Spend tab', async ($, 
     expect(texts(remote).find(x => x.text === '$3.61')?.props.size).toBe('title')
   }
 
-  // a ledger write redraws: one report run, one invalidate
+  // a ledger write redraws on the clock's next beat, not in the request's own dispatch
+  // (a subagent's, while one works): one report run, one invalidate
   await clock.settle()
   const runs = ui.runs.length, invalidates = ui.invalidates
   await $.telemetry.log(request({}))
   await clock.settle()
+  expect(ui.runs.length).toBe(runs)
+  await clock.advance(1000)
   expect(ui.runs.slice(runs).map(a => a.slice(2))).toEqual([['--report', '--session', SID]])
   expect(ui.invalidates).toBe(invalidates + 1)
+
+  // a burst of requests, parallel subagents', is one redraw; a quiet beat is none
+  const burst = ui.runs.length
+  for (const n of [2, 3, 4]) await $.telemetry.log(request({ request_id: `req_${n}` }))
+  await clock.advance(1000)
+  await clock.advance(1000)
+  expect(ui.runs.length).toBe(burst + 1)
 })
 
 test('Spend without a limit has no bar and no badge; before the first call it says so', async ($, on) => {
@@ -306,7 +316,7 @@ test('Spend without a limit has no bar and no badge; before the first call it sa
 
   report.value = { ...REPORT, session: null, tools: [] }
   await $.telemetry.log(request({}))
-  await clock.settle()
+  await clock.advance(1000)          // the clock's next beat
   const none = await $.ui.render({ surface: 'desktop', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   expect(texts(none).some(x => x.text.startsWith('No API call in this session yet'))).toBe(true)
   expect(texts(none).some(x => x.text === '$28.38')).toBe(true)
@@ -477,7 +487,7 @@ test('the open-in-browser button writes the page for this session, opens it, and
   // from now on a redraw writes the page's data file beside it too, in a second run
   const before = ui.runs.length
   await $.telemetry.log(request({}))
-  await clock.settle()
+  await clock.advance(1000)
   expect(ui.runs.slice(before).map(named)).toEqual([
     ['python3', 'tokentab.py', '--report', '--session', SID],
     ['python3', 'sankey.py', '--session', SID, '--push', `${DATA}/status/${SID}.js`],
