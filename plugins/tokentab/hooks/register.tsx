@@ -48,10 +48,13 @@ export type LedgerLine = {
 // A file nears the 4 MiB read-and-write limit: the next line starts <session>-2.jsonl.
 const ROLL_BYTES = 3.5 * 1024 * 1024
 
-/** The plugin's data folder (`${CLAUDE_PLUGIN_DATA}` for shell hooks and skills). `$.plugin`
- *  has no data path, so it is built from HOME here, the same path the Python falls back to. */
-export function dataDir(home: string): string {
-  return `${home.replace(/\/$/, '')}/.claude/plugins/data/tokentab-supertab`
+/** The plugin's data folder, under Claude Code's config folder: `CLAUDE_CONFIG_DIR` when set,
+ *  else `~/.claude`. `$.plugin` has no data path, so it is built here, the same path the
+ *  Python and the shell gate build. */
+export function dataDir(config: string | undefined, home: string | undefined): string {
+  const root = config || (home && `${home.replace(/\/$/, '')}/.claude`)
+  if (!root) throw new Error('HOME is unset')
+  return `${root.replace(/\/$/, '')}/plugins/data/tokentab-supertab`
 }
 
 /** `YYYY-MM-DD` of an instant, the module environment's local date. */
@@ -112,9 +115,7 @@ async function loadPrices($: EngineInterface): Promise<Prices> {
 }
 
 async function home($: EngineInterface): Promise<string> {
-  const h = await $.env.get('HOME')
-  if (!h) throw new Error('HOME is unset')
-  return dataDir(h)
+  return dataDir(await $.env.get('CLAUDE_CONFIG_DIR'), await $.env.get('HOME'))
 }
 
 /** Appends one line: read the file, write it back with the line added. `$.fs.write` replaces

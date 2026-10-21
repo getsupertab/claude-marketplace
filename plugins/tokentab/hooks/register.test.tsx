@@ -126,6 +126,17 @@ test('session.start writes the loaded marker and a first budget.json', async ($,
   expect(fs.get(`${DATA}/budget.json`)).toBe('edited by the user')
 })
 
+test('with CLAUDE_CONFIG_DIR set, the data folder is under that config folder', async ($, on) => {
+  mock.env(on, { HOME: '/home/t', CLAUDE_CONFIG_DIR: '/home/t/.claude-work' })
+  mock.clock(on, { now: T0 })
+  const { fs } = world(on, { '/tokentab/budget.json': '{"session_limit_usd": 25}\n' })
+  await $.session.start({ cwd: '/w', surface: null, isInteractive: false })
+  const data = '/home/t/.claude-work/plugins/data/tokentab-supertab'
+  expect(fs.get(`${data}/state/loaded/${SID}`)).toBe('2026-10-15T14:03:11.412Z\n')
+  expect(fs.get(`${data}/budget.json`)).toBe('{"session_limit_usd": 25}\n')
+  expect(fs.has(`${DATA}/budget.json`)).toBe(false)
+})
+
 test('an api_request record becomes one priced ledger line per request', async ($, on) => {
   mock.env(on, { HOME: '/home/t' })
   mock.clock(on, { now: T0 })

@@ -4,7 +4,7 @@
 Totals come from the ledger the plugin's hooks module writes, one line per API
 request (ledger/YYYY-MM-DD/<session-id>.jsonl in the data folder): every call, helpers
 and Claude Code's own background calls included. The JSONL transcripts under
-~/.claude/projects are read for what the ledger does not have: thinking tokens and the
+projects/ in Claude Code's config folder are read for what the ledger does not have: thinking tokens and the
 per-tool attribution. No dependencies.
 
   tokentab.py                 live view of the most recently active session
@@ -18,14 +18,16 @@ import argparse, bisect, glob, json, os, re, sys, time
 from datetime import datetime, timezone
 HERE = os.path.dirname(os.path.abspath(__file__))
 
-ROOT = os.path.expanduser("~/.claude/projects")
+# plugin: Claude Code's config folder, CLAUDE_CONFIG_DIR when set, else ~/.claude
+CLAUDE_DIR = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude")
+ROOT = os.path.join(CLAUDE_DIR, "projects")
 def data_dir():
-    """The plugin's data folder: one fixed path, the same the hooks module builds from HOME
-    (dataDir in hooks/register.ts) and the shell gate uses. Not ${CLAUDE_PLUGIN_DATA}: that
+    """The plugin's data folder: one fixed path under the config folder, the same the hooks
+    module builds (dataDir in hooks/register.tsx) and the shell gate uses. Not ${CLAUDE_PLUGIN_DATA}: that
     one is named after the marketplace the plugin was installed from (tokentab-supertab,
     tokentab-inline under --plugin-dir), the module cannot read it, and the ledger, the
     guard and the skills must all look in the same place."""
-    return os.path.expanduser("~/.claude/plugins/data/tokentab-supertab")
+    return os.path.join(CLAUDE_DIR, "plugins", "data", "tokentab-supertab")
 
 CFG  = data_dir()  # plugin: data in the plugin's data folder, shipped files next to this script
 PRICES_PATH = os.path.join(HERE, "prices.json")

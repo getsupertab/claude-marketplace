@@ -6,9 +6,10 @@ argument-hint: "[what to change]"
 
 # TokenTab budget
 
-The limits live in one file:
+The limits live in one file, under Claude Code's config folder: `$CLAUDE_CONFIG_DIR` when
+that is set, else `~/.claude`:
 
-    ~/.claude/plugins/data/tokentab-supertab/budget.json
+    <config folder>/plugins/data/tokentab-supertab/budget.json
 
 It belongs to the user. Plugin updates never change it; uninstalling the plugin deletes
 it together with the rest of TokenTab's data.
