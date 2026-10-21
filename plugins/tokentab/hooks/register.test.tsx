@@ -8,9 +8,12 @@ import type { Report } from './register'
 // config menu or a process, so the test stands in for them. Files are matched by their
 // tail, since the plugin's root is the engine's to know. `ui` records what the plugin
 // asked the surface for, and `placed` says what `$.ui.panes()` reports for the pane.
+// `rows` are the /config keys `$.config.list()` returns: an SDK host (Desktop) has none.
+// `surfaces` is what `$.session.surfaces()` answers: none in a -p run or before Desktop attaches.
 type Ui = {
   opens: number; commands: string[]; status: (string | undefined)[]; invalidates: number
-  runs: string[][]; toasts: string[]; config: [string, unknown][]; store: Map<string, unknown>
+  runs: string[][]; toasts: string[]; config: [string, unknown][]; store: Map<string, unknown>; rows: string[]
+  surfaces: ('terminal' | 'desktop')[]
 }
 function world(on: On, initial: Record<string, string>, placed = { is: true }, report: { value: Report } = { value: REPORT }) {
   const fs = new Map(Object.entries(initial))
@@ -21,7 +24,9 @@ function world(on: On, initial: Record<string, string>, placed = { is: true }, r
   on('session.id', () => ({ value: SID }))
   on('session.start', ($, e) => ({ cwd: e.cwd }))
   on('telemetry.log', { to: 'collector' }, () => ({ value: undefined }))
-  const ui: Ui = { opens: 0, commands: [], status: [], invalidates: 0, runs: [], toasts: [], config: [], store: new Map() }
+  const ui: Ui = { opens: 0, commands: [], status: [], invalidates: 0, runs: [], toasts: [], config: [], store: new Map(), rows: ['tokentab.autoOpen'], surfaces: [] }
+  on('session.surfaces', () => ({ value: ui.surfaces }))
+  on('session.attach', ($, e) => ({ clientId: e.clientId }))
   on('ui.open', () => { ui.opens++; return { value: placed.is ? { isPlaced: true } : { isPlaced: false, reason: 'narrower than 144 columns' } } })
   on('ui.panes', () => ({ value: [{ id: 'tokentab', title: 'TokenTab', isShown: placed.is, isFocused: false, isPlaced: placed.is }] }))
   on('ui.status', ($, e) => { ui.status.push(e.text); return { value: undefined } })
@@ -30,6 +35,8 @@ function world(on: On, initial: Record<string, string>, placed = { is: true }, r
   on('command.register', ($, e) => { ui.commands.push(e.name); return { value: { command: e.name } } })
   on('store.get', ($, e) => ({ value: ui.store.get(e.key) }))
   on('store.set', ($, e) => { ui.store.set(e.key, e.value); return { value: undefined } })
+  on('store.delete', ($, e) => { ui.store.delete(e.key); return { value: undefined } })
+  on('config.list', () => ({ value: ui.rows.map(key => ({ key, label: key, kind: 'boolean' as const, value: true, provider: { plugin: 'tokentab@supertab', tier: 'user' as const }, isLocked: false })) }))
   on('config.set', ($, e) => { ui.config.push([e.key, e.value]); return { value: e.value } })
   on('process.run', ($, e) => {
     const argv = [...e.argv]
@@ -380,6 +387,40 @@ test('with autoOpen off, the first prompt does not open the pane either', { opti
   expect(ui.opens).toBe(0)
 })
 
+test('in the Desktop app (an SDK host, no surface at session.start) the pane opens when Desktop attaches, once', async ($, on) => {
+  mock.env(on, { HOME: '/home/t' })
+  const clock = mock.clock(on, { now: T0 })
+  const { ui } = world(on, FILES)
+  await $.session.start({ cwd: '/w', surface: null, isInteractive: false })
+  await clock.settle()
+  expect(ui.opens).toBe(0)
+  ui.surfaces = ['desktop']
+  await $.session.attach({ surface: 'desktop', clientId: 'desktop:default' })
+  await clock.settle()
+  expect(ui.opens).toBe(1)
+  expect(ui.runs.map(a => a.slice(2))).toContainEqual(['--report', '--session', SID])
+  // a second client joining does not reopen it
+  await $.session.attach({ surface: 'desktop', clientId: 'desktop:2' })
+  expect(ui.opens).toBe(1)
+  // a reload (session.start again, Desktop already attached) opens it at once
+  await $.session.start({ cwd: '/w', surface: null, isInteractive: false })
+  await clock.settle()
+  expect(ui.opens).toBe(2)
+})
+
+test('in Desktop, a pane left undrawn opens with the first prompt typed there (origin sdk)', async ($, on) => {
+  mock.env(on, { HOME: '/home/t' })
+  const clock = mock.clock(on, { now: T0 })
+  const { ui } = world(on, FILES, { is: false })
+  on('prompt.submit', ($, e) => ({ text: e.text }))
+  await $.session.start({ cwd: '/w', surface: null, isInteractive: false })
+  await $.session.attach({ surface: 'desktop', clientId: 'desktop:default' })
+  await clock.settle()
+  expect(ui.opens).toBe(1)
+  await $.prompt.submit({ text: 'hello', wait: false, origin: { kind: 'sdk' } })
+  expect(ui.opens).toBe(2)
+})
+
 test('under claude -p, or with no surface, nothing visual happens and the ledger is written', async ($, on) => {
   mock.env(on, { HOME: '/home/t' })
   const clock = mock.clock(on, { now: T0 })
@@ -467,8 +508,10 @@ test('the Budget tab: auto-open through the config menu, the limits through the 
   expect(elements(tree, 'Button').find(b => b.key === 'b-hard_stop')?.label).toBe('off')
 
   // the switch is the manifest's userConfig field, written as the menu would
+  ui.store.set('autoOpen', true)
   await $.ui.press(press('auto-open'))
   expect(ui.config).toEqual([['tokentab.autoOpen', false]])
+  expect(ui.store.has('autoOpen')).toBe(false)
 
   // a limit goes through budget.py; a refused value is shown under its field
   await $.ui.input({ plugin: 'tokentab', key: 'b-daily_limit_usd', text: '30' })
@@ -484,4 +527,32 @@ test('the Budget tab: auto-open through the config menu, the limits through the 
   expect(elements(mobile, 'Input')).toEqual([])
   expect(texts(mobile).some(x => x.text === '40')).toBe(true)
   expect(texts(mobile).some(x => x.text.includes('/tokentab:budget'))).toBe(true)
+})
+
+test('where /config has no row for it (Desktop), the auto-open switch is kept in the store until /config changes it', async ($, on) => {
+  mock.env(on, { HOME: '/home/t' })
+  const clock = mock.clock(on, { now: T0 })
+  const { ui } = world(on, FILES)
+  ui.rows = []
+  await $.session.start({ cwd: '/w', surface: 'desktop', isInteractive: true })
+  await clock.settle()
+  expect(ui.opens).toBe(1)
+  await $.ui.render({ surface: 'desktop', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
+  await $.ui.press(press('tab-budget'))
+  await $.ui.render({ surface: 'desktop', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
+  await $.ui.press(press('auto-open'))
+  expect(ui.config).toEqual([])
+  expect(ui.toasts).toEqual([])
+  expect(ui.store.get('autoOpen')).toBe(false)
+  const tree = await $.ui.render({ surface: 'desktop', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
+  expect(elements(tree, 'Button').find(b => b.key === 'auto-open')?.label).toBe('off')
+
+  // the next session reads it back and opens nothing
+  await $.session.start({ cwd: '/w', surface: 'desktop', isInteractive: true })
+  await clock.settle()
+  expect(ui.opens).toBe(1)
+
+  // a change in /config stands over it
+  await $.config.set({ key: 'tokentab.autoOpen', value: true, previous: true, provider: { plugin: 'tokentab@supertab', tier: 'user' }, origin: { kind: 'composer' } })
+  expect(ui.store.has('autoOpen')).toBe(false)
 })
