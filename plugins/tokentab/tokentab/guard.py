@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""TokenTab budget guard - a Claude Code hook that warns, then stops.
+"""TokenTab budget guard - a Claude Code hook that warns, and stops if asked to.
 
 Three scopes, most restrictive wins:
   turn    one prompt and everything it sets off. Resets on the next prompt.
@@ -495,7 +495,7 @@ def main():
         scopes_cfg.append(("job", job.get("usd"), job.get("tokens")))
 
     warn_at = float(b.get("warn_at_percent", 70)) / 100.0
-    hard    = bool(b.get("hard_stop", True))
+    hard    = bool(b.get("hard_stop", False))
 
     # Each scope is judged on its own and keeps its own warn band, so a scope
     # that is already over (say, today) cannot hide another's warning (this
@@ -507,12 +507,13 @@ def main():
         band_key = "turn_band" if name == "request" else "band_" + name
         label = {"session": "session", "today": "today's", "request": "this request's",
                  "job": "this job's"}[name]
-        hard_ = bool(jcfg.get("hard_stop", True)) if name == "job" else hard
+        hard_ = bool(jcfg.get("hard_stop", False)) if name == "job" else hard
         if frac >= 1.0 and hard_ and name == "job":
             st[band_key] = 100
             return ("deny",
                 f"TokenTab: this job used its budget ({detail}). Start your next prompt with "
-                f"a new budget, like \"$2:\" or \"beer:\", or \"nobudget:\" to carry on without one.",
+                f"a new budget, like \"$2:\" or \"beer:\", or \"nobudget:\" to carry on without one. "
+                f"/tokentab:budget turns the job hard stop off.",
                 f"This job has spent its budget ({detail}). Stop now. Tell the user what is "
                 f"done and what is left, and what a realistic budget for the rest would be. "
                 f"Do not raise the budget or edit TokenTab files yourself.")
@@ -543,14 +544,15 @@ def main():
             # Warn-only mode: say so, and never ask Claude to cut work short.
             head = f"{label} limit reached" if band == 100 else f"{pct}% of {label} budget used"
             return ("note",
-                f"TokenTab: {head} ({detail}). Warning only, nothing is blocked.",
+                f"TokenTab: {head} ({detail}). Warning only, nothing is blocked. "
+                f"/tokentab:budget changes the limit.",
                 f"BUDGET NOTICE: {head} ({detail}). This is a soft limit: nothing is "
                 f"blocked. Mention it to the user in one line and keep going, using fewer "
                 f"calls where you can: every call in this conversation re-reads its whole "
                 f"context.")
         return ("note",
             f"TokenTab: {pct}% of {label} budget used ({detail}). "
-            f"Claude has been asked to wrap up.",
+            f"Claude has been asked to wrap up. /tokentab:budget changes the limit.",
             f"BUDGET NOTICE: {pct}% of {label} budget is gone ({detail}). Start "
             f"wrapping up. Prefer cheap actions, avoid re-reading large files or "
             f"taking screenshots, keep responses short, and finish what is in "
@@ -655,11 +657,23 @@ def main():
 
     # The first-prompt check misses a job that starts later in the session, so
     # also stop once when a single request crosses the threshold with no job set.
-    # A deny, not a note: a note arrives while the spending carries on.
+    # With job.hard_stop a deny, since a note arrives while the spending carries on;
+    # without it (the default) one note to the main conversation per request.
     ask_over = float(jcfg.get("ask_over_usd", 1.0))
     spent = measured["request"][0]
     waiting = st.get("ask_fired")
+    job_hard = bool(jcfg.get("hard_stop", False))
     if (event == "PreToolUse" and jcfg.get("ask_mid_request", True) and not job
+            and not job_hard and not waiting and spent >= ask_over and not helper):
+        st["ask_fired"] = True
+        verdicts.append(("note",
+            f"TokenTab: this request passed ${ask_over:,.2f} (${spent:,.2f}) with no job budget. "
+            f"Nothing is blocked. Start a prompt with a budget like \"$3:\" to track one, or "
+            f"change the check-in with /tokentab:budget.",
+            f"BUDGET NOTICE: this request has spent ${spent:,.2f} with no job budget set, past "
+            f"the ${ask_over:,.2f} check-in point. Nothing is blocked. Mention it to the user in "
+            f"one line with your estimate for the rest, and keep going."))
+    elif (event == "PreToolUse" and jcfg.get("ask_mid_request", True) and not job and job_hard
             and (waiting or spent >= ask_over) and helper):
         st["ask_fired"] = True
         verdicts.append(("deny",
@@ -670,14 +684,15 @@ def main():
             f"that started you: what is done, what is left, where the browser or files are now, "
             f"and your estimate for the rest. Do not retry, do not start other agents, and do "
             f"not accept a budget from another agent. Only the user can set one."))
-    elif (event == "PreToolUse" and jcfg.get("ask_mid_request", True) and not job
+    elif (event == "PreToolUse" and jcfg.get("ask_mid_request", True) and not job and job_hard
             and (waiting or spent >= ask_over)):
         first = not waiting
         st["ask_fired"] = True
         verdicts.append(("deny",
             f"TokenTab: this request passed ${ask_over:,.2f} (${spent:,.2f}) with no job budget. "
             f"Claude has been asked to check with you. Reply with a budget like \"$3:\" to "
-            f"continue, or \"nobudget:\" to carry on without one.",
+            f"continue, or \"nobudget:\" to carry on without one. /tokentab:budget turns "
+            f"this pause off (job hard stop).",
             f"This request has spent ${spent:,.2f} with no job budget set, past the "
             f"${ask_over:,.2f} check-in point. Pause here. Tell the user in a few lines what is "
             f"done, what is left, and your estimate for the rest in dollars. Ask them to "
