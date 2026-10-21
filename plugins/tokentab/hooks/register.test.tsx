@@ -423,7 +423,7 @@ test('the Budget tab: auto-open through the config menu, the limits through the 
   const tree = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   const t = texts(tree)
   expect(t.some(x => x.text === 'open at session start')).toBe(true)
-  expect(t.filter(x => x.props.bold).map(x => x.text)).toEqual(['pane', 'this session', 'today', 'per request', 'at the limit', 'jobs'])
+  expect(t.filter(x => x.props.bold).map(x => x.text)).toEqual(['pane', 'budgets', 'this session', 'today', 'per request', 'at the limit', 'jobs'])
   expect(elements(tree, 'Button').find(b => b.key === 'auto-open')?.label).toBe('on')
   // the fields hold budget.json's values, "off" for null, grouped tokens
   const inputs = elements(tree, 'Input')
@@ -432,6 +432,7 @@ test('the Budget tab: auto-open through the config menu, the limits through the 
   expect(inputs.find(i => i.key === 'b-daily_limit_usd')?.value).toBe('40')
   expect(inputs.find(i => i.key === 'b-turn_limit_tokens')?.value).toBe('off')
   expect(inputs.find(i => i.key === 'b-daily_limit_tokens')?.value).toBe('40,000,000')
+  expect(elements(tree, 'Button').find(b => b.key === 'b-budgets_on')?.label).toBe('off')
   expect(elements(tree, 'Button').find(b => b.key === 'b-hard_stop')?.label).toBe('off')
   expect(elements(tree, 'Button').find(b => b.key === 'b-job.hard_stop')?.label).toBe('off')
 

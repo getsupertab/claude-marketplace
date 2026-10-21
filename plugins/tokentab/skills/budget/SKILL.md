@@ -18,11 +18,11 @@ Arguments: $ARGUMENTS
 
 ## No arguments: show the limits
 
-Read the file and show, in a short list: session, daily and per-request limits (USD and
+Read the file and show, in a short list: whether `budgets_on` is on (off, or missing,
+means none of the limits or job asks below are checked), session, daily and per-request limits (USD and
 tokens, `null` means off), `warn_at_percent`, `hard_stop` (true blocks at 100%, false only
 warns), and the job budget settings (`job.ask`, `job.ask_mid_request`, `job.ask_over_usd`,
-`job.hard_stop`, the word scale). A fresh install has every limit and both job asks off:
-say so when that is what the file holds.
+`job.hard_stop`, the word scale). "Turn budgets on/off" means `budgets_on`.
 Say that a job budget is set by starting a prompt with, for example, `$2:` or `beer:`,
 and cleared with `nobudget:`. Give the file path, and mention that the user can ask for a
 change with `/tokentab:budget <what to change>`.

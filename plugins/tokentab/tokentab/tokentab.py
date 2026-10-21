@@ -714,9 +714,10 @@ def report(store, sid, prices, budget, show_all, led=None):
     R["budget"] = None
     if budget:
         cold = budget.get("cold_resume") or {}
+        on = budget.get("budgets_on") is True
         lines = [budget_row(name, c, t, budget.get(f"{key}_limit_usd"), budget.get(f"{key}_limit_tokens"))
                  for name, key, c, t in (("session", "session", b.cost, b.wtok),
-                                         ("today", "daily", dc, dt))]
+                                         ("today", "daily", dc, dt))] if on else []
         lines = [x for x in lines if x]
         # The job budget lives in guard.py's state for this session.
         try:
@@ -744,8 +745,8 @@ def report(store, sid, prices, budget, show_all, led=None):
                    "per_call": tb.ctx * rate(prices, tb.ctx_model, "cache_read") / 1e6,
                    "cold": idle >= lim, "minutes_left": int((lim - idle) // 60),
                    "rewrite": tb.ctx * rate(prices, tb.ctx_model, "cache_write_" + tb.ttl) / 1e6}
-        tu, tt = budget.get("turn_limit_usd"), budget.get("turn_limit_tokens")
-        R["budget"] = {"hard_stop": bool(budget.get("hard_stop")), "warn_at": budget.get("warn_at_percent", 70),
+        tu, tt = (budget.get("turn_limit_usd"), budget.get("turn_limit_tokens")) if on else (None, None)
+        R["budget"] = {"on": on, "hard_stop": bool(budget.get("hard_stop")), "warn_at": budget.get("warn_at_percent", 70),
                        "lines": lines, "check_in": bool(gs.get("ask_fired")), "context": ctx,
                        "request": " · ".join(x for x in ((f"${float(tu):,.2f}" if tu else ""),
                                                          (f"{int(tt):,} tok" if tt else "")) if x)}
@@ -813,7 +814,7 @@ def render(store, sid, prices, budget, show_all, led=None):
         if lines or bg["request"] or bg["context"]:
             L.append("")
             mode = ((f"{'hard stop' if bg['hard_stop'] else 'warn only'} · warns at {bg['warn_at']}%")
-                    if bg["lines"] or bg["request"] else "off · /tokentab:budget sets limits")
+                    if bg["on"] else "off · /tokentab:budget turns budgets on")
             L.append(f"  {BOLD}BUDGET{RESET}  {DIM}{mode}{RESET}")
             L.extend(lines)
             c = bg["context"]

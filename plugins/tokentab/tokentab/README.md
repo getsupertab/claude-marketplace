@@ -134,10 +134,13 @@ more from a (model, rate) than it holds, every Sankey column sums to the session
 ## Budgets
 
 All in `budget.json`, in USD, tokens, or both. Whichever is closest to its limit
-governs. `null` turns one off. The shipped file has every limit, `job.ask` and
-`job.ask_mid_request` off, so a fresh install checks no budget until you set one
-(`/tokentab:budget` or the pane's Options tab). Context warnings, the cold-resume check
-and the new-session check are not budgets and stay on.
+governs. `null` turns one off.
+
+`budgets_on` is the switch for all of it: the limits below, the job estimate and the
+mid-request check-in. It ships `false`, so a fresh install checks no budget until you turn
+it on (`/tokentab:budget` or the pane's Options tab); the limits keep their values while it
+is off. A file without the key reads as off. Job prefixes, context warnings, the
+cold-resume check and the new-session check work either way.
 
 | Scope | Keys | Resets |
 |---|---|---|
@@ -170,7 +173,7 @@ Start a prompt with a budget and a colon:
 
 ### Asking for a budget
 
-Both are off by default; `job.ask` and `job.ask_mid_request` turn them on.
+Both need `budgets_on`; `job.ask` and `job.ask_mid_request` turn each off on its own.
 
 - **First prompt of a session, no job budget:** Claude is asked to estimate the job
   in dollars and on the scale. Under `job.ask_over_usd` (default $1) it states the
