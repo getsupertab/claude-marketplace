@@ -20,7 +20,9 @@ Arguments: $ARGUMENTS
 
 Read the file and show, in a short list: session, daily and per-request limits (USD and
 tokens, `null` means off), `warn_at_percent`, `hard_stop` (true blocks at 100%, false only
-warns), and the job budget settings (`job.ask_over_usd`, `job.hard_stop`, the word scale).
+warns), and the job budget settings (`job.ask`, `job.ask_mid_request`, `job.ask_over_usd`,
+`job.hard_stop`, the word scale). A fresh install has every limit and both job asks off:
+say so when that is what the file holds.
 Say that a job budget is set by starting a prompt with, for example, `$2:` or `beer:`,
 and cleared with `nobudget:`. Give the file path, and mention that the user can ask for a
 change with `/tokentab:budget <what to change>`.

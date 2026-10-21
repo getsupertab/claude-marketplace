@@ -803,10 +803,11 @@ def render(store, sid, prices, budget, show_all, led=None):
         lines = [budget_text(r) for r in bg["lines"]]
         if bg["check_in"]:
             lines.append(f"    {YELLOW}{'check-in':<9} paused: waiting for your budget reply{RESET}")
-        if lines or bg["request"]:
+        if lines or bg["request"] or bg["context"]:
             L.append("")
-            L.append(f"  {BOLD}BUDGET{RESET}  {DIM}{'hard stop' if bg['hard_stop'] else 'warn only'}"
-                     f" · warns at {bg['warn_at']}%{RESET}")
+            mode = ((f"{'hard stop' if bg['hard_stop'] else 'warn only'} · warns at {bg['warn_at']}%")
+                    if bg["lines"] or bg["request"] else "off · /tokentab:budget sets limits")
+            L.append(f"  {BOLD}BUDGET{RESET}  {DIM}{mode}{RESET}")
             L.extend(lines)
             c = bg["context"]
             if c:

@@ -530,7 +530,7 @@ def status_html(R):
         out.append(f'<section><h2>by call source <span>what in Claude Code made the call</span></h2><table>{rows}</table></section>')
 
     bg = R["budget"]
-    if bg and (bg["lines"] or bg["request"] or bg["check_in"]):
+    if bg and (bg["lines"] or bg["request"] or bg["check_in"] or bg["context"]):
         rows = "".join(f'<tr><td>{esc(r["name"])}</td><td>{meter(r["frac"])}</td>'
                        f'<td class="m">{esc(" · ".join(r["parts"]))}'
                        + (' <b class="over">OVER</b>' if r["frac"] >= 1 else "")
@@ -546,8 +546,9 @@ def status_html(R):
                      f'<td class="m">{kt.money(c["per_call"])}/call to re-read · {cache}</td></tr>')
         if bg["request"]:
             rows += f'<tr class="m"><td>request</td><td colspan="2">{esc(bg["request"])}, warned in the chat by guard.py</td></tr>'
-        mode = "hard stop" if bg["hard_stop"] else "warn only"
-        out.append(f'<section class="wrap"><h2>budget <span>{mode} · warns at {bg["warn_at"]}%</span></h2><table>{rows}</table></section>')
+        mode = ((f'{"hard stop" if bg["hard_stop"] else "warn only"} · warns at {bg["warn_at"]}%')
+                if bg["lines"] or bg["request"] else "off · /tokentab:budget sets limits")
+        out.append(f'<section class="wrap"><h2>budget <span>{esc(mode)}</span></h2><table>{rows}</table></section>')
 
     w, tt = R["window"], R["totals"]
     rows = (f'<tr><td>all sessions · last 5 min</td><td class="n">{kt.money(w["5m"])}</td></tr>'
