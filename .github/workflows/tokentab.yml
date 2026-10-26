@@ -1,0 +1,46 @@
+# TokenTab's offline checks on each OS: no API key, no live session.
+name: TokenTab
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    # Windows support is in progress; its failures show in the run without failing it.
+    continue-on-error: ${{ matrix.os == 'windows-latest' }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      # The version that wrote dev/ci-types; bump the two together.
+      CLAUDE_CODE_VERSION: 2.1.304
+      CLAUDE_CODE_ENABLE_TELEMETRY: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Claude Code
+        run: npm install -g "@anthropic-ai/claude-code@$CLAUDE_CODE_VERSION" && claude --version
+      - name: Type check
+        run: npx -y -p typescript@5 tsc -p dev/ci-types
+      - name: claude plugin validate
+        run: claude plugin validate plugins/tokentab
+      - name: claude plugin test
+        run: claude plugin test plugins/tokentab
+      - name: Accounting tests
+        run: python plugins/tokentab/tests/test_accounting.py
+      - name: Shell hooks
+        run: sh plugins/tokentab/tests/test_hooks.sh
