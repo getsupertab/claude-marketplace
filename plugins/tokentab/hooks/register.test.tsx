@@ -1,4 +1,5 @@
 import { test, expect, mock } from 'claude-code/testing'
+import type { Engine } from 'claude-code/testing'
 import type { On, RenderElement, RenderNode } from 'claude-code'
 import { at, barCells, barSvg, dataDir, int, liveLines, pct, SERIES, shown, stripAnsi, toneOf, usd } from './register'
 import type { Report } from './register'
@@ -17,6 +18,8 @@ type Ui = {
   // `pythons`: launcher -> the major version it prints ('' for the Store stub, which prints
   // nothing); `probes` the launchers asked for their version, `launchers` those that ran a helper
   pythons: Record<string, string>; probes: string[]; launchers: string[]
+  // `uname` what `uname -s` prints; `openers` the browser openers installed, each with the exit code it returns
+  uname: string; openers: Record<string, number>
 }
 function world(on: On, initial: Record<string, string>, placed = { is: true }, report: { value: Report } = { value: REPORT }) {
   const fs = new Map(Object.entries(initial))
@@ -30,6 +33,7 @@ function world(on: On, initial: Record<string, string>, placed = { is: true }, r
   const ui: Ui = {
     opens: 0, commands: [], status: [], invalidates: 0, runs: [], toasts: [], config: [], store: new Map(), rows: ['tokentab.autoOpen'], surfaces: [],
     pythons: { python3: '3' }, probes: [], launchers: [],
+    uname: 'Darwin', openers: { open: 0, 'xdg-open': 0, 'explorer.exe': 1 },
   }
   on('session.surfaces', () => ({ value: ui.surfaces }))
   on('session.attach', ($, e) => ({ clientId: e.clientId }))
@@ -46,6 +50,12 @@ function world(on: On, initial: Record<string, string>, placed = { is: true }, r
   on('config.set', ($, e) => { ui.config.push([e.key, e.value]); return { value: e.value } })
   on('process.run', ($, e) => {
     const argv = [...e.argv]
+    if (argv[0] === 'uname') return { value: { exitCode: 0, stdout: `${ui.uname}\n`, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    if (['open', 'xdg-open', 'explorer.exe'].includes(argv[0]!)) {
+      ui.runs.push(argv)
+      if (!(argv[0]! in ui.openers)) return { deny: `spawn ${argv[0]} ENOENT` }
+      return { value: { exitCode: ui.openers[argv[0]!]!, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    }
     // the interpreters on this machine: what each launcher's major version prints, absent
     // when it cannot start; a probe (`-c`) is kept apart from the helper runs
     const at = argv.indexOf('-c') >= 0 ? argv.indexOf('-c') : argv.findIndex(a => a.endsWith('.py'))
@@ -530,6 +540,49 @@ test('the open-in-browser button writes the page for this session, opens it, and
     ['python3', 'tokentab.py', '--report', '--session', SID],
     ['python3', 'sankey.py', '--session', SID, '--push', `${DATA}/status/${SID}.js`],
   ])
+})
+
+/** Presses "open in browser" on a machine whose `uname -s` prints `uname`; the runs and toasts after. */
+async function openOn($: Engine, on: On, env: Record<string, string>, uname: string, openers?: Record<string, number>) {
+  mock.env(on, env)
+  const clock = mock.clock(on, { now: T0 })
+  const { ui } = world(on, FILES)
+  ui.uname = uname
+  if (openers) ui.openers = openers
+  await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
+  await $.ui.press(press('open-browser'))
+  return ui
+}
+
+test('on macOS the page opens with open', async ($, on) => {
+  const ui = await openOn($, on, { HOME: '/home/t' }, 'Darwin')
+  const page = `${DATA}/status/${SID}.html`
+  expect(ui.runs[ui.runs.length - 1]).toEqual(['open', page])
+  expect(ui.toasts).toEqual([`TokenTab: status page opened (${page}); it stays live for 30 minutes`])
+})
+
+test('on Linux the page opens with xdg-open', async ($, on) => {
+  const ui = await openOn($, on, { HOME: '/home/t' }, 'Linux')
+  const page = `${DATA}/status/${SID}.html`
+  expect(ui.runs[ui.runs.length - 1]).toEqual(['xdg-open', page])
+  expect(ui.toasts).toEqual([`TokenTab: status page opened (${page}); it stays live for 30 minutes`])
+})
+
+test('on Windows the page opens with explorer.exe, whose exit code 1 is not a failure', async ($, on) => {
+  const ui = await openOn($, on, { OS: 'Windows_NT', USERPROFILE: 'C:\\Users\\t' }, '', { 'explorer.exe': 1 })
+  const page = `C:\\Users\\t/.claude/plugins/data/tokentab-supertab/status/${SID}.html`
+  expect(ui.runs[ui.runs.length - 1]).toEqual(['explorer.exe', page.replace(/\//g, '\\')])
+  expect(ui.toasts).toEqual([`TokenTab: status page opened (${page}); it stays live for 30 minutes`])
+  expect(ui.store.get(`pageOpenedAt:${SID}`)).toBe(T0)
+})
+
+test('on Linux without xdg-open, the toast says the page could not be opened and where it is', async ($, on) => {
+  const ui = await openOn($, on, { HOME: '/home/t' }, 'Linux', {})
+  const page = `${DATA}/status/${SID}.html`
+  expect(ui.toasts).toEqual([`TokenTab: could not open the status page (${page}): tokentab: $.process.run: spawn xdg-open ENOENT`])
+  expect(ui.store.get(`pageOpenedAt:${SID}`)).toBeUndefined()
 })
 
 test('the Budget tab: auto-open through the config menu, the limits through the validator', async ($, on) => {
