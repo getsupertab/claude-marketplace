@@ -896,7 +896,8 @@ def write(path, text):
     A target Windows keeps locked (a browser reading it) skips this redraw; the next one writes it."""
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
+    # newline="" keeps the page byte-identical on every OS; Windows would write \r\n
+    with open(tmp, "w", encoding="utf-8", newline="") as f:
         f.write(text)
     for attempt in range(REPLACE_TRIES):
         try:

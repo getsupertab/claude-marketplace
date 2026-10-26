@@ -23,9 +23,11 @@ type Ui = {
 }
 function world(on: On, initial: Record<string, string>, placed = { is: true }, report: { value: Report } = { value: REPORT }) {
   const fs = new Map(Object.entries(initial))
-  const find = (path: string) => [...fs.keys()].find(k => k === path || path.endsWith(k))
+  // the engine resolves paths natively first: on Windows /home/t arrives as D:\home\t
+  const posix = (path: string) => path.replace(/\\/g, '/').replace(/^[A-Za-z]:/, '')
+  const find = (path: string) => [...fs.keys()].find(k => k === posix(path) || posix(path).endsWith(k))
   on('fs.read', ($, e) => { const k = find(e.path); return k ? { value: fs.get(k)! } : { deny: `ENOENT: ${e.path}` } })
-  on('fs.write', ($, e) => { fs.set(e.path, e.text); return { value: undefined } })
+  on('fs.write', ($, e) => { fs.set(posix(e.path), e.text); return { value: undefined } })
   on('fs.exists', ($, e) => ({ value: find(e.path) !== undefined }))
   on('session.id', () => ({ value: SID }))
   on('session.start', ($, e) => ({ cwd: e.cwd }))
@@ -198,8 +200,8 @@ test('on Windows, with only USERPROFILE set, the ledger is under its .claude fol
   mock.clock(on, { now: T0 })
   const { fs } = world(on, { '/tokentab/prices.json': JSON.stringify(PRICES) })
   await $.telemetry.log(request({}))
-  // off Windows the engine takes C:\ as a relative path and puts its own folder in front
-  const ledger = `C:\\Users\\t/.claude/plugins/data/tokentab-supertab/ledger/2026-10-15/${SID}.jsonl`
+  // the drive is dropped from the kept path; off Windows the engine takes C:\ as relative and puts its own folder in front
+  const ledger = `/Users/t/.claude/plugins/data/tokentab-supertab/ledger/2026-10-15/${SID}.jsonl`
   expect([...fs.keys()].some(path => path.endsWith(ledger))).toBe(true)
 })
 

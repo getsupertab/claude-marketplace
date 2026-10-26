@@ -61,8 +61,11 @@ cat > "$T" <<'EOF'
 {"type": "user", "sessionId": "s-guard", "timestamp": "2026-10-13T10:00:00.000Z", "message": {"role": "user", "content": "hi"}}
 {"type": "assistant", "sessionId": "s-guard", "requestId": "req_1", "timestamp": "2026-10-13T10:00:01.000Z", "message": {"model": "claude-opus-5-5", "usage": {"input_tokens": 1000, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0, "output_tokens": 500}, "content": [{"type": "text", "text": "ok"}]}}
 EOF
+# MSYS converts paths in arguments, not in stdin: the payload carries the path as Python
+# on Windows opens it (C:/..., forward slashes so the JSON needs no escapes)
+TRANSCRIPT="$(if command -v cygpath >/dev/null 2>&1; then cygpath -m "$T"; else printf '%s' "$T"; fi)"
 tool() {  # tool <tool name> <command>
-  printf '{"session_id": "s-guard", "transcript_path": "%s", "hook_event_name": "PreToolUse", "tool_name": "%s", "tool_input": {"command": "%s"}}' "$T" "$1" "$2"
+  printf '{"session_id": "s-guard", "transcript_path": "%s", "hook_event_name": "PreToolUse", "tool_name": "%s", "tool_input": {"command": "%s"}}' "$TRANSCRIPT" "$1" "$2"
 }
 check "guard denies a tool call past a hard session limit" \
   "$(tool Read "" | "$SCRIPTS/guard.sh")" '"permissionDecision": "deny"'

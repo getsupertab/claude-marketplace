@@ -191,6 +191,8 @@ def main():
     errs += ledger_case(root, store, prices)
     errs += utf8_case(root, prices)
     errs += locked_page_case(root)
+    for err in errs:
+        print("  " + err)
     print("ALL OK" if not errs else f"{len(errs)} FAILURES")
     return errs
 
