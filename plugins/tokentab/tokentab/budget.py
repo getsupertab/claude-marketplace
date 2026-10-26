@@ -24,7 +24,7 @@ TRUE, FALSE = ("on", "true", "yes", "1"), ("off", "false", "no", "0")
 
 
 def load():
-    with open(PATH) as f:
+    with open(PATH, encoding="utf-8") as f:
         return json.load(f)   # a dict keeps the file's key order
 
 
@@ -84,7 +84,7 @@ def main():
         node, leaf = lookup(cfg, a[1])
         node[leaf] = parse(a[1], node[leaf], a[2])
         tmp = PATH + ".tmp"
-        with open(tmp, "w") as f:
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(cfg, f, indent=2, ensure_ascii=False)
             f.write("\n")
         os.replace(tmp, PATH)
@@ -93,6 +93,7 @@ def main():
 
 
 if __name__ == "__main__":
+    kt.utf8_stdio()
     try:
         main()
     except (ValueError, OSError) as e:

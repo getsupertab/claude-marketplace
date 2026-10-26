@@ -92,7 +92,7 @@ part2 = [
 
 
 def scan(root, lines):
-    with open(os.path.join(root, "proj", "fx.jsonl"), "a") as f:
+    with open(os.path.join(root, "proj", "fx.jsonl"), "a", encoding="utf-8") as f:
         for o in lines:
             f.write(json.dumps(o, separators=(",", ":")) + "\n")
 
@@ -189,6 +189,10 @@ def main():
     errs += pane_check(store, prices)
     errs += series_check(b, "transcript", store)
     errs += ledger_case(root, store, prices)
+    errs += utf8_case(root, prices)
+    errs += locked_page_case(root)
+    for err in errs:
+        print("  " + err)
     print("ALL OK" if not errs else f"{len(errs)} FAILURES")
     return errs
 
@@ -232,7 +236,7 @@ def ledger_case(root, store, prices):
            + uS["cache_creation_input_tokens"] * kt.rate(prices, OPUS, "cache_write_1h")) / 1e6
     stale = dict(led_line(None, OPUS, uS, "web_search"), cost_usd=tok * 0.6, fees_usd=tok * 0.4 + 0.01, cost_usd_cc=tok + 0.01)
     del stale["request_id"]
-    with open(os.path.join(kt.CFG, "ledger", "2026-10-13", "fx.jsonl"), "w") as f:
+    with open(os.path.join(kt.CFG, "ledger", "2026-10-13", "fx.jsonl"), "w", encoding="utf-8") as f:
         for e in (led_line("rA", OPUS, uA), led_line("rX", OPUS, usage(i=5, r=100, o=80), "prompt_suggestion"), stale):
             f.write(json.dumps(e) + "\n")
     led = kt.LedgerStore(prices); led.scan()
@@ -254,6 +258,63 @@ def ledger_case(root, store, prices):
         errs.append(f"ledger: unmatched output {led.unmatched('fx', store)}, want 80")
     errs += check(lb, "ledger + transcript tools", tb=store.sessions["fx"])
     errs += series_check(lb, "ledger", store)
+    return errs
+
+
+def utf8_case(root, prices):
+    """Non-ASCII in a transcript and on the status page is read and written as UTF-8,
+    whatever the locale (Windows would use its ANSI code page)."""
+    errs = []
+    name = "mcp__café__日本語"
+    lines = [dict(user("naïve — ünïcödé ✓"), sessionId="u8"),
+             dict(asst("rU", OPUS, usage(i=10, o=20), tu("tu8", name, {"q": "Grüße 日本"})), sessionId="u8"),
+             dict(user([tr("tu8", "résultat → 東京 " * 50)]), sessionId="u8")]
+    with open(os.path.join(root, "proj", "u8.jsonl"), "w", encoding="utf-8") as f:
+        for o in lines:
+            f.write(json.dumps(o, ensure_ascii=False) + "\n")
+    store = kt.Store(prices); store.scan()
+    if name not in store.sessions.get("u8", kt.Bucket()).tools:
+        errs.append(f"utf-8: tool {name} not read back from the transcript")
+    page = os.path.join(root, "out", "status.html")
+    text = sankey.page("<p>café · 日本 → ✓</p>")
+    sankey.write(page, text)
+    with open(page, "rb") as f:
+        if f.read().decode("utf-8") != text:
+            errs.append("utf-8: the status page did not round-trip")
+    print("[utf-8] " + ("OK" if not errs else "FAIL"))
+    return errs
+
+
+def locked_page_case(root):
+    """A target Windows keeps locked: the writer retries, then drops this redraw without
+    raising or leaving its temporary file; the next redraw writes the page."""
+    errs = []
+    page = os.path.join(root, "locked", "status.html")
+    sankey.write(page, "old")
+    tries, waits = [0], []
+    def locked(src, dst):
+        tries[0] += 1
+        raise PermissionError(13, "The process cannot access the file", dst)
+    replace, sleep = sankey.os.replace, sankey.time.sleep
+    sankey.os.replace, sankey.time.sleep = locked, waits.append
+    try:
+        sankey.write(page, "new")
+    except Exception as e:
+        errs.append(f"locked page: write raised {e!r}")
+    finally:
+        sankey.os.replace, sankey.time.sleep = replace, sleep
+    if tries[0] != sankey.REPLACE_TRIES or len(waits) != sankey.REPLACE_TRIES - 1:
+        errs.append(f"locked page: {tries[0]} tries, {len(waits)} waits")
+    if os.path.exists(page + ".tmp"):
+        errs.append("locked page: the temporary file was left behind")
+    with open(page, encoding="utf-8") as f:
+        if f.read() != "old":
+            errs.append("locked page: the target changed")
+    sankey.write(page, "new")
+    with open(page, encoding="utf-8") as f:
+        if f.read() != "new":
+            errs.append("locked page: the next redraw did not write")
+    print("[locked page] " + ("OK" if not errs else "FAIL"))
     return errs
 
 

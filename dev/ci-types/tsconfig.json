@@ -1,0 +1,8 @@
+{
+  "extends": "../../plugins/tokentab/tsconfig.json",
+  "compilerOptions": {
+    "typeRoots": ["."],
+    "types": ["claude-code", "claude-code-tools", "claude-code-mcp"]
+  },
+  "include": [".", "../../plugins/tokentab/hooks"]
+}

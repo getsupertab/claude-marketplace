@@ -18,8 +18,10 @@ import argparse, bisect, glob, json, os, re, sys, time
 from datetime import datetime, timezone
 HERE = os.path.dirname(os.path.abspath(__file__))
 
-# plugin: Claude Code's config folder, CLAUDE_CONFIG_DIR when set, else ~/.claude
-CLAUDE_DIR = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude")
+# plugin: Claude Code's config folder, CLAUDE_CONFIG_DIR when set, else .claude in USERPROFILE
+# (Windows), else in HOME: the order the hooks module uses (dataDir in hooks/register.tsx)
+_HOME = os.environ.get("USERPROFILE") or os.environ.get("HOME") or os.path.expanduser("~")
+CLAUDE_DIR = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(_HOME, ".claude")
 ROOT = os.path.join(CLAUDE_DIR, "projects")
 def data_dir():
     """The plugin's data folder: one fixed path under the config folder, the same the hooks
@@ -33,10 +35,18 @@ CFG  = data_dir()  # plugin: data in the plugin's data folder, shipped files nex
 PRICES_PATH = os.path.join(HERE, "prices.json")
 BUDGET_PATH = os.path.join(CFG, "budget.json")
 
+def utf8_stdio():
+    """The hooks module and Claude Code speak UTF-8 on the pipes; Windows would use the ANSI code page."""
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8")
+        except (AttributeError, ValueError):
+            pass
+
 # ---------- pricing ----------
 
 def load_prices():
-    with open(PRICES_PATH) as fh:
+    with open(PRICES_PATH, encoding="utf-8") as fh:
         return json.load(fh)
 
 def rate(prices, model, key):
@@ -369,7 +379,7 @@ class Store:
                 if size == off:
                     continue
                 try:
-                    with open(path, "r", errors="replace") as fh:
+                    with open(path, "r", encoding="utf-8", errors="replace") as fh:
                         fh.seek(off)
                         chunk = fh.read()
                         self.offsets[path] = fh.tell()
@@ -913,7 +923,7 @@ def main():
     budget = {}
     if os.path.exists(BUDGET_PATH):
         try:
-            budget = json.load(open(BUDGET_PATH))
+            budget = json.load(open(BUDGET_PATH, encoding="utf-8"))
         except Exception:
             budget = {}
 
@@ -952,4 +962,5 @@ def main():
 
 
 if __name__ == "__main__":
+    utf8_stdio()
     main()

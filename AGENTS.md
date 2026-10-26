@@ -55,6 +55,10 @@ that a session they already had open runs the old copy's shell hooks until it en
   at the `types/claude-code.d.ts` the plugin-authoring skill writes.
 - `python3 plugins/tokentab/tests/test_accounting.py` after changing TokenTab's cost or
   Sankey code.
+- `sh plugins/tokentab/tests/test_hooks.sh`: feeds sample payloads to the shell hooks
+  (version gate and guard).
+- CI (`.github/workflows/tokentab.yml`) runs these offline checks on Ubuntu, macOS and
+  Windows; its type check reads the declarations in `dev/ci-types/` (see `dev/README.md`).
 - A headless end-to-end check that the module sees API calls on the installed Claude
   Code (also the regression check after a Claude Code update):
   `claude -p "Reply with the single word ok" --model haiku --settings dev/usage-probe/notelemetry.json --plugin-dir plugins/tokentab`,

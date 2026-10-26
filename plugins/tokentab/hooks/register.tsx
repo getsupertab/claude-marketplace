@@ -50,12 +50,14 @@ export type LedgerLine = {
 const ROLL_BYTES = 3.5 * 1024 * 1024
 
 /** The plugin's data folder, under Claude Code's config folder: `CLAUDE_CONFIG_DIR` when set,
- *  else `~/.claude`. `$.plugin` has no data path, so it is built here, the same path the
- *  Python and the shell gate build. */
-export function dataDir(config: string | undefined, home: string | undefined): string {
-  const root = config || (home && `${home.replace(/\/$/, '')}/.claude`)
-  if (!root) throw new Error('HOME is unset')
-  return `${root.replace(/\/$/, '')}/plugins/data/tokentab-supertab`
+ *  else `.claude` in `USERPROFILE` (Windows), else in `HOME`. `$.plugin` has no data path, so
+ *  it is built here, the same path the Python and the shell gate build. */
+export function dataDir(config: string | undefined, profile: string | undefined, home: string | undefined): string {
+  const trim = (path: string | undefined) => path?.replace(/[\\/]+$/, '')
+  const base = trim(profile) || trim(home)
+  const root = trim(config) || (base && `${base}/.claude`)
+  if (!root) throw new Error('USERPROFILE and HOME are unset')
+  return `${root}/plugins/data/tokentab-supertab`
 }
 
 /** `YYYY-MM-DD` of an instant, the module environment's local date. */
@@ -116,7 +118,7 @@ async function loadPrices($: EngineInterface): Promise<Prices> {
 }
 
 async function home($: EngineInterface): Promise<string> {
-  return dataDir(await $.env.get('CLAUDE_CONFIG_DIR'), await $.env.get('HOME'))
+  return dataDir(await $.env.get('CLAUDE_CONFIG_DIR'), await $.env.get('USERPROFILE'), await $.env.get('HOME'))
 }
 
 /** Appends one line: read the file, write it back with the line added. `$.fs.write` replaces
@@ -333,9 +335,56 @@ async function sid($: EngineInterface): Promise<string> {
   return (sessionId ??= await $.session.id())
 }
 
-/** Runs one of the plugin's Python helpers; its stdout, or the last line of stderr as the error. */
+// The launchers tried in order, the same as scripts/guard.sh. Each must say it is Python 3,
+// so a `python3` that is not (the Microsoft Store stub, a Python 2) is passed over.
+export const LAUNCHERS: readonly (readonly string[])[] = [['python3'], ['python'], ['py', '-3']]
+const PYTHON = 'python'                  // `$.store` key of the launcher found
+let launcher: Promise<readonly string[]> | undefined   // the choice for this load, probed at most once
+let chosen: readonly string[] | undefined              // what `launcher` resolved to
+
+async function probe($: EngineInterface): Promise<readonly string[]> {
+  for (const candidate of LAUNCHERS) {
+    try {
+      const r = await $.process.run([...candidate, '-c', 'import sys; print(sys.version_info[0])'], { timeoutMs: HELPER_TIMEOUT_MS })
+      if (r.exitCode === 0 && r.stdout.trim() === '3') {
+        await $.store.set(PYTHON, [...candidate]).catch(() => { /* found for this load anyway */ })
+        return candidate
+      }
+    } catch { /* not on this machine */ }
+  }
+  throw new Error(`no Python 3 found (tried ${LAUNCHERS.map(l => l.join(' ')).join(', ')})`)
+}
+
+/** The launcher: the one the store kept, else the first of LAUNCHERS that is Python 3.
+ *  `failed`, a launcher that would not start, probes again unless another call already did. */
+function findPython($: EngineInterface, failed?: readonly string[]): Promise<readonly string[]> {
+  const reprobe = failed !== undefined && failed === chosen
+  if (launcher === undefined || reprobe) {
+    chosen = undefined
+    const pick = async (): Promise<readonly string[]> => {
+      const kept = reprobe ? undefined : await $.store.get(PYTHON).catch(() => undefined)
+      const py = Array.isArray(kept) && kept.length > 0 && kept.every(a => typeof a === 'string') ? kept as string[] : await probe($)
+      if (launcher === next) chosen = py
+      return py
+    }
+    const next = pick()
+    launcher = next
+    next.catch(() => { if (launcher === next) launcher = undefined })   // nothing found: the next call probes again
+  }
+  return launcher
+}
+
+/** Runs one of the plugin's Python helpers; its stdout, or the last line of stderr as the error.
+ *  A launcher that no longer starts is probed for again, once. */
 async function python($: EngineInterface, script: string, args: readonly string[]): Promise<string> {
-  const r = await $.process.run(['python3', `${$.plugin.root}/tokentab/${script}`, ...args], { timeoutMs: HELPER_TIMEOUT_MS })
+  const argv = (py: readonly string[]) => [...py, `${$.plugin.root}/tokentab/${script}`, ...args]
+  const py = await findPython($)
+  let r
+  try {
+    r = await $.process.run(argv(py), { timeoutMs: HELPER_TIMEOUT_MS })
+  } catch {
+    r = await $.process.run(argv(await findPython($, py)), { timeoutMs: HELPER_TIMEOUT_MS })
+  }
   if (r.exitCode !== 0) throw new Error(r.stderr.trim().split('\n').pop() || `${script} exited ${r.exitCode}`)
   return r.stdout
 }
@@ -420,24 +469,37 @@ async function openPane($: EngineInterface): Promise<UiOpenResult> {
   catch (err) { return { isPlaced: false, reason: String(err instanceof Error ? err.message : err) } }
 }
 
+let isMac: Promise<boolean> | undefined   // `uname -s` asked at most once a load
+
+/** What opens a file in the default browser here: `explorer.exe` on Windows (its exit code
+ *  says nothing: 1 on success too), `open` on macOS, `xdg-open` elsewhere. */
+async function opener($: EngineInterface, path: string): Promise<{ argv: string[]; checkExit: boolean }> {
+  if ((await $.env.get('OS')) === 'Windows_NT') return { argv: ['explorer.exe', path.replace(/\//g, '\\')], checkExit: false }
+  isMac ??= $.process.run(['uname', '-s'], { timeoutMs: HELPER_TIMEOUT_MS }).then(r => r.stdout.trim() === 'Darwin', () => false)
+  return { argv: [(await isMac) ? 'open' : 'xdg-open', path], checkExit: true }
+}
+
 /** The status page (the Sankey, the chart, every figure) written now by sankey.py as
  *  `status/<session>.html` in the data folder, then opened in the default browser. A
  *  Button rather than a Link: a remote surface draws a `file:` Link as plain text. From
  *  now on, for PAGE_MS, every redraw writes the page's data file too (`$.store` keeps
  *  the moment across a reload of the module). */
 async function openSnapshot($: EngineInterface): Promise<void> {
+  let written: string | undefined   // the page, once sankey.py wrote it: a failed open names it
   try {
     const id = await sid($)
     const path = pagePath(await home($), id)
     await python($, 'sankey.py', ['--session', id, '--out', path])
-    const opened = await $.process.run(['open', path], { timeoutMs: HELPER_TIMEOUT_MS })
-    if (opened.exitCode !== 0) throw new Error(opened.stderr.trim() || `open exited ${opened.exitCode}`)
+    written = path
+    const { argv, checkExit } = await opener($, path)
+    const opened = await $.process.run(argv, { timeoutMs: HELPER_TIMEOUT_MS })
+    if (checkExit && opened.exitCode !== 0) throw new Error(opened.stderr.trim() || `${argv[0]} exited ${opened.exitCode}`)
     pageOpenedAt = await $.clock.now()
     await $.store.set(`pageOpenedAt:${id}`, pageOpenedAt)
     $.ui.toast(`TokenTab: status page opened (${path}); it stays live for 30 minutes`)
     if (tick === undefined) startClock($)
   } catch (err) {
-    $.ui.toast(`TokenTab: could not open the status page: ${err instanceof Error ? err.message : String(err)}`)
+    $.ui.toast(`TokenTab: could not open the status page${written ? ` (${written})` : ''}: ${err instanceof Error ? err.message : String(err)}`)
   }
 }
 

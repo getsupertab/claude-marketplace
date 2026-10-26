@@ -32,6 +32,7 @@ the user can ask for a change with `/tokentab:budget <what to change>`.
 
        python3 "${CLAUDE_PLUGIN_ROOT}/tokentab/budget.py" set KEY VALUE
 
+   Where `python3` is missing or is not Python 3 (Windows), run the same with `python`, else `py -3`, in its place.
    KEY is dotted for nested settings (`cold_resume.confirm_seconds`); VALUE is a number, `off` for a
    limit switched off, `on`/`off` for a switch. It refuses a value that does not fit or a
    key that does not exist, and keeps the file's order and comments. `budget.py get` prints
