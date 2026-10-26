@@ -133,8 +133,7 @@ more from a (model, rate) than it holds, every Sankey column sums to the session
 
 ## Budgets
 
-All in `budget.json`, in USD, tokens, or both. Whichever is closest to its limit
-governs. `null` turns one off.
+All in `budget.json`, in USD. `null` turns one off.
 
 `budgets_on` is the switch for the limits below. It ships `false`, so a fresh install
 checks no budget until you turn it on (`/tokentab:budget` or the pane's Options tab); the
@@ -143,8 +142,8 @@ warnings, the cold-resume check and the new-session check work either way.
 
 | Scope | Keys | Resets |
 |---|---|---|
-| Session | `session_limit_usd`, `session_limit_tokens` | new session |
-| Today | `daily_limit_usd`, `daily_limit_tokens` | midnight, all sessions and projects |
+| Session | `session_limit_usd` | new session |
+| Today | `daily_limit_usd` | midnight, all sessions and projects |
 
 `warn_at_percent` (default 70) starts warnings, once per 10% band. `hard_stop: true`
 blocks at 100%; `false` (the default) only warns. Every warning names

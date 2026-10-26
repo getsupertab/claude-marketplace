@@ -629,23 +629,11 @@ def bar(frac, width=28):
     color = GREEN if frac < 0.7 else (YELLOW if frac < 1.0 else RED)
     return color + "█" * filled + DIM + "·" * (width - filled) + RESET
 
-def budget_row(name, c, t, ulim, tlim):
-    """One scope against whichever of its limits is closest: {name, frac, parts}, or None
-    without limits."""
-    parts, fracs = [], []
-    if ulim:
-        fracs.append(c / float(ulim)); parts.append(f"{money(c)} of ${float(ulim):,.2f}")
-    if tlim:
-        fracs.append(t / float(tlim)); parts.append(f"{num(t)} of {num(int(tlim))} tok")
-    if not fracs:
+def budget_row(name, c, ulim):
+    """One scope against its limit: {name, frac, parts}, or None without a limit."""
+    if not ulim:
         return None
-    return {"name": name, "frac": max(fracs), "parts": parts}
-
-
-def budget_line(name, c, t, ulim, tlim):
-    """One scope: bar at whichever limit is closest, then both figures."""
-    r = budget_row(name, c, t, ulim, tlim)
-    return r and budget_text(r)
+    return {"name": name, "frac": c / float(ulim), "parts": [f"{money(c)} of ${float(ulim):,.2f}"]}
 
 
 def budget_text(r):
@@ -707,15 +695,15 @@ def report(store, sid, prices, budget, show_all, led=None):
                       for nm, (calls, c) in sorted(b.by_source.items(), key=lambda kv: -kv[1][1])]
     R["window"] = {"5m": src.window_cost(300), "1h": src.window_cost(3600)}
 
-    dc, dt = src.day_total()              # today, every session
+    dc = src.day_total()[0]               # today, every session
 
     R["budget"] = None
     if budget:
         cold = budget.get("cold_resume") or {}
         on = budget.get("budgets_on") is True
-        lines = [budget_row(name, c, t, budget.get(f"{key}_limit_usd"), budget.get(f"{key}_limit_tokens"))
-                 for name, key, c, t in (("session", "session", b.cost, b.wtok),
-                                         ("today", "daily", dc, dt))] if on else []
+        lines = [budget_row(name, c, budget.get(f"{key}_limit_usd"))
+                 for name, key, c in (("session", "session", b.cost),
+                                      ("today", "daily", dc))] if on else []
         lines = [x for x in lines if x]
         ctx = None
         if tb and tb.ctx:
@@ -877,11 +865,11 @@ def pane_report(store, sid, prices, budget, led=None):
            "today": src.day_total()[0], "month": month_total(src.events), "tools": [], "overhead": 0.0}
     if not b:
         return out
-    ulim, tlim = budget.get("session_limit_usd"), budget.get("session_limit_tokens")
-    row = budget_row("session", b.cost, b.wtok, ulim, tlim)
+    ulim = budget.get("session_limit_usd")
+    row = budget_row("session", b.cost, ulim)
     out["session"] = {
         "title": R["session"]["title"], "cost": b.cost, "tokens": b.wtok, "msgs": b.msgs,
-        "limit_usd": float(ulim) if ulim else None, "limit_tokens": int(tlim) if tlim else None,
+        "limit_usd": float(ulim) if ulim else None,
         "frac": row["frac"] if row else None,
         "warn_at": budget.get("warn_at_percent", 70), "hard_stop": bool(budget.get("hard_stop")),
     }

@@ -19,7 +19,7 @@ Arguments: $ARGUMENTS
 ## No arguments: show the limits
 
 Read the file and show, in a short list: whether `budgets_on` is on (off, or missing,
-means none of the limits below are checked), session and daily limits (USD and tokens,
+means none of the limits below are checked), session and daily limits (USD,
 `null` means off), `warn_at_percent` and `hard_stop` (true blocks at 100%, false only
 warns). "Turn budgets on/off" means `budgets_on`. Give the file path, and mention that
 the user can ask for a change with `/tokentab:budget <what to change>`.

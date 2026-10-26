@@ -290,12 +290,6 @@ def ago(seconds):
     m = int(seconds // 60)
     return f"{m // 60}h {m % 60:02d}m" if m >= 60 else f"{m}m"
 
-def closest(usd_lim, tok_lim, c, t):
-    f = []
-    if usd_lim: f.append((c / float(usd_lim), f"${c:,.2f} of ${float(usd_lim):,.2f}"))
-    if tok_lim: f.append((t / float(tok_lim), f"{t:,} of {int(tok_lim):,} tokens"))
-    return max(f, key=lambda x: x[0]) if f else (0.0, "")
-
 def deny(event, user_msg, model_msg):
     out = {"systemMessage": user_msg}
     if event == "UserPromptSubmit":
@@ -346,8 +340,8 @@ def main():
     # budgets_on gates the limits; a file without it predates the switch.
     on = b.get("budgets_on") is True
     scopes_cfg = [
-        ("session", b.get("session_limit_usd"), b.get("session_limit_tokens")),
-        ("today",   b.get("daily_limit_usd"),   b.get("daily_limit_tokens")),
+        ("session", b.get("session_limit_usd")),
+        ("today",   b.get("daily_limit_usd")),
     ] if on else []
 
     transcript = payload.get("transcript_path")
@@ -424,10 +418,7 @@ def main():
     # Other sessions today may send telemetry even if this one does not.
     day_c, day_t = max(day_c, l_dc), max(day_t, l_dt)
 
-    measured = {
-        "session": (cost, toks),
-        "today":   (day_c, day_t),
-    }
+    measured = {"session": cost, "today": day_c}
 
     warn_at = float(b.get("warn_at_percent", 70)) / 100.0
     hard    = bool(b.get("hard_stop", False))
@@ -558,14 +549,11 @@ def main():
             f"instructions and adds its own start-up cost. Do the work yourself, or stop and "
             f"report back to the agent that started you."))
 
-    for name, ulim, tlim in scopes_cfg:
-        if not (ulim or tlim):
+    for name, ulim in scopes_cfg:
+        if not ulim:
             continue
-        c, t = measured[name]
-        frac, detail = closest(ulim, tlim, c, t)
-        if "$" not in detail:
-            detail += f", about ${c:,.2f}"
-        v = judge(name, frac, detail)
+        c = measured[name]
+        v = judge(name, c / float(ulim), f"${c:,.2f} of ${float(ulim):,.2f}")
         if v:
             verdicts.append(v)
 
