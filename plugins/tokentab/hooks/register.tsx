@@ -469,24 +469,37 @@ async function openPane($: EngineInterface): Promise<UiOpenResult> {
   catch (err) { return { isPlaced: false, reason: String(err instanceof Error ? err.message : err) } }
 }
 
+let isMac: Promise<boolean> | undefined   // `uname -s` asked at most once a load
+
+/** What opens a file in the default browser here: `explorer.exe` on Windows (its exit code
+ *  says nothing: 1 on success too), `open` on macOS, `xdg-open` elsewhere. */
+async function opener($: EngineInterface, path: string): Promise<{ argv: string[]; checkExit: boolean }> {
+  if ((await $.env.get('OS')) === 'Windows_NT') return { argv: ['explorer.exe', path.replace(/\//g, '\\')], checkExit: false }
+  isMac ??= $.process.run(['uname', '-s'], { timeoutMs: HELPER_TIMEOUT_MS }).then(r => r.stdout.trim() === 'Darwin', () => false)
+  return { argv: [(await isMac) ? 'open' : 'xdg-open', path], checkExit: true }
+}
+
 /** The status page (the Sankey, the chart, every figure) written now by sankey.py as
  *  `status/<session>.html` in the data folder, then opened in the default browser. A
  *  Button rather than a Link: a remote surface draws a `file:` Link as plain text. From
  *  now on, for PAGE_MS, every redraw writes the page's data file too (`$.store` keeps
  *  the moment across a reload of the module). */
 async function openSnapshot($: EngineInterface): Promise<void> {
+  let written: string | undefined   // the page, once sankey.py wrote it: a failed open names it
   try {
     const id = await sid($)
     const path = pagePath(await home($), id)
     await python($, 'sankey.py', ['--session', id, '--out', path])
-    const opened = await $.process.run(['open', path], { timeoutMs: HELPER_TIMEOUT_MS })
-    if (opened.exitCode !== 0) throw new Error(opened.stderr.trim() || `open exited ${opened.exitCode}`)
+    written = path
+    const { argv, checkExit } = await opener($, path)
+    const opened = await $.process.run(argv, { timeoutMs: HELPER_TIMEOUT_MS })
+    if (checkExit && opened.exitCode !== 0) throw new Error(opened.stderr.trim() || `${argv[0]} exited ${opened.exitCode}`)
     pageOpenedAt = await $.clock.now()
     await $.store.set(`pageOpenedAt:${id}`, pageOpenedAt)
     $.ui.toast(`TokenTab: status page opened (${path}); it stays live for 30 minutes`)
     if (tick === undefined) startClock($)
   } catch (err) {
-    $.ui.toast(`TokenTab: could not open the status page: ${err instanceof Error ? err.message : String(err)}`)
+    $.ui.toast(`TokenTab: could not open the status page${written ? ` (${written})` : ''}: ${err instanceof Error ? err.message : String(err)}`)
   }
 }
 
