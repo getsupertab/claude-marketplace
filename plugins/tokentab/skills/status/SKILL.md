@@ -1,6 +1,6 @@
 ---
 name: status
-description: Open the TokenTab pane beside the chat: what this session has spent, live, against its budgets. User-invoked.
+description: "Open the TokenTab pane beside the chat: what this session has spent, live, against its budgets. User-invoked."
 disable-model-invocation: true
 ---
 

@@ -31,14 +31,21 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install Claude Code
+        id: install
         run: npm install -g "@anthropic-ai/claude-code@$CLAUDE_CODE_VERSION" && claude --version
       - name: Type check
+        # Each check runs even when an earlier one failed, so the run names every break.
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: npx -y -p typescript@5 tsc -p dev/ci-types
       - name: claude plugin validate
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: claude plugin validate plugins/tokentab
       - name: claude plugin test
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: claude plugin test plugins/tokentab
       - name: Accounting tests
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: python plugins/tokentab/tests/test_accounting.py
       - name: Shell hooks
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: sh plugins/tokentab/tests/test_hooks.sh
