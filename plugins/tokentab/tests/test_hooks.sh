@@ -34,6 +34,21 @@ check "gate stays quiet when the module wrote its marker" \
 check "gate ignores a payload without a session id" \
   "$(printf '%s' '{}' | "$SCRIPTS/loaded-check.sh")" ""
 
+# Without CLAUDE_CONFIG_DIR the gate looks where the module writes: .claude in USERPROFILE,
+# else HOME. On Windows USERPROFILE is a C:\ path, as Node and the module see it.
+native() { if command -v cygpath >/dev/null 2>&1; then cygpath -w "$1"; else printf '%s' "$1"; fi; }
+for who in profile home; do
+  mkdir -p "$TMP/$who/.claude/plugins/data/tokentab-supertab/state/loaded"
+  : > "$TMP/$who/.claude/plugins/data/tokentab-supertab/state/loaded/s-$who"
+done
+check "gate finds the marker under USERPROFILE before HOME, trailing separator and all" \
+  "$(printf '%s' '{"session_id": "s-profile"}' | env -u CLAUDE_CONFIG_DIR \
+     USERPROFILE="$(native "$TMP/profile")$(command -v cygpath >/dev/null 2>&1 && echo '\' || echo /)" \
+     HOME="$TMP/home" "$SCRIPTS/loaded-check.sh")" ""
+check "gate finds the marker under HOME when USERPROFILE is unset" \
+  "$(printf '%s' '{"session_id": "s-home"}' | env -u CLAUDE_CONFIG_DIR -u USERPROFILE \
+     HOME="$TMP/home/" "$SCRIPTS/loaded-check.sh")" ""
+
 # Guard
 check "guard passes when no budget file exists" \
   "$(printf '%s' '{"session_id": "s1", "hook_event_name": "PreToolUse", "tool_name": "Read"}' | "$SCRIPTS/guard.sh")" ""

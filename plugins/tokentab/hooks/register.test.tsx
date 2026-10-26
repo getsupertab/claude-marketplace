@@ -1,6 +1,6 @@
 import { test, expect, mock } from 'claude-code/testing'
 import type { On, RenderElement, RenderNode } from 'claude-code'
-import { at, barCells, barSvg, int, liveLines, pct, SERIES, shown, stripAnsi, toneOf, usd } from './register'
+import { at, barCells, barSvg, dataDir, int, liveLines, pct, SERIES, shown, stripAnsi, toneOf, usd } from './register'
 import type { Report } from './register'
 
 // The world beneath the plugin: `$.fs` reaches nothing under `claude plugin test`, and
@@ -181,6 +181,25 @@ test('with CLAUDE_CONFIG_DIR set, the data folder is under that config folder', 
   expect(fs.get(`${data}/state/loaded/${SID}`)).toBe('2026-10-15T14:03:11.412Z\n')
   expect(fs.get(`${data}/budget.json`)).toBe('{"session_limit_usd": 25}\n')
   expect(fs.has(`${DATA}/budget.json`)).toBe(false)
+})
+
+test('on Windows, with only USERPROFILE set, the ledger is under its .claude folder', async ($, on) => {
+  mock.env(on, { USERPROFILE: 'C:\\Users\\t\\' })
+  mock.clock(on, { now: T0 })
+  const { fs } = world(on, { '/tokentab/prices.json': JSON.stringify(PRICES) })
+  await $.telemetry.log(request({}))
+  // off Windows the engine takes C:\ as a relative path and puts its own folder in front
+  const ledger = `C:\\Users\\t/.claude/plugins/data/tokentab-supertab/ledger/2026-10-15/${SID}.jsonl`
+  expect([...fs.keys()].some(path => path.endsWith(ledger))).toBe(true)
+})
+
+test('the data folder comes from CLAUDE_CONFIG_DIR, then USERPROFILE, then HOME', () => {
+  const tail = '/plugins/data/tokentab-supertab'
+  expect(dataDir('/cfg/', 'C:\\Users\\t', '/home/t')).toBe(`/cfg${tail}`)
+  expect(dataDir('C:\\cfg\\', undefined, undefined)).toBe(`C:\\cfg${tail}`)
+  expect(dataDir(undefined, 'C:\\Users\\t\\', '/home/t/')).toBe(`C:\\Users\\t/.claude${tail}`)
+  expect(dataDir('', '', '/home/t/')).toBe(`/home/t/.claude${tail}`)
+  expect(() => dataDir(undefined, undefined, undefined)).toThrow('USERPROFILE and HOME are unset')
 })
 
 test('an api_request record becomes one priced ledger line per request', async ($, on) => {
