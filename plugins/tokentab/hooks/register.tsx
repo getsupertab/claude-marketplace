@@ -50,12 +50,14 @@ export type LedgerLine = {
 const ROLL_BYTES = 3.5 * 1024 * 1024
 
 /** The plugin's data folder, under Claude Code's config folder: `CLAUDE_CONFIG_DIR` when set,
- *  else `~/.claude`. `$.plugin` has no data path, so it is built here, the same path the
- *  Python and the shell gate build. */
-export function dataDir(config: string | undefined, home: string | undefined): string {
-  const root = config || (home && `${home.replace(/\/$/, '')}/.claude`)
-  if (!root) throw new Error('HOME is unset')
-  return `${root.replace(/\/$/, '')}/plugins/data/tokentab-supertab`
+ *  else `.claude` in `USERPROFILE` (Windows), else in `HOME`. `$.plugin` has no data path, so
+ *  it is built here, the same path the Python and the shell gate build. */
+export function dataDir(config: string | undefined, profile: string | undefined, home: string | undefined): string {
+  const trim = (path: string | undefined) => path?.replace(/[\\/]+$/, '')
+  const base = trim(profile) || trim(home)
+  const root = trim(config) || (base && `${base}/.claude`)
+  if (!root) throw new Error('USERPROFILE and HOME are unset')
+  return `${root}/plugins/data/tokentab-supertab`
 }
 
 /** `YYYY-MM-DD` of an instant, the module environment's local date. */
@@ -116,7 +118,7 @@ async function loadPrices($: EngineInterface): Promise<Prices> {
 }
 
 async function home($: EngineInterface): Promise<string> {
-  return dataDir(await $.env.get('CLAUDE_CONFIG_DIR'), await $.env.get('HOME'))
+  return dataDir(await $.env.get('CLAUDE_CONFIG_DIR'), await $.env.get('USERPROFILE'), await $.env.get('HOME'))
 }
 
 /** Appends one line: read the file, write it back with the line added. `$.fs.write` replaces

@@ -18,8 +18,10 @@ import argparse, bisect, glob, json, os, re, sys, time
 from datetime import datetime, timezone
 HERE = os.path.dirname(os.path.abspath(__file__))
 
-# plugin: Claude Code's config folder, CLAUDE_CONFIG_DIR when set, else ~/.claude
-CLAUDE_DIR = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude")
+# plugin: Claude Code's config folder, CLAUDE_CONFIG_DIR when set, else .claude in USERPROFILE
+# (Windows), else in HOME: the order the hooks module uses (dataDir in hooks/register.tsx)
+_HOME = os.environ.get("USERPROFILE") or os.environ.get("HOME") or os.path.expanduser("~")
+CLAUDE_DIR = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(_HOME, ".claude")
 ROOT = os.path.join(CLAUDE_DIR, "projects")
 def data_dir():
     """The plugin's data folder: one fixed path under the config folder, the same the hooks

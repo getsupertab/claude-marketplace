@@ -2,11 +2,16 @@
 # UserPromptSubmit: the version gate. TokenTab's hooks module writes state/loaded/<session-id>
 # at session start; Claude Code before 2.1.287 does not load modules, and nothing then
 # tracks this session. Said once per session, on the first prompt without a marker. The
-# data folder is the one the module builds from CLAUDE_CONFIG_DIR or HOME, not
-# ${CLAUDE_PLUGIN_DATA}, so the two agree however the plugin was loaded.
+# data folder is the one the module builds from CLAUDE_CONFIG_DIR, USERPROFILE or HOME,
+# not ${CLAUDE_PLUGIN_DATA}, so the two agree however the plugin was loaded.
 SID=$(sed -n 's/.*"session_id" *: *"\([^"]*\)".*/\1/p' | head -1)
 [ -n "$SID" ] || exit 0
-DATA="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/data/tokentab-supertab"
+trim() { set -- "${1%/}"; printf '%s' "${1%\\}"; }
+ROOT=$(trim "${CLAUDE_CONFIG_DIR:-}")
+[ -n "$ROOT" ] || ROOT="$(trim "${USERPROFILE:-${HOME:-}}")/.claude"
+# Git Bash on Windows: USERPROFILE is a C:\ path; cygpath gives the form sh reads.
+command -v cygpath >/dev/null 2>&1 && ROOT=$(cygpath -u "$ROOT")
+DATA="$ROOT/plugins/data/tokentab-supertab"
 [ -e "$DATA/state/loaded/$SID" ] && exit 0
 [ -e "$DATA/state/gate/$SID" ] && exit 0
 mkdir -p "$DATA/state/gate" && : > "$DATA/state/gate/$SID"
