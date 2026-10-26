@@ -333,9 +333,56 @@ async function sid($: EngineInterface): Promise<string> {
   return (sessionId ??= await $.session.id())
 }
 
-/** Runs one of the plugin's Python helpers; its stdout, or the last line of stderr as the error. */
+// The launchers tried in order, the same as scripts/guard.sh. Each must say it is Python 3,
+// so a `python3` that is not (the Microsoft Store stub, a Python 2) is passed over.
+export const LAUNCHERS: readonly (readonly string[])[] = [['python3'], ['python'], ['py', '-3']]
+const PYTHON = 'python'                  // `$.store` key of the launcher found
+let launcher: Promise<readonly string[]> | undefined   // the choice for this load, probed at most once
+let chosen: readonly string[] | undefined              // what `launcher` resolved to
+
+async function probe($: EngineInterface): Promise<readonly string[]> {
+  for (const candidate of LAUNCHERS) {
+    try {
+      const r = await $.process.run([...candidate, '-c', 'import sys; print(sys.version_info[0])'], { timeoutMs: HELPER_TIMEOUT_MS })
+      if (r.exitCode === 0 && r.stdout.trim() === '3') {
+        await $.store.set(PYTHON, [...candidate]).catch(() => { /* found for this load anyway */ })
+        return candidate
+      }
+    } catch { /* not on this machine */ }
+  }
+  throw new Error(`no Python 3 found (tried ${LAUNCHERS.map(l => l.join(' ')).join(', ')})`)
+}
+
+/** The launcher: the one the store kept, else the first of LAUNCHERS that is Python 3.
+ *  `failed`, a launcher that would not start, probes again unless another call already did. */
+function findPython($: EngineInterface, failed?: readonly string[]): Promise<readonly string[]> {
+  const reprobe = failed !== undefined && failed === chosen
+  if (launcher === undefined || reprobe) {
+    chosen = undefined
+    const pick = async (): Promise<readonly string[]> => {
+      const kept = reprobe ? undefined : await $.store.get(PYTHON).catch(() => undefined)
+      const py = Array.isArray(kept) && kept.length > 0 && kept.every(a => typeof a === 'string') ? kept as string[] : await probe($)
+      if (launcher === next) chosen = py
+      return py
+    }
+    const next = pick()
+    launcher = next
+    next.catch(() => { if (launcher === next) launcher = undefined })   // nothing found: the next call probes again
+  }
+  return launcher
+}
+
+/** Runs one of the plugin's Python helpers; its stdout, or the last line of stderr as the error.
+ *  A launcher that no longer starts is probed for again, once. */
 async function python($: EngineInterface, script: string, args: readonly string[]): Promise<string> {
-  const r = await $.process.run(['python3', `${$.plugin.root}/tokentab/${script}`, ...args], { timeoutMs: HELPER_TIMEOUT_MS })
+  const argv = (py: readonly string[]) => [...py, `${$.plugin.root}/tokentab/${script}`, ...args]
+  const py = await findPython($)
+  let r
+  try {
+    r = await $.process.run(argv(py), { timeoutMs: HELPER_TIMEOUT_MS })
+  } catch {
+    r = await $.process.run(argv(await findPython($, py)), { timeoutMs: HELPER_TIMEOUT_MS })
+  }
   if (r.exitCode !== 0) throw new Error(r.stderr.trim().split('\n').pop() || `${script} exited ${r.exitCode}`)
   return r.stdout
 }

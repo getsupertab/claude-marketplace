@@ -357,7 +357,9 @@ def main():
     helper = payload.get("agent_type") if payload.get("agent_id") else None
     if event == "PreToolUse" and payload.get("tool_name") == "Bash":
         cmd = str((payload.get("tool_input") or {}).get("command") or "")
-        if re.fullmatch(r"\s*python3\s+\S*tokentab/(tokentab|sankey)\.py(\s+--?[\w=-]+(\s+[\w-]+)?)*\s*", cmd):
+        # Any launcher the hooks find Python with; a path with / or \\, or double-quoted
+        # (a Windows profile folder may have a space), with no substitution inside.
+        if re.fullmatch(r"\s*(python3?|py\s+-3)\s+(\S*|\"[^\"$`]*)tokentab[/\\](tokentab|sankey)\.py\"?(\s+--?[\w=-]+(\s+[\w-]+)?)*\s*", cmd):
             return 0
 
     prices = load(os.path.join(HERE, "prices.json"), {})

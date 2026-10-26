@@ -14,6 +14,9 @@ type Ui = {
   opens: number; commands: string[]; status: (string | undefined)[]; invalidates: number
   runs: string[][]; toasts: string[]; config: [string, unknown][]; store: Map<string, unknown>; rows: string[]
   surfaces: ('terminal' | 'desktop')[]
+  // `pythons`: launcher -> the major version it prints ('' for the Store stub, which prints
+  // nothing); `probes` the launchers asked for their version, `launchers` those that ran a helper
+  pythons: Record<string, string>; probes: string[]; launchers: string[]
 }
 function world(on: On, initial: Record<string, string>, placed = { is: true }, report: { value: Report } = { value: REPORT }) {
   const fs = new Map(Object.entries(initial))
@@ -24,7 +27,10 @@ function world(on: On, initial: Record<string, string>, placed = { is: true }, r
   on('session.id', () => ({ value: SID }))
   on('session.start', ($, e) => ({ cwd: e.cwd }))
   on('telemetry.log', { to: 'collector' }, () => ({ value: undefined }))
-  const ui: Ui = { opens: 0, commands: [], status: [], invalidates: 0, runs: [], toasts: [], config: [], store: new Map(), rows: ['tokentab.autoOpen'], surfaces: [] }
+  const ui: Ui = {
+    opens: 0, commands: [], status: [], invalidates: 0, runs: [], toasts: [], config: [], store: new Map(), rows: ['tokentab.autoOpen'], surfaces: [],
+    pythons: { python3: '3' }, probes: [], launchers: [],
+  }
   on('session.surfaces', () => ({ value: ui.surfaces }))
   on('session.attach', ($, e) => ({ clientId: e.clientId }))
   on('ui.open', () => { ui.opens++; return { value: placed.is ? { isPlaced: true } : { isPlaced: false, reason: 'narrower than 144 columns' } } })
@@ -40,6 +46,20 @@ function world(on: On, initial: Record<string, string>, placed = { is: true }, r
   on('config.set', ($, e) => { ui.config.push([e.key, e.value]); return { value: e.value } })
   on('process.run', ($, e) => {
     const argv = [...e.argv]
+    // the interpreters on this machine: what each launcher's major version prints, absent
+    // when it cannot start; a probe (`-c`) is kept apart from the helper runs
+    const at = argv.indexOf('-c') >= 0 ? argv.indexOf('-c') : argv.findIndex(a => a.endsWith('.py'))
+    const launcher = at < 0 ? '' : argv.slice(0, at).join(' ')
+    if (at >= 0 && !(launcher in ui.pythons)) { ui.probes.push(launcher); throw new Error(`spawn ${argv[0]} ENOENT`) }
+    if (argv[at] === '-c') {
+      ui.probes.push(launcher)
+      const v = ui.pythons[launcher]!
+      return { value: { exitCode: v === '' ? 9009 : 0, stdout: v === '' ? '' : `${v}\n`, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    }
+    if (at >= 0) {
+      if (launcher !== 'python3') argv.splice(0, at, 'python3')   // the helper runs read alike whichever launcher ran them
+      ui.launchers.push(launcher)
+    }
     ui.runs.push(argv)
     const script = (argv[1] ?? '').split('/').pop()
     let exitCode = 0, stdout = '', stderr = ''
@@ -562,4 +582,72 @@ test('where /config has no row for it (Desktop), the auto-open switch is kept in
   // a change in /config stands over it
   await $.config.set({ key: 'tokentab.autoOpen', value: true, previous: true, provider: { plugin: 'tokentab@supertab', tier: 'user' }, origin: { kind: 'composer' } })
   expect(ui.store.has('autoOpen')).toBe(false)
+})
+
+test('with only `py` installed and a Store stub as python3, the helpers run under `py -3`, found once', async ($, on) => {
+  mock.env(on, { HOME: '/home/t' })
+  const clock = mock.clock(on, { now: T0 })
+  const { ui } = world(on, FILES, { is: false })
+  ui.pythons = { python3: '', py: '3', 'py -3': '3' }
+  await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  // python3 answers with nothing (the stub), python is absent, py -3 is Python 3
+  expect(ui.probes).toEqual(['python3', 'python', 'py -3'])
+  expect(ui.status).toEqual([STATUS])
+  expect(ui.store.get('python')).toEqual(['py', '-3'])
+  // the status command and a budget change use the same launcher, with no second probe
+  const r = await $.command.run({ command: 'tokentab:status', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 200 } })
+  expect(r.text?.startsWith(STATUS)).toBe(true)
+  await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
+  await $.ui.press(press('tab-budget'))
+  await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
+  await $.ui.input({ plugin: 'tokentab', key: 'b-daily_limit_usd', text: '30' })
+  await clock.settle()
+  expect(ui.probes.length).toBe(3)
+  expect(new Set(ui.launchers)).toEqual(new Set(['py -3']))
+  expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'daily_limit_usd', '30'])
+})
+
+test('a python3 that is Python 2 is passed over for `python`', async ($, on) => {
+  mock.env(on, { HOME: '/home/t' })
+  const clock = mock.clock(on, { now: T0 })
+  const { ui } = world(on, FILES, { is: false })
+  ui.pythons = { python3: '2', python: '3' }
+  await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  expect(ui.probes).toEqual(['python3', 'python'])
+  expect(ui.launchers).toEqual(['python'])
+})
+
+test('the launcher the store kept is used without a probe; once it fails to start, the next one is found and kept', async ($, on) => {
+  mock.env(on, { HOME: '/home/t' })
+  const clock = mock.clock(on, { now: T0 })
+  const { ui } = world(on, FILES, { is: false })
+  ui.pythons = { python3: '3', python: '3' }
+  ui.store.set('python', ['python'])
+  await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  expect(ui.probes).toEqual([])
+  expect(ui.launchers).toEqual(['python'])
+
+  // `python` uninstalled: that run fails to start, a probe finds python3, the run is retried
+  delete ui.pythons.python
+  await clock.advance(30_000)
+  expect(ui.probes).toEqual(['python', 'python3'])
+  expect(ui.launchers).toEqual(['python', 'python3'])
+  expect(ui.status).toEqual([STATUS, STATUS])
+  expect(ui.store.get('python')).toEqual(['python3'])
+  await clock.advance(30_000)
+  expect(ui.probes.length).toBe(2)
+})
+
+test('with no Python 3 at all, the error says what was tried', async ($, on) => {
+  mock.env(on, { HOME: '/home/t' })
+  const clock = mock.clock(on, { now: T0 })
+  const { ui } = world(on, FILES, { is: false })
+  ui.pythons = { python3: '' }
+  await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  const r = await $.command.run({ command: 'tokentab:status', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 200 } })
+  expect(r.text?.split('\n')[0]).toBe('TokenTab: no Python 3 found (tried python3, python, py -3)')
 })

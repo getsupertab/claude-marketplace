@@ -17,6 +17,8 @@ redirects, and do not quote the path.
 
     python3 ${CLAUDE_PLUGIN_ROOT}/tokentab/tokentab.py --once
 
+Where `python3` is missing or is not Python 3 (Windows), run the same with `python`, else `py -3`, in its place.
+
 It prints the figures as text: cost by rate, requests, call sources, budget bars and
 cost per tool. It contains terminal colour codes; leave those out when you relay it.
 Report the session cost and the budget lines in a few lines.

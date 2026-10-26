@@ -1,6 +1,6 @@
 #!/bin/sh
 # Feeds sample hook payloads to the shell hooks (version gate and guard) the way Claude
-# Code does, in a throwaway config folder. No dependencies beyond sh and python3; run
+# Code does, in a throwaway config folder. No dependencies beyond sh and a Python 3; run
 # from anywhere, exits non-zero on a failure:
 #
 #   sh plugins/tokentab/tests/test_hooks.sh
@@ -53,5 +53,33 @@ check "guard denies a tool call past a hard session limit" \
   "$(tool Read "" | "$SCRIPTS/guard.sh")" '"permissionDecision": "deny"'
 check "guard lets TokenTab's own report command through" \
   "$(tool Bash "python3 /plugins/tokentab/tokentab/tokentab.py --status" | "$SCRIPTS/guard.sh")" ""
+# Each launcher the hooks may find Python with, and Windows paths (JSON-escaped below:
+# \\ is one backslash, \" a quote)
+for cmd in \
+  "python /plugins/tokentab/tokentab/tokentab.py --once" \
+  "py -3 /plugins/tokentab/tokentab/sankey.py" \
+  'python C:\\Users\\a\\.claude\\plugins\\cache\\supertab\\tokentab\\1\\tokentab\\tokentab.py --once' \
+  'py -3 \"C:\\Users\\A B\\.claude\\plugins\\tokentab\\tokentab\\sankey.py\"'; do
+  check "guard lets the report command through as: $cmd" "$(tool Bash "$cmd" | "$SCRIPTS/guard.sh")" ""
+done
+for cmd in \
+  "py /plugins/tokentab/tokentab/tokentab.py --once" \
+  "python /plugins/tokentab/tokentab/tokentab.py --once && rm -rf x" \
+  'py -3 \"$(rm x)tokentab/tokentab.py\"'; do
+  check "guard denies a look-alike: $cmd" "$(tool Bash "$cmd" | "$SCRIPTS/guard.sh")" '"permissionDecision": "deny"'
+done
+
+# Python launchers, in the module's order: a python3 that is not Python 3 (the Store
+# stub) and a python that is Python 2 are passed over for py -3
+REAL="$(for py in python3 python "py -3"; do $py -c 'import sys; sys.exit(sys.version_info[0] != 3)' 2>/dev/null && { $py -c 'import sys; print(sys.executable)'; break; }; done)"
+BIN="$TMP/bin"
+mkdir -p "$BIN"
+printf '#!/bin/sh\nexit 9009\n' > "$BIN/python3"
+printf '#!/bin/sh\n[ "$1" = -c ] && exit 1\necho python >> "%s/launched"\n' "$TMP" > "$BIN/python"
+printf '#!/bin/sh\n[ "$1" = -3 ] && shift\n[ "$1" = -c ] || echo "py -3" >> "%s/launched"\nexec "%s" "$@"\n' "$TMP" "$REAL" > "$BIN/py"
+chmod +x "$BIN/python3" "$BIN/python" "$BIN/py"
+PATH="$BIN:$PATH" "$SCRIPTS/guard.sh" < /dev/null
+check "guard passes over a python3 stub and a Python 2, and runs py -3" "$(cat "$TMP/launched" 2>/dev/null)" 'py -3'
+check "guard ran one launcher" "$(wc -l < "$TMP/launched" | tr -d ' ')" '1'
 
 exit $FAILED

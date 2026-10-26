@@ -15,4 +15,4 @@ on its own, exactly as written:
 
     python3 ${CLAUDE_PLUGIN_ROOT}/tokentab/tokentab.py --once
 
-and relay them without the colour codes.
+and relay them without the colour codes. Where `python3` is missing or is not Python 3 (Windows), run the same with `python`, else `py -3`, in its place.
