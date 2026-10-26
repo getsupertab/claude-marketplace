@@ -35,10 +35,18 @@ CFG  = data_dir()  # plugin: data in the plugin's data folder, shipped files nex
 PRICES_PATH = os.path.join(HERE, "prices.json")
 BUDGET_PATH = os.path.join(CFG, "budget.json")
 
+def utf8_stdio():
+    """The hooks module and Claude Code speak UTF-8 on the pipes; Windows would use the ANSI code page."""
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8")
+        except (AttributeError, ValueError):
+            pass
+
 # ---------- pricing ----------
 
 def load_prices():
-    with open(PRICES_PATH) as fh:
+    with open(PRICES_PATH, encoding="utf-8") as fh:
         return json.load(fh)
 
 def rate(prices, model, key):
@@ -371,7 +379,7 @@ class Store:
                 if size == off:
                     continue
                 try:
-                    with open(path, "r", errors="replace") as fh:
+                    with open(path, "r", encoding="utf-8", errors="replace") as fh:
                         fh.seek(off)
                         chunk = fh.read()
                         self.offsets[path] = fh.tell()
@@ -915,7 +923,7 @@ def main():
     budget = {}
     if os.path.exists(BUDGET_PATH):
         try:
-            budget = json.load(open(BUDGET_PATH))
+            budget = json.load(open(BUDGET_PATH, encoding="utf-8"))
         except Exception:
             budget = {}
 
@@ -954,4 +962,5 @@ def main():
 
 
 if __name__ == "__main__":
+    utf8_stdio()
     main()

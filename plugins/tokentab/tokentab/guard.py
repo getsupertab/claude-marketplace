@@ -11,14 +11,14 @@ between turns). Config: budget.json in the plugin's data folder (/tokentab:budge
 import glob, json, os, re, sys, time
 from datetime import datetime
 
-from tokentab import ROOT, data_dir   # noqa: E402  (same folder; env var, else the folder in use)
+from tokentab import ROOT, data_dir, utf8_stdio   # noqa: E402  (same folder; env var, else the folder in use)
 CFG   = data_dir()  # plugin: data in the plugin's data folder, shipped files next to this script
 HERE  = os.path.dirname(os.path.abspath(__file__))
 STATE = os.path.join(CFG, "state")
 
 def load(path, default):
     try:
-        with open(path) as fh:
+        with open(path, encoding="utf-8") as fh:
             return json.load(fh)
     except Exception:
         return default
@@ -82,7 +82,7 @@ def tally(transcript, prices, st, others=frozenset()):
         off, seen, dup, raw, counted = 0, set(), set(), {}, {}
     data, new_off = "", off
     if size > off:
-        with open(transcript, "r", errors="replace") as fh:
+        with open(transcript, "r", encoding="utf-8", errors="replace") as fh:
             fh.seek(off)
             data = fh.read()
             new_off = fh.tell()
@@ -199,7 +199,7 @@ def ledger_totals(sid, today, prices):
     sc = dc = 0.0; st_ = dt = 0
     for p in ledger_files():
         try:
-            lines = open(p).read().splitlines()
+            lines = open(p, encoding="utf-8").read().splitlines()
         except OSError:
             continue
         for line in lines:
@@ -270,7 +270,7 @@ def last_call(transcript, sid):
         return None
     for p in ledger_files():
         try:
-            lines = open(p).read().splitlines()
+            lines = open(p, encoding="utf-8").read().splitlines()
         except OSError:
             continue
         for line in lines:
@@ -318,7 +318,7 @@ def main():
         return 0
     if os.environ.get("TOKENTAB_DEBUG") or os.path.exists(os.path.join(CFG, "state", "debug")):
         try:
-            with open(os.path.join(CFG, "state", "payloads.log"), "a") as fh:
+            with open(os.path.join(CFG, "state", "payloads.log"), "a", encoding="utf-8") as fh:
                 fh.write(json.dumps({k: v for k, v in payload.items() if k not in ("tool_input", "prompt", "tool_response")}) + "\n")
         except Exception:
             pass
@@ -329,7 +329,7 @@ def main():
         # A broken budget file must not look like "no limits". Say so every prompt.
         if os.path.exists(bpath) and payload.get("hook_event_name") == "UserPromptSubmit":
             try:
-                json.load(open(bpath))
+                json.load(open(bpath, encoding="utf-8"))
                 why = "unreadable"
             except Exception as e:
                 why = str(e)
@@ -383,10 +383,10 @@ def main():
                f"high-water mark, and refusing to continue. Clear state/{sid}.json to "
                f"reset once you know why.")
         try:
-            with open(os.path.join(STATE, "tamper.log"), "a") as fh:
+            with open(os.path.join(STATE, "tamper.log"), "a", encoding="utf-8") as fh:
                 fh.write(json.dumps({"session": sid, "transcript": transcript,
                                      "hwm_cost": cost, "hwm_tokens": toks}) + "\n")
-            with open(spath, "w") as fh:
+            with open(spath, "w", encoding="utf-8") as fh:
                 json.dump(st, fh)
         except Exception:
             pass
@@ -412,7 +412,7 @@ def main():
 
     # This session's fresh state is saved first so today's total includes it.
     try:
-        with open(spath, "w") as fh:
+        with open(spath, "w", encoding="utf-8") as fh:
             json.dump(st, fh)
     except Exception:
         pass
@@ -487,7 +487,7 @@ def main():
                 fresh = int(cold.get("fresh_session_tokens", 75000))
                 st["cold_block_at"] = time.time()
                 try:
-                    with open(spath, "w") as fh:
+                    with open(spath, "w", encoding="utf-8") as fh:
                         json.dump(st, fh)
                 except Exception:
                     pass
@@ -580,7 +580,7 @@ def main():
             out.pop("systemMessage")
 
     try:
-        with open(spath, "w") as fh:
+        with open(spath, "w", encoding="utf-8") as fh:
             json.dump(st, fh)
     except Exception:
         pass
@@ -606,11 +606,12 @@ def rebuild():
         before = price_raw(st.get("raw") or {}, prices)[0]
         st.pop("v", None)                                 # force a re-read
         cost, _, st, _ = tally(tp, prices, st, claims(sid))
-        with open(spath, "w") as fh:
+        with open(spath, "w", encoding="utf-8") as fh:
             json.dump(st, fh)
         print(f"{sid[:8]}  ${before:>9,.4f} -> ${cost:>9,.4f}   {len(st['dup'])} duplicate requests skipped")
 
 if __name__ == "__main__":
+    utf8_stdio()
     if sys.argv[1:] == ["--rebuild"]:
         sys.exit(rebuild())
     sys.exit(main())

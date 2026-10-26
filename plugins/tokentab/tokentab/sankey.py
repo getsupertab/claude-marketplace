@@ -562,7 +562,7 @@ def report(live, sid=None):
     live.scan()
     sid = sid or live.store.newest_session()
     try:
-        budget = json.load(open(kt.BUDGET_PATH))
+        budget = json.load(open(kt.BUDGET_PATH, encoding="utf-8"))
     except (OSError, ValueError):
         budget = {}
     return kt.report(live.store, sid, live.prices, budget, True, live.led)
@@ -888,14 +888,29 @@ def main():
             print(out, flush=True)
 
 
+REPLACE_TRIES, REPLACE_WAIT = 5, 0.05
+
+
 def write(path, text):
-    """Writes the whole file, through a temporary twin, so a reader never sees a cut file."""
+    """Writes the whole file, through a temporary twin, so a reader never sees a cut file.
+    A target Windows keeps locked (a browser reading it) skips this redraw; the next one writes it."""
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     tmp = path + ".tmp"
-    with open(tmp, "w") as f:
+    with open(tmp, "w", encoding="utf-8") as f:
         f.write(text)
-    os.replace(tmp, path)
+    for attempt in range(REPLACE_TRIES):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            if attempt + 1 < REPLACE_TRIES:
+                time.sleep(REPLACE_WAIT)
+    try:
+        os.remove(tmp)
+    except OSError:
+        pass
 
 
 if __name__ == "__main__":
+    kt.utf8_stdio()
     main()
