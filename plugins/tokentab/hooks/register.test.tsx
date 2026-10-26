@@ -1,6 +1,6 @@
 import { test, expect, mock } from 'claude-code/testing'
 import type { On, RenderElement, RenderNode } from 'claude-code'
-import { at, barCells, barSvg, int, liveLines, pct, SERIES, short, shown, stripAnsi, toneOf, usd } from './register'
+import { at, barCells, barSvg, int, liveLines, pct, SERIES, shown, stripAnsi, toneOf, usd } from './register'
 import type { Report } from './register'
 
 // The world beneath the plugin: `$.fs` reaches nothing under `claude plugin test`, and
@@ -71,7 +71,7 @@ const STATUS = 'session $2.0228 · today $7.9406'
 // $2.00 limit (181%), warn only, and three tools.
 const REPORT: Report = {
   sid: 'a0b1c2d3-session', prices_verified: true, today: 5.94, month: 28.38, overhead: 0.0039,
-  session: { title: 'Token type sidebar', cost: 3.613, tokens: 532533, msgs: 47, limit_usd: 2, limit_tokens: 90000000, frac: 1.8065, warn_at: 70, hard_stop: false },
+  session: { title: 'Token type sidebar', cost: 3.613, tokens: 532533, msgs: 47, limit_usd: 2, frac: 1.8065, warn_at: 70, hard_stop: false },
   rates: [
     { label: 'input', key: 'input', tokens: 5134, cost: 0.0205, share: 0.0057 },
     { label: 'cache write 1h', key: 'cache_write_1h', tokens: 226784, cost: 1.8143, share: 0.5022 },
@@ -87,9 +87,9 @@ const REPORT: Report = {
   ],
 }
 const BUDGET = JSON.stringify({
-  _comment: 'kept', session_limit_usd: 25, session_limit_tokens: null,
-  daily_limit_usd: 40, daily_limit_tokens: 40000000, warn_at_percent: 70, hard_stop: false,
-  cold_resume: { confirm_seconds: 120 },
+  _comment: 'kept', session_limit_usd: null,
+  daily_limit_usd: 40, warn_at_percent: 70, hard_stop: false,
+  cold_resume: { confirm_seconds: 120, min_context_tokens: 100000 },
 }, null, 2)
 
 const PANE_PROPS = { title: 'TokenTab', isFocused: false, bodyColumns: 80, placement: 'dock' as const, scroll: { offset: 0, bodyRows: 40 }, view: {} }
@@ -212,7 +212,6 @@ test('records that are not api_request, and a failure in the module, leave the r
 
 test('the figures as the design writes them, and the bars in Svg and in cells', async () => {
   expect([usd(3.613), usd(3.613, 4), usd(1234.5), int(5561099)]).toEqual(['$3.61', '$3.6130', '$1,234.50', '5,561,099'])
-  expect([short(90000000), short(100000), short(1500000), short(512)]).toEqual(['90M', '100k', '1.5M', '512'])
   expect(pct(1.8065)).toBe('181%')
   expect([toneOf(1.81, 70), toneOf(0.75, 70), toneOf(0.1, 70)]).toEqual(['error', 'warning', 'success'])
   // a track the full width, the parts on it; past the end a part is cut at the track's end;
@@ -232,9 +231,9 @@ test('the figures as the design writes them, and the bars in Svg and in cells', 
   const cfg = JSON.parse(BUDGET)
   expect(at(cfg, 'cold_resume.confirm_seconds')).toBe(120)
   expect(at(cfg, 'cold_resume.missing')).toBe(undefined)
-  expect(shown(at(cfg, 'session_limit_tokens'))).toBe('off')
-  expect(shown(at(cfg, 'daily_limit_tokens'))).toBe('40,000,000')
-  expect(shown(at(cfg, 'session_limit_usd'))).toBe('25')
+  expect(shown(at(cfg, 'session_limit_usd'))).toBe('off')
+  expect(shown(at(cfg, 'daily_limit_usd'))).toBe('40')
+  expect(shown(at(cfg, 'cold_resume.min_context_tokens'))).toBe('100,000')
 })
 
 test('an interactive session opens the pane and draws the Spend tab', async ($, on) => {
@@ -260,7 +259,7 @@ test('an interactive session opens the pane and draws the Spend tab', async ($, 
   expect(find('SESSION SPEND')?.props).toEqual({ size: 'footnote', dimColor: true })
   expect(find('$3.61')?.props).toEqual({ size: 'title', weight: 'bold', tabular: true })
   expect(find('Over · 181%')?.props).toEqual({ size: 'footnote', weight: 'semibold', color: 'error' })
-  expect(find('of $2.00 · 532,533 of 90M tokens · warn only, warns at 70%')).toBeDefined()
+  expect(find('of $2.00 · 532,533 tokens · warn only, warns at 70%')).toBeDefined()
   // the breakdown: a row per rate with its dot in the series colour, the total, the note
   expect(t.filter(x => x.text === '● ').map(x => x.props.color)).toEqual(
     ['input', 'cache_write_1h', 'cache_read', 'output', 'thinking'].map(k => SERIES[k]![0]))
@@ -305,7 +304,7 @@ test('an interactive session opens the pane and draws the Spend tab', async ($, 
 test('Spend without a limit has no bar and no badge; before the first call it says so', async ($, on) => {
   mock.env(on, { HOME: '/home/t' })
   const clock = mock.clock(on, { now: T0 })
-  const report: { value: Report } = { value: { ...REPORT, session: { ...REPORT.session!, limit_usd: null, limit_tokens: null, frac: null } } }
+  const report: { value: Report } = { value: { ...REPORT, session: { ...REPORT.session!, limit_usd: null, frac: null } } }
   world(on, FILES, { is: true }, report)
   await $.session.start({ cwd: '/w', surface: 'desktop', isInteractive: true })
   await clock.settle()
@@ -509,11 +508,9 @@ test('the Budget tab: auto-open through the config menu, the limits through the 
   expect(elements(tree, 'Button').find(b => b.key === 'auto-open')?.label).toBe('on')
   // the fields hold budget.json's values, "off" for null, grouped tokens
   const inputs = elements(tree, 'Input')
-  expect(inputs.map(i => i.key)).toEqual(['b-session_limit_usd', 'b-session_limit_tokens', 'b-daily_limit_usd', 'b-daily_limit_tokens',
-    'b-warn_at_percent'])
+  expect(inputs.map(i => i.key)).toEqual(['b-session_limit_usd', 'b-daily_limit_usd', 'b-warn_at_percent'])
   expect(inputs.find(i => i.key === 'b-daily_limit_usd')?.value).toBe('40')
-  expect(inputs.find(i => i.key === 'b-session_limit_tokens')?.value).toBe('off')
-  expect(inputs.find(i => i.key === 'b-daily_limit_tokens')?.value).toBe('40,000,000')
+  expect(inputs.find(i => i.key === 'b-session_limit_usd')?.value).toBe('off')
   expect(elements(tree, 'Button').find(b => b.key === 'b-budgets_on')?.label).toBe('off')
   expect(elements(tree, 'Button').find(b => b.key === 'b-hard_stop')?.label).toBe('off')
 

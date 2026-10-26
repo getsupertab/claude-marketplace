@@ -197,10 +197,10 @@ def pane_check(store, prices):
     """`--report`, what the pane draws: JSON, the session against its limit, the rates
     summing to the total, tools with the three draws; this month counts only this month."""
     errs = []
-    budget = {"session_limit_usd": 0.0001, "session_limit_tokens": None, "warn_at_percent": 70}
+    budget = {"session_limit_usd": 0.0001, "warn_at_percent": 70}
     rep = json.loads(json.dumps(kt.pane_report(store, "fx", prices, budget)))
     s = rep["session"]
-    if not s or s["limit_usd"] != 0.0001 or s["limit_tokens"] is not None or not s["frac"] or s["frac"] < 1:
+    if not s or s["limit_usd"] != 0.0001 or not s["frac"] or s["frac"] < 1:
         errs.append(f"pane report: session against its limit is wrong: {s}")
     if abs(sum(r["cost"] for r in rep["rates"]) - rep["total"]["cost"]) > 1e-6:
         errs.append("pane report: rates do not sum to the total")

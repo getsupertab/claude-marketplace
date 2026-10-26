@@ -52,7 +52,7 @@ def parse(key, old, raw):
     if isinstance(old, (list, dict)):
         raise ValueError(f"{key}: edit this one in the file")
     if text in ("", "off", "none", "null"):
-        if leaf.endswith(("_usd", "_tokens")):
+        if leaf.endswith("_usd"):
             return None
         raise ValueError(f"{key}: a number is needed")
     try:

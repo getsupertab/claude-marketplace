@@ -179,7 +179,7 @@ export type Report = {
   overhead: number
   session: null | {
     title: string; cost: number; tokens: number; msgs: number
-    limit_usd: number | null; limit_tokens: number | null; frac: number | null
+    limit_usd: number | null; frac: number | null
     warn_at: number; hard_stop: boolean
   }
   rates?: { label: string; key: string; tokens: number; cost: number; share: number }[]
@@ -193,12 +193,6 @@ const grouped = (n: number, digits: number) =>
 /** Dollars as the design writes them: 2 decimals for the hero and the totals, 4 in the tables. */
 export const usd = (x: number, digits = 2): string => `$${grouped(x, digits)}`
 export const int = (n: number): string => grouped(Math.round(n), 0)
-/** A limit in short: 90M, 100k, 1.5M. */
-export function short(n: number): string {
-  if (n >= 1e6) return `${+(n / 1e6).toFixed(1)}M`
-  if (n >= 1e3) return `${+(n / 1e3).toFixed(1)}k`
-  return String(n)
-}
 export const pct = (share: number): string => `${Math.round(share * 100)}%`
 
 /** How close a scope is to its limit: error at 100% and over, warning from `warn_at`. */
@@ -281,11 +275,9 @@ export const SECTIONS: { title: string; rows: Setting[] }[] = [
   ] },
   { title: 'this session', rows: [
     { key: 'session_limit_usd', label: 'USD', kind: 'limit' },
-    { key: 'session_limit_tokens', label: 'tokens', kind: 'limit' },
   ] },
   { title: 'today', rows: [
     { key: 'daily_limit_usd', label: 'USD', kind: 'limit' },
-    { key: 'daily_limit_tokens', label: 'tokens', kind: 'limit' },
   ] },
   { title: 'at the limit', rows: [
     { key: 'warn_at_percent', label: 'warn at, %', kind: 'limit' },
@@ -728,7 +720,7 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
   const mode = `${s.hard_stop ? 'hard stop' : 'warn only'}, warns at ${s.warn_at}%`
   const under = [
     s.limit_usd !== null ? `of ${usd(s.limit_usd)}` : '',
-    s.limit_tokens !== null ? `${int(s.tokens)} of ${short(s.limit_tokens)} tokens` : `${int(s.tokens)} tokens`,
+    `${int(s.tokens)} tokens`,
     s.frac !== null ? mode : 'no session limit set',
   ].filter(x => x !== '').join(' · ')
   const rates = r.rates ?? []

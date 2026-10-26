@@ -1,11 +1,9 @@
 {
   "_budgets_comment": "Master switch for budgets: the limits below. false (the default) checks none of them and keeps their values for when you turn it on (/tokentab:budget or the pane).",
   "budgets_on": false,
-  "_comment": "session_limit_usd depends on prices.json being right. session_limit_tokens is exact. Set either or both; whichever is closest to its limit governs. null disables that one.",
+  "_comment": "Limits in USD, priced from prices.json. null disables that one.",
   "session_limit_usd": 25,
-  "session_limit_tokens": 90000000,
   "daily_limit_usd": 40,
-  "daily_limit_tokens": 40000000,
   "warn_at_percent": 70,
   "hard_stop": false,
   "_context_comment": "Context size of the last call. Every call re-reads it all, so this is what each call costs. Warns once per threshold; resets after a compact.",
