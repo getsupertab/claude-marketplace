@@ -299,21 +299,30 @@ test('an interactive session opens the pane and draws the Spend tab', async ($, 
   expect(ui.runs.map(a => a.slice(2))).toEqual([['--report', '--session', SID]])
   expect(ui.status).toEqual([undefined])
 
-  const tree = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
-  // the tab row: Spend is the primary one, then Budget, Tools and the browser button
-  expect(elements(tree, 'Button').map(b => [b.key, b.variant, b.hotkey])).toEqual([
-    ['tab-spend', 'primary', 's'], ['tab-budget', 'secondary', 'b'], ['tab-tools', 'secondary', 't'], ['open-browser', undefined, 'o'],
+  const folded = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
+  // the tab row: Spend is the primary one, then Budget and the browser button; then the details toggle
+  expect(elements(folded, 'Button').map(b => [b.key, b.variant, b.hotkey])).toEqual([
+    ['tab-spend', 'primary', 's'], ['tab-budget', 'secondary', 'b'], ['open-browser', undefined, 'o'],
+    ['details-toggle', undefined, 'd'],
   ])
+  // the breakdown starts folded: the toggle shows, the rate table and the tools do not
+  expect(texts(folded).some(x => x.text === '▸ DETAILS')).toBe(true)
+  expect(texts(folded).some(x => x.text === '  total' || x.text === 'TOOLS')).toBe(false)
+  await $.ui.press(press('details-toggle'))
+
+  const tree = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   const t = texts(tree)
+  expect(t.some(x => x.text === '▾ DETAILS')).toBe(true)
   const find = (s: string) => t.find(x => x.text === s)
   // the hero: the figure at the title size, the badge in the error tone, the line under the bar
   expect(find('SESSION SPEND')?.props).toEqual({ size: 'footnote', dimColor: true })
   expect(find('$3.61')?.props).toEqual({ size: 'title', weight: 'bold', tabular: true })
   expect(find('Over · 181%')?.props).toEqual({ size: 'footnote', weight: 'semibold', color: 'error' })
   expect(find('of $2.00 · 532,533 tokens · warn only, warns at 70%')).toBeDefined()
-  // the breakdown: a row per rate with its dot in the series colour, the total, the note
+  // the breakdown: a row per rate with its dot in the series colour, the total, the note;
+  // then the tools' legend
   expect(t.filter(x => x.text === '● ').map(x => x.props.color)).toEqual(
-    ['input', 'cache_write_1h', 'cache_read', 'output', 'thinking'].map(k => SERIES[k]![0]))
+    ['input', 'cache_write_1h', 'cache_read', 'output', 'thinking', 'ask', 'ctx', 'read'].map(k => SERIES[k]![0]))
   for (const s of ['cache write 1h', '226,784', '$1.8143', '50%', '  total', '5,561,099', '$3.6130']) expect(find(s)).toBeDefined()
   expect(t.some(x => x.text.startsWith('125 output tok have no transcript line'))).toBe(true)
   // every session, today and this month
@@ -322,11 +331,11 @@ test('an interactive session opens the pane and draws the Spend tab', async ($, 
   expect(sources(tree, 'Svg')).toEqual([])
   expect(t.find(x => x.props.color === SERIES.error![0])?.text).toMatch(/^█+$/)
 
-  // a remote surface: the same tree with the two bars as Svg, the session's and the rates'
+  // a remote surface: the same tree with the bars as Svg, the session's, the rates' and one per tool
   for (const surface of ['desktop', 'vscode', 'mobile'] as const) {
     const remote = await $.ui.render({ surface, component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
     const svgs = elements(remote, 'Svg')
-    expect(svgs.length).toBe(2)
+    expect(svgs.length).toBe(2 + REPORT.tools.length)
     expect(svgs[0]!.source).toBe(barSvg([{ series: 'error', frac: 1.8065 }], 8))
     expect(svgs[0]!.alt).toBe('181% of the session limit')
     expect(svgs[1]!.alt).toBe('this session by rate: input 1%, cache write 1h 50%, cache read 29%, output text 13%, thinking 7%')
@@ -359,8 +368,10 @@ test('Spend without a limit has no bar and no badge; before the first call it sa
   world(on, FILES, { is: true }, report)
   await $.session.start({ cwd: '/w', surface: 'desktop', isInteractive: true })
   await clock.settle()
+  await $.ui.render({ surface: 'desktop', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
+  await $.ui.press(press('details-toggle', 'desktop'))
   const tree = await $.ui.render({ surface: 'desktop', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
-  expect(elements(tree, 'Svg').map(s => s.alt)).toEqual([expect.stringMatching(/^this session by rate/)])
+  expect(elements(tree, 'Svg').map(s => s.alt)[0]).toMatch(/^this session by rate/)
   expect(texts(tree).some(x => x.text.startsWith('Over') || x.text.endsWith('used'))).toBe(false)
   expect(texts(tree).some(x => x.text === '532,533 tokens · no session limit set')).toBe(true)
 
@@ -370,39 +381,35 @@ test('Spend without a limit has no bar and no badge; before the first call it sa
   const none = await $.ui.render({ surface: 'desktop', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   expect(texts(none).some(x => x.text.startsWith('No API call in this session yet'))).toBe(true)
   expect(texts(none).some(x => x.text === '$28.38')).toBe(true)
-  await $.ui.press(press('tab-tools', 'desktop'))
-  await clock.settle()
+
+  report.value = { ...REPORT, tools: [] }
+  await $.telemetry.log(request({}))
+  await clock.advance(1000)
   const tools = await $.ui.render({ surface: 'desktop', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   expect(texts(tools).some(x => x.text === 'No tool calls in this session yet.')).toBe(true)
 })
 
-test('the Tools tab: per tool its calls, cost, a bar against the costliest and its three figures', async ($, on) => {
+test("Spend's details: per tool its calls, cost, a bar against the costliest and its three figures", async ($, on) => {
   mock.env(on, { HOME: '/home/t' })
   const clock = mock.clock(on, { now: T0 })
-  const { ui } = world(on, FILES)
+  world(on, FILES)
   await $.session.start({ cwd: '/w', surface: 'desktop', isInteractive: true })
   await clock.settle()
   await $.ui.render({ surface: 'desktop', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
-  const runs = ui.runs.length
-  await $.ui.press(press('tab-tools', 'desktop'))
-  await clock.settle()
-  expect(ui.runs.slice(runs).map(a => a.slice(2))).toEqual([['--report', '--session', SID]])
+  await $.ui.press(press('details-toggle', 'desktop'))
   const tree = await $.ui.render({ surface: 'desktop', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
-  expect(elements(tree, 'Button').map(b => [b.key, b.variant]).slice(0, 3)).toEqual([
-    ['tab-spend', 'secondary'], ['tab-budget', 'secondary'], ['tab-tools', 'primary'],
-  ])
   const t = texts(tree)
   for (const s of ['TOOLS', '  3 tools · 18 calls', 'use_figma', '12 calls', '$0.5457', 'computer', '1 call',
     'ask $0.3332 · ctx $0.1498 (18,721 tok) · re-read $0.0627', 'TokenTab overhead $0.0039: its hook text in context']) {
     expect(t.some(x => x.text === s)).toBe(true)
   }
-  // one bar per tool, the costliest filling its track
-  const svgs = elements(tree, 'Svg')
+  // one bar per tool after the session's and the rates', the costliest filling its track
+  const svgs = elements(tree, 'Svg').slice(2)
   expect(svgs.length).toBe(3)
   const r = REPORT.tools[0]!
   expect(svgs[0]!.source).toBe(barSvg([{ series: 'ask', frac: r.ask / r.cost }, { series: 'ctx', frac: r.ctx / r.cost }, { series: 'read', frac: r.read / r.cost }], 4))
-  // the legend
-  expect(t.filter(x => x.text === '● ').map(x => x.props.color)).toEqual(['ask', 'ctx', 'read'].map(k => SERIES[k]![0]))
+  // the legend, after the rates' dots
+  expect(t.filter(x => x.text === '● ').map(x => x.props.color).slice(-3)).toEqual(['ask', 'ctx', 'read'].map(k => SERIES[k]![0]))
 })
 
 test('while the pane is not placed, the status line carries the numbers', async ($, on) => {
