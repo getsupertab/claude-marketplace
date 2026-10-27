@@ -69,13 +69,13 @@ is the live view (`--once` for one snapshot, `--json` for the raw numbers), and
 
 The pane opens beside the chat when a session starts (in a terminal, from 144 columns;
 narrower, it opens with your first prompt and the status line carries the numbers until then). It
-has two tabs, each a button (hotkeys `s`, `b`): **Spend**, this session's cost as
-one figure with a bar against its limit, then under "details" (`d`) the cost by rate
-(input, cache writes, cache reads, output, thinking) as a bar and a table and per tool
-its calls and cost and a bar of what it drew (asking, its answer into context, re-reading
-it), and every session today and this month; **Budget**, in sections: the auto-open
-switch first, then the budget limits as fields, saved through the plugin's validator
-(`tokentab/budget.py`), a refused value shown under its field. Bars are drawings in Claude Desktop, VS Code and
+has three tabs, each a button (hotkeys `s`, `b`, `t`): **Spend**, this session's cost as
+one figure with a bar against its limit, the cost by rate (input, cache writes, cache
+reads, output, thinking) as a bar and a table, and every session today and this month;
+**Budget**, in sections: the auto-open switch first, then the budget limits as fields,
+saved through the plugin's validator (`tokentab/budget.py`), a refused value shown under
+its field; **Tools**, per tool its calls and cost and a bar of what it drew (asking, its
+answer into context, re-reading it). Bars are drawings in Claude Desktop, VS Code and
 mobile and block characters in the terminal. Auto-open is on unless you switch it off
 there or, in a terminal, in `/config` (`tokentab.autoOpen`; the Desktop app has no `/config`, so the switch there is kept by TokenTab itself). "open in browser" (`o`) writes the status
 page (the flow, the cost chart, requests, call sources) and opens it; for 30 minutes

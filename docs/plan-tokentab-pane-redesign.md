@@ -137,10 +137,6 @@ light/dark-safe background key); the line under the hero bar adds the dollar lim
 (`of $25.00 · …`), which A leaves out; Tools lists at most 12 tools, the rest in the
 browser view.
 
-**Later (2026-10-27):** two tabs, Spend · Budget. Spend's rate breakdown folds under a
-"details" toggle (hotkey `d`), and the Tools tab moved there too, below the rate table;
-the `t` hotkey is gone.
-
 ## Still open
 
 - **The four state frames** (Figma, design). They block phase 3 only.
