@@ -866,7 +866,7 @@ def snapshot(store, sid, prices, led=None):
 
 
 def pane_report(store, sid, prices, budget, led=None):
-    """The pane's three tabs as data (`--report`), from the same report() as the live view
+    """The pane's Spend tab as data (`--report`), from the same report() as the live view
     and the status line, so the figures agree: spend (the session against its limit, the
     rate breakdown, today and this month over every session) and tools."""
     R = report(store, sid, prices, budget, True, led)

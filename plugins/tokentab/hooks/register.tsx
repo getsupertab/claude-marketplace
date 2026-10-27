@@ -9,11 +9,11 @@ import type { EngineInterface, PluginOptions, Register, RenderChildren, Telemetr
 //
 // The pane (phase 1, tabs and the flow 2026-10-16; the Figma redesign 2026-10-21).
 // `session.start` opens a pane beside the chat (the `autoOpen` option); `/tokentab:status`
-// (the status skill, answered by a hook) opens it asked. `ui.render` draws one of three
-// tabs: Spend, the session against its limit, its cost by rate, today and this month;
-// Budget, the auto-open switch and the budget limits; Tools, what each tool cost. Spend
-// and Tools draw `tokentab.py --report`, the same report() the terminal live view and
-// the status line print, so the figures cannot drift apart. While the pane is not placed
+// (the status skill, answered by a hook) opens it asked. `ui.render` draws one of two
+// tabs: Spend, the session against its limit, its cost by rate and what each tool cost,
+// today and this month; Budget, the auto-open switch and the budget limits. Spend draws
+// `tokentab.py --report`, the same report() the terminal live view and the status line
+// print, so the figures cannot drift apart. While the pane is not placed
 // (a narrow terminal) one status line carries the numbers instead. Redrawn a second after
 // a ledger write and on a 30 s clock, both by the clock; nothing polls the data folder.
 // Under `claude -p`, or with no surface, nothing visual happens and the ledger is
@@ -171,7 +171,7 @@ export function liveLines(text: string): string[] {
 
 // ---------- the report the tabs draw ----------
 
-/** `tokentab.py --report`: Spend and Tools as data, from the same report() as the live
+/** `tokentab.py --report`: Spend as data, from the same report() as the live
  *  view and the status line. `session` is null until the session's first ledger line. */
 export type Report = {
   sid: string
@@ -259,11 +259,10 @@ export function barCells(parts: { series: string; frac: number }[], cells: numbe
 
 // ---------- the tabs ----------
 
-export type View = 'spend' | 'budget' | 'tools'
+export type View = 'spend' | 'budget'
 export const TABS: { view: View; label: string; hotkey: string }[] = [
   { view: 'spend', label: 'Spend', hotkey: 's' },
   { view: 'budget', label: 'Budget', hotkey: 'b' },
-  { view: 'tools', label: 'Tools', hotkey: 't' },
 ]
 const TOOLS_SHOWN = 12
 
@@ -310,6 +309,7 @@ type Options = { budget?: Json; path: string; errors: Record<string, string>; er
 
 let opts: PluginOptions = {}           // the manifest's userConfig values, from register()
 let view: View = 'spend'
+let detailsOpen = false                 // Spend's rate breakdown and tools, folded until asked for
 let report: Report | undefined          // the last `--report`; a reload starts empty
 let error: string | undefined           // the last refresh's failure, drawn above the tab
 let options: Options | undefined        // the last budget.json read
@@ -411,8 +411,8 @@ async function readBudget($: EngineInterface): Promise<void> {
 }
 
 /** One redraw: the current tab's data when the pane is placed (and the status line
- *  cleared), else the status line alone. Spend and Tools share one `--report` run; the
- *  status page's data file, while that page is open, is written by one more. */
+ *  cleared), else the status line alone. Spend is one `--report` run; the status page's
+ *  data file, while that page is open, is written by one more. */
 async function refreshNow($: EngineInterface): Promise<void> {
   const id = await sid($)
   try {
@@ -602,7 +602,7 @@ export const register: Register = (on, pluginOptions) => {
     return r
   })
 
-  // Three tabs over one report (Spend, Tools) and budget.json (Budget), the same tree on
+  // Two tabs over one report (Spend) and budget.json (Budget), the same tree on
   // every surface: the terminal ignores `size`, `weight` and `mono` and is monospaced
   // anyway; the bars are an Svg where the surface draws one and block characters in the
   // terminal. Only a Button takes a press, so the tabs and "open in browser" are Buttons.
@@ -625,7 +625,7 @@ export const register: Register = (on, pluginOptions) => {
     )
     const body = view === 'budget' ? budgetTab($, e)
       : report === undefined ? <Text dimColor>loading...</Text>
-      : view === 'tools' ? toolsTab($, e, report) : spendTab($, e, report)
+      : spendTab($, e, report)
     return (
       <Box flexDirection="column" gap={1}>
         {tabs}
@@ -720,8 +720,9 @@ function bar($: EngineInterface, e: RenderEvent, parts: Part[], alt: string, hei
 
 /** A hairline between sections. */
 function rule($: EngineInterface, e: RenderEvent): RenderChildren {
-  const { Text } = $.ui.resolve(e)
-  return <Text dimColor wrap="truncate">{'─'.repeat(120)}</Text>
+  const { Box, Text } = $.ui.resolve(e)
+  // Clipped rather than truncated, which would end the line in an ellipsis
+  return <Box height={1} overflow="hidden"><Text dimColor wrap="wrap">{'─'.repeat(120)}</Text></Box>
 }
 
 /** A section's small capitals label, as the frames set them. */
@@ -747,10 +748,10 @@ function cell($: EngineInterface, e: RenderEvent, text: string, width: number, s
 }
 
 /** Spend, Figma's "A · Hero number": the session against its limit as one figure and a
- *  bar, the rate breakdown as a stacked bar and a table, then every session today and
- *  this month. */
+ *  bar, the rate breakdown and what each tool cost (folded under "details"), then every
+ *  session today and this month. */
 function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren {
-  const { Box, Text } = $.ui.resolve(e)
+  const { Box, Text, Button } = $.ui.resolve(e)
   const s = r.session
   const allSessions = (
     <Box key="all" flexDirection="column" gap="xs">
@@ -809,18 +810,27 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
       </Box>
       {rule($, e)}
       <Box key="details" flexDirection="column" gap="xs">
-        {label($, e, 'details')}
-        {heading($, e, 'SESSION', `${int(s.msgs)} msgs`)}
-        {bar($, e, rates.map(x => ({ series: series(x.key), frac: x.share })),
-          `this session by rate: ${rates.map(x => `${x.label} ${pct(x.share)}`).join(', ')}`)}
-        {row('head', <Text> </Text>, 'tokens', 'cost', '%', { dim: true })}
-        {rates.map(x => row(x.key,
-          <Text size="footnote" mono><Text color={SERIES[series(x.key)]![0]}>● </Text>{x.label}</Text>,
-          int(x.tokens), usd(x.cost, 4), pct(x.share)))}
-        {row('total', <Text size="footnote" mono bold>{'  total'}</Text>,
-          int(r.total?.tokens ?? 0), usd(r.total?.cost ?? s.cost, 4), '', { bold: true })}
-        {(r.unmatched ?? 0) > 0 && (
-          <Text size="footnote" dimColor>{int(r.unmatched ?? 0)} output tok have no transcript line. Any thinking is counted in output.</Text>
+        <Button key="details-toggle" label="details" hotkey="d" plain
+          onPress={() => { detailsOpen = !detailsOpen; $.ui.invalidate('ui.render') }}>
+          <Text size="footnote" dimColor>{`${detailsOpen ? '▾' : '▸'} DETAILS`}</Text>
+        </Button>
+        {detailsOpen && (
+          <Box key="details-body" flexDirection="column" gap="xs">
+            {heading($, e, 'SESSION', `${int(s.msgs)} msgs`)}
+            {bar($, e, rates.map(x => ({ series: series(x.key), frac: x.share })),
+              `this session by rate: ${rates.map(x => `${x.label} ${pct(x.share)}`).join(', ')}`)}
+            {row('head', <Text> </Text>, 'tokens', 'cost', '%', { dim: true })}
+            {rates.map(x => row(x.key,
+              <Text size="footnote" mono><Text color={SERIES[series(x.key)]![0]}>● </Text>{x.label}</Text>,
+              int(x.tokens), usd(x.cost, 4), pct(x.share)))}
+            {row('total', <Text size="footnote" mono bold>{'  total'}</Text>,
+              int(r.total?.tokens ?? 0), usd(r.total?.cost ?? s.cost, 4), '', { bold: true })}
+            {(r.unmatched ?? 0) > 0 && (
+              <Text size="footnote" dimColor>{int(r.unmatched ?? 0)} output tok have no transcript line. Any thinking is counted in output.</Text>
+            )}
+            {rule($, e)}
+            {toolsSection($, e, r)}
+          </Box>
         )}
         {!r.prices_verified && <Text size="footnote" color="warning">Prices unverified: the figures are estimates at the default rates.</Text>}
       </Box>
@@ -830,16 +840,16 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
   )
 }
 
-/** Tools, Figma's "TokenTab / Tools": per tool its calls and cost, a bar of what it
- *  drew (asking, its answer into context, re-reading that) against the costliest tool,
- *  and the three figures under it. */
-function toolsTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren {
+/** Spend's tools, Figma's "TokenTab / Tools": per tool its calls and cost, a bar of what
+ *  it drew (asking, its answer into context, re-reading that) against the costliest
+ *  tool, and the three figures under it. */
+function toolsSection($: EngineInterface, e: RenderEvent, r: Report): RenderChildren {
   const { Box, Text } = $.ui.resolve(e)
   const tools = r.tools
   const calls = tools.reduce((n, t) => n + t.calls, 0)
   const top = Math.max(...tools.map(t => t.cost), 1e-9)
   return (
-    <Box flexDirection="column" gap={1}>
+    <Box key="tools" flexDirection="column" gap={1}>
       <Box key="head" flexDirection="column" gap="xs">
         {heading($, e, 'TOOLS', `${tools.length} tools · ${calls} calls`)}
         <Text size="footnote" mono dimColor>cost = asking + answer into context + re-reading it (estimates)</Text>
