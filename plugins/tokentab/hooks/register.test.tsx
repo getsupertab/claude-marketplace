@@ -334,7 +334,7 @@ test('an interactive session opens the pane and draws the Spend tab', async ($, 
   // a remote surface: the same tree with the bars as Svg, the session's, the rates' and one per tool
   for (const surface of ['desktop', 'vscode', 'mobile'] as const) {
     const remote = await $.ui.render({ surface, component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
-    const svgs = elements(remote, 'Svg')
+    const svgs = elements(remote, 'Svg').filter(s => s.alt !== 'separator')
     expect(svgs.length).toBe(2 + REPORT.tools.length)
     expect(svgs[0]!.source).toBe(barSvg([{ series: 'error', frac: 1.8065 }], 8))
     expect(svgs[0]!.alt).toBe('181% of the session limit')
@@ -371,7 +371,7 @@ test('Spend without a limit has no bar and no badge; before the first call it sa
   await $.ui.render({ surface: 'desktop', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   await $.ui.press(press('details-toggle', 'desktop'))
   const tree = await $.ui.render({ surface: 'desktop', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
-  expect(elements(tree, 'Svg').map(s => s.alt)[0]).toMatch(/^this session by rate/)
+  expect(elements(tree, 'Svg').filter(s => s.alt !== 'separator').map(s => s.alt)[0]).toMatch(/^this session by rate/)
   expect(texts(tree).some(x => x.text.startsWith('Over') || x.text.endsWith('used'))).toBe(false)
   expect(texts(tree).some(x => x.text === '532,533 tokens · no session limit set')).toBe(true)
 
@@ -404,7 +404,7 @@ test("Spend's details: per tool its calls, cost, a bar against the costliest and
     expect(t.some(x => x.text === s)).toBe(true)
   }
   // one bar per tool after the session's and the rates', the costliest filling its track
-  const svgs = elements(tree, 'Svg').slice(2)
+  const svgs = elements(tree, 'Svg').filter(s => s.alt !== 'separator').slice(2)
   expect(svgs.length).toBe(3)
   const r = REPORT.tools[0]!
   expect(svgs[0]!.source).toBe(barSvg([{ series: 'ask', frac: r.ask / r.cost }, { series: 'ctx', frac: r.ctx / r.cost }, { series: 'read', frac: r.read / r.cost }], 4))
