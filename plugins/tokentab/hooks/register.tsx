@@ -720,8 +720,9 @@ function bar($: EngineInterface, e: RenderEvent, parts: Part[], alt: string, hei
 
 /** A hairline between sections. */
 function rule($: EngineInterface, e: RenderEvent): RenderChildren {
-  const { Text } = $.ui.resolve(e)
-  return <Text dimColor wrap="truncate">{'─'.repeat(120)}</Text>
+  const { Box, Text } = $.ui.resolve(e)
+  // Clipped rather than truncated, which would end the line in an ellipsis
+  return <Box height={1} overflow="hidden"><Text dimColor wrap="wrap">{'─'.repeat(120)}</Text></Box>
 }
 
 /** A section's small capitals label, as the frames set them. */
