@@ -334,7 +334,7 @@ test('an interactive session opens the pane and draws the Spend tab', async ($, 
   // a remote surface: the same tree with the bars as Svg, the session's, the rates' and one per tool
   for (const surface of ['desktop', 'vscode', 'mobile'] as const) {
     const remote = await $.ui.render({ surface, component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
-    const svgs = elements(remote, 'Svg')
+    const svgs = elements(remote, 'Svg').filter(s => s.alt !== 'separator')
     expect(svgs.length).toBe(2 + REPORT.tools.length)
     expect(svgs[0]!.source).toBe(barSvg([{ series: 'error', frac: 1.8065 }], 8))
     expect(svgs[0]!.alt).toBe('181% of the session limit')
@@ -371,7 +371,7 @@ test('Spend without a limit has no bar and no badge; before the first call it sa
   await $.ui.render({ surface: 'desktop', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   await $.ui.press(press('details-toggle', 'desktop'))
   const tree = await $.ui.render({ surface: 'desktop', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
-  expect(elements(tree, 'Svg').map(s => s.alt)[0]).toMatch(/^this session by rate/)
+  expect(elements(tree, 'Svg').filter(s => s.alt !== 'separator').map(s => s.alt)[0]).toMatch(/^this session by rate/)
   expect(texts(tree).some(x => x.text.startsWith('Over') || x.text.endsWith('used'))).toBe(false)
   expect(texts(tree).some(x => x.text === '532,533 tokens · no session limit set')).toBe(true)
 
@@ -404,7 +404,7 @@ test("Spend's details: per tool its calls, cost, a bar against the costliest and
     expect(t.some(x => x.text === s)).toBe(true)
   }
   // one bar per tool after the session's and the rates', the costliest filling its track
-  const svgs = elements(tree, 'Svg').slice(2)
+  const svgs = elements(tree, 'Svg').filter(s => s.alt !== 'separator').slice(2)
   expect(svgs.length).toBe(3)
   const r = REPORT.tools[0]!
   expect(svgs[0]!.source).toBe(barSvg([{ series: 'ask', frac: r.ask / r.cost }, { series: 'ctx', frac: r.ctx / r.cost }, { series: 'read', frac: r.read / r.cost }], 4))
@@ -604,8 +604,8 @@ test('the Budget tab: auto-open through the config menu, the limits through the 
   await $.ui.press(press('tab-budget'))
   const tree = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   const t = texts(tree)
-  expect(t.some(x => x.text === 'open at session start')).toBe(true)
-  expect(t.filter(x => x.props.bold).map(x => x.text)).toEqual(['pane', 'budgets', 'this session', 'today', 'at the limit'])
+  expect(t.some(x => x.text === 'Open at session start')).toBe(true)
+  expect(t.filter(x => /^[A-Z][A-Z ]+$/.test(x.text) && x.props.dimColor).map(x => x.text)).toEqual(['PANE', 'LIMITS', 'AT THE LIMIT'])
   expect(elements(tree, 'Button').find(b => b.key === 'auto-open')?.label).toBe('on')
   // the fields hold budget.json's values, "off" for null, grouped tokens
   const inputs = elements(tree, 'Input')
@@ -614,6 +614,7 @@ test('the Budget tab: auto-open through the config menu, the limits through the 
   expect(inputs.find(i => i.key === 'b-session_limit_usd')?.value).toBe('off')
   expect(elements(tree, 'Button').find(b => b.key === 'b-budgets_on')?.label).toBe('off')
   expect(elements(tree, 'Button').find(b => b.key === 'b-hard_stop')?.label).toBe('off')
+  expect(t.some(x => x.text.startsWith('switched off'))).toBe(true)
 
   // the switch is the manifest's userConfig field, written as the menu would
   ui.store.set('autoOpen', true)
