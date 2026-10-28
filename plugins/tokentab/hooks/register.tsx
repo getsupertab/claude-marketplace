@@ -187,6 +187,7 @@ export type Report = {
   rates?: { label: string; key: string; tokens: number; cost: number; share: number }[]
   total?: { tokens: number; cost: number }
   unmatched?: number
+  models?: { name: string; msgs: number; cost: number; share: number }[]
   tools: { name: string; calls: number; cost: number; ask: number; ctx: number; read: number; ctx_tokens: number }[]
 }
 
@@ -221,6 +222,12 @@ export const SERIES: Record<string, [string, string]> = {
   warning: ['#c18f00', '#e5c07b'],
   error: ['#c0392b', '#ff6b6b'],
   track: ['#ecebe6', '#3a3a3a'],
+  // Spend's models, costliest first; any past the fifth share the last
+  model_1: ['#c26b4a', '#e08a68'],
+  model_2: ['#4f86c6', '#6fa3e0'],
+  model_3: ['#5ba899', '#6cc2b1'],
+  model_4: ['#c9a227', '#e5c04a'],
+  model_5: ['#9a99a6', '#a9a8b4'],
 }
 const BAR_STYLE = Object.entries(SERIES).map(([k, [light]]) => `.${k}{fill:${light}}`).join('')
   + '@media(prefers-color-scheme:dark){' + Object.entries(SERIES).map(([k, [, dark]]) => `.${k}{fill:${dark}}`).join('') + '}'
@@ -748,7 +755,7 @@ function cell($: EngineInterface, e: RenderEvent, text: string, width: number, s
 }
 
 /** Spend, Figma's "A · Hero number": the session against its limit as one figure and a
- *  bar, the rate breakdown and what each tool cost (folded under "details"), then every
+ *  bar, the rate breakdown, what each tool and each model cost (folded under "details"), then every
  *  session today and this month. */
 function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren {
   const { Box, Text, Button } = $.ui.resolve(e)
@@ -788,6 +795,10 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
   ].filter(x => x !== '').join(' · ')
   const rates = r.rates ?? []
   const series = (key: string) => (SERIES[key] ? key : 'input')
+  const models = r.models ?? []
+  const modelSeries = (rank: number) => `model_${Math.min(rank + 1, 5)}`
+  const toolCalls = r.tools.reduce((n, t) => n + t.calls, 0)
+  const detailsSummary = `${int(s.msgs)} msgs · ${r.tools.length} tools · ${toolCalls} calls · ${models.length} ${models.length === 1 ? 'model' : 'models'}`
   const COLS = { tokens: 11, cost: 10, share: 5 }
   const row = (key: string, name: RenderChildren, tokens: string, cost: string, share: string, style: { bold?: boolean; dim?: boolean } = {}) => (
     <Box key={`rate-${key}`} alignItems="center">
@@ -809,26 +820,54 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
         <Text size="footnote" dimColor>{under}</Text>
       </Box>
       <Box key="details" flexDirection="column" gap="xs">
-        <Button key="details-toggle" label="details" hotkey="d" plain
-          onPress={() => { detailsOpen = !detailsOpen; $.ui.invalidate('ui.render') }}>
-          <Text size="footnote" dimColor>{`${detailsOpen ? '▾' : '▸'} DETAILS`}</Text>
-        </Button>
+        {/* Desktop draws the Button's label and drops its children, so the summary sits beside it */}
+        <Box alignItems="center" gap={2}>
+          <Button key="details-toggle" label="DETAILS" hotkey="d" plain
+            onPress={() => { detailsOpen = !detailsOpen; $.ui.invalidate('ui.render') }}>
+            <Text size="footnote" dimColor>{`${detailsOpen ? '▾' : '▸'} DETAILS`}</Text>
+          </Button>
+          {!detailsOpen && (
+            <Box flexGrow={1} flexShrink={1}>
+              <Text size="footnote" mono dimColor wrap="truncate">{detailsSummary}</Text>
+            </Box>
+          )}
+        </Box>
         {detailsOpen && (
-          <Box key="details-body" flexDirection="column" gap="xs">
-            {heading($, e, 'SESSION', `${int(s.msgs)} msgs`)}
-            {bar($, e, rates.map(x => ({ series: series(x.key), frac: x.share })),
-              `this session by rate: ${rates.map(x => `${x.label} ${pct(x.share)}`).join(', ')}`)}
-            {row('head', <Text> </Text>, 'tokens', 'cost', '%', { dim: true })}
-            {rates.map(x => row(x.key,
-              <Text size="footnote" mono><Text color={SERIES[series(x.key)]![0]}>● </Text>{x.label}</Text>,
-              int(x.tokens), usd(x.cost, 4), pct(x.share)))}
-            {row('total', <Text size="footnote" mono bold>{'  total'}</Text>,
-              int(r.total?.tokens ?? 0), usd(r.total?.cost ?? s.cost, 4), '', { bold: true })}
-            {(r.unmatched ?? 0) > 0 && (
-              <Text size="footnote" dimColor>{int(r.unmatched ?? 0)} output tok have no transcript line. Any thinking is counted in output.</Text>
-            )}
+          <Box key="details-body" flexDirection="column" gap="lg">
+            <Box key="session" flexDirection="column" gap="xs">
+              {heading($, e, 'SESSION', `${int(s.msgs)} msgs`)}
+              {bar($, e, rates.map(x => ({ series: series(x.key), frac: x.share })),
+                `this session by rate: ${rates.map(x => `${x.label} ${pct(x.share)}`).join(', ')}`)}
+              {row('head', <Text> </Text>, 'tokens', 'cost', '%', { dim: true })}
+              {rates.map(x => row(x.key,
+                <Text size="footnote" mono><Text color={SERIES[series(x.key)]![0]}>● </Text>{x.label}</Text>,
+                int(x.tokens), usd(x.cost, 4), pct(x.share)))}
+              {row('total', <Text size="footnote" mono bold>{'  total'}</Text>,
+                int(r.total?.tokens ?? 0), usd(r.total?.cost ?? s.cost, 4), '', { bold: true })}
+              {(r.unmatched ?? 0) > 0 && (
+                <Text size="footnote" dimColor>{int(r.unmatched ?? 0)} output tok have no transcript line. Any thinking is counted in output.</Text>
+              )}
+            </Box>
             {rule($, e)}
             {toolsSection($, e, r)}
+            {models.length > 0 && rule($, e, 'models-rule')}
+            {models.length > 0 && (
+              <Box key="models" flexDirection="column" gap="xs">
+                {heading($, e, 'MODELS', `${models.length} used`)}
+                {bar($, e, models.map((model, rank) => ({ series: modelSeries(rank), frac: model.share })),
+                  `this session by model: ${models.map(model => `${model.name} ${pct(model.share)}`).join(', ')}`)}
+                {models.map((model, rank) => (
+                  <Box key={`model-${model.name}`} alignItems="center">
+                    <Box flexGrow={1} flexShrink={1}>
+                      <Text size="footnote" mono wrap="truncate"><Text color={SERIES[modelSeries(rank)]![0]}>● </Text>{model.name.replace(/^claude-/, '')}</Text>
+                    </Box>
+                    {cell($, e, `${int(model.msgs)} msgs`, COLS.tokens, { dim: true })}
+                    {cell($, e, usd(model.cost, 4), COLS.cost)}
+                    {cell($, e, pct(model.share), COLS.share, { dim: true })}
+                  </Box>
+                ))}
+              </Box>
+            )}
           </Box>
         )}
         {!r.prices_verified && <Text size="footnote" color="warning">Prices unverified: the figures are estimates at the default rates.</Text>}
