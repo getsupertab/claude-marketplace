@@ -887,28 +887,24 @@ function toolsSection($: EngineInterface, e: RenderEvent, r: Report): RenderChil
  *  (the manifest's `userConfig` field, as in /config) first, then the budget limits
  *  over budget.json, a label on the left and its control on the right: a limit as an
  *  Input with "save", a switch as an on/off Button. Mobile has no Input, so it shows
- *  the values and says where to edit them. */
+ *  the values. */
 function budgetTab($: EngineInterface, e: RenderEvent): RenderChildren {
   const { Box, Text, Button } = $.ui.resolve(e)
   const o = options
   const mobile = e.surface === 'mobile'
-  // One column for every control, so the fields share a width and the switches line up with them;
-  // the unit slot is kept empty where there is none so the columns stay aligned
-  const column = (ctl: RenderChildren, stretch = false, unit?: string) => (
-    <Box gap={1} flexShrink={0} alignItems="center">
-      <Box width={16} flexShrink={0} flexDirection="column" alignItems={stretch ? 'stretch' : 'flex-start'}>{ctl}</Box>
-      <Box width={3} flexShrink={0}>{unit !== undefined && <Text size="footnote" dimColor>{unit}</Text>}</Box>
-    </Box>
+  // One column for every control, so the fields share a width and the switches line up with them
+  const column = (ctl: RenderChildren, stretch = false) => (
+    <Box width={16} flexShrink={0} flexDirection="column" alignItems={stretch ? 'stretch' : 'flex-start'}>{ctl}</Box>
   )
   const toggle = (key: string, on: boolean, onPress: () => void): RenderChildren => mobile
     ? <Text size="footnote" mono weight="semibold">{on ? 'on' : 'off'}</Text>
     : <Button key={key} label={on ? 'on' : 'off'} variant={on ? 'primary' : 'secondary'} onPress={onPress} />
   const control = (s: Setting): RenderChildren => {
     const v = at(o?.budget, s.key)
-    if (s.kind === 'switch') return column(toggle(`b-${s.key}`, v === true, () => { void setBudget($, s.key, v === true ? 'off' : 'on') }), false, s.unit)
-    if (mobile) return column(<Text size="footnote" mono tabular weight="semibold">{shown(v)}</Text>, false, s.unit)
+    if (s.kind === 'switch') return column(toggle(`b-${s.key}`, v === true, () => { void setBudget($, s.key, v === true ? 'off' : 'on') }))
+    if (mobile) return column(<Text size="footnote" mono tabular weight="semibold">{shown(v)}</Text>)
     const { Input } = $.ui.resolve(e)
-    return column(<Input key={`b-${s.key}`} value={shown(v)} placeholder="off" submitLabel="save" onSubmit={t => { void setBudget($, s.key, t) }} />, true, s.unit)
+    return column(<Input key={`b-${s.key}`} value={shown(v)} placeholder="off" submitLabel="save" onSubmit={t => { void setBudget($, s.key, t) }} />, true)
   }
   const row = (key: string, name: string, ctl: RenderChildren, error?: string) => (
     <Box key={`row-${key}`} flexDirection="column">
@@ -928,32 +924,20 @@ function budgetTab($: EngineInterface, e: RenderEvent): RenderChildren {
       {rows}
     </Box>
   )
-  const checked = at(o?.budget, 'budgets_on') === true
   return (
     <Box flexDirection="column" gap={1}>
       {section('options', undefined, [
         row('auto-open', 'Open pane at session start', column(toggle('auto-open', autoOpen(), () => { void setAutoOpen($, !autoOpen()) }))),
-        <Text size="footnote" key="auto-open-note" dimColor>in a terminal also in /config as {$.plugin.name}.autoOpen</Text>,
       ])}
       {o?.error !== undefined && <Text size="footnote" color="error">{o.error}</Text>}
       {SECTIONS.flatMap(sec => [
         rule($, e, `rule-${sec.title}`),
         section(sec.title, sec.toggle && control(sec.toggle), [
-          ...sec.rows.map(s => row(s.key, s.label, control(s), o?.errors[s.key])),
-          sec.toggle !== undefined && !checked
-            && <Text size="footnote" key="toggle-note" dimColor>switched off: the limits are kept, none is checked</Text>,
+          ...sec.rows.map(s => row(s.key, s.unit === undefined ? s.label : `${s.label} (${s.unit})`, control(s), o?.errors[s.key])),
           sec.toggle !== undefined && o?.errors[sec.toggle.key] !== undefined
             && <Text size="footnote" key="toggle-error" color="error">{o.errors[sec.toggle.key]}</Text>,
         ]),
       ])}
-      {rule($, e)}
-      <Box flexDirection="column" gap="xs">
-        <Text size="footnote" dimColor>
-          {mobile ? 'edit the limits from a desktop or the terminal, or ask: /tokentab:budget daily 30'
-            : '"off" switches a limit off; Enter or save writes it, from the next prompt on.'}
-        </Text>
-        <Text size="footnote" mono dimColor wrap="truncate">{o?.path ?? 'budget.json'}</Text>
-      </Box>
     </Box>
   )
 }
