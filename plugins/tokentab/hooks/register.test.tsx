@@ -604,8 +604,10 @@ test('the Budget tab: auto-open through the config menu, the limits through the 
   await $.ui.press(press('tab-budget'))
   const tree = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   const t = texts(tree)
-  expect(t.some(x => x.text === 'Open at session start')).toBe(true)
-  expect(t.filter(x => /^[A-Z][A-Z ]+$/.test(x.text) && x.props.dimColor).map(x => x.text)).toEqual(['PANE', 'LIMITS', 'AT THE LIMIT'])
+  expect(t.some(x => x.text === 'Open pane at session start')).toBe(true)
+  expect(t.filter(x => /^[A-Z][A-Z ]+$/.test(x.text) && x.props.dimColor).map(x => x.text)).toEqual(['OPTIONS', 'LIMITS'])
+  // the units are in the names
+  expect(t.filter(x => x.text.endsWith(')')).map(x => x.text)).toEqual(['This session (USD)', 'Today (USD)', 'Warn at (%)'])
   expect(elements(tree, 'Button').find(b => b.key === 'auto-open')?.label).toBe('on')
   // the fields hold budget.json's values, "off" for null, grouped tokens
   const inputs = elements(tree, 'Input')
@@ -614,7 +616,6 @@ test('the Budget tab: auto-open through the config menu, the limits through the 
   expect(inputs.find(i => i.key === 'b-session_limit_usd')?.value).toBe('off')
   expect(elements(tree, 'Button').find(b => b.key === 'b-budgets_on')?.label).toBe('off')
   expect(elements(tree, 'Button').find(b => b.key === 'b-hard_stop')?.label).toBe('off')
-  expect(t.some(x => x.text.startsWith('switched off'))).toBe(true)
 
   // the switch is the manifest's userConfig field, written as the menu would
   ui.store.set('autoOpen', true)
@@ -631,11 +632,10 @@ test('the Budget tab: auto-open through the config menu, the limits through the 
   await $.ui.press(press('b-hard_stop'))
   expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'hard_stop', 'on'])
 
-  // mobile has no Input: the values are shown, with where to edit them
+  // mobile has no Input: the values are shown
   const mobile = await $.ui.render({ surface: 'mobile', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   expect(elements(mobile, 'Input')).toEqual([])
   expect(texts(mobile).some(x => x.text === '40')).toBe(true)
-  expect(texts(mobile).some(x => x.text.includes('/tokentab:budget'))).toBe(true)
 })
 
 test('where /config has no row for it (Desktop), the auto-open switch is kept in the store until /config changes it', async ($, on) => {
