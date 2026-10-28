@@ -275,8 +275,6 @@ export const SECTIONS: { title: string; toggle?: Setting; rows: Setting[] }[] = 
   { title: 'limits', toggle: { key: 'budgets_on', label: 'check the limits', kind: 'switch' }, rows: [
     { key: 'session_limit_usd', label: 'This session', unit: 'USD', kind: 'limit' },
     { key: 'daily_limit_usd', label: 'Today', unit: 'USD', kind: 'limit' },
-  ] },
-  { title: 'at the limit', rows: [
     { key: 'warn_at_percent', label: 'Warn at', unit: '%', kind: 'limit' },
     { key: 'hard_stop', label: 'Hard stop at 100%', kind: 'switch' },
   ] },
@@ -810,7 +808,6 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
         {s.frac !== null && tone !== undefined && bar($, e, [{ series: tone, frac: s.frac }], `${pct(s.frac)} of the session limit`, 8)}
         <Text size="footnote" dimColor>{under}</Text>
       </Box>
-      {rule($, e)}
       <Box key="details" flexDirection="column" gap="xs">
         <Button key="details-toggle" label="details" hotkey="d" plain
           onPress={() => { detailsOpen = !detailsOpen; $.ui.invalidate('ui.render') }}>
@@ -930,8 +927,8 @@ function budgetTab($: EngineInterface, e: RenderEvent): RenderChildren {
   const checked = at(o?.budget, 'budgets_on') === true
   return (
     <Box flexDirection="column" gap={1}>
-      {section('pane', undefined, [
-        row('auto-open', 'Open at session start', undefined, column(toggle('auto-open', autoOpen(), () => { void setAutoOpen($, !autoOpen()) }))),
+      {section('options', undefined, [
+        row('auto-open', 'Open pane at session start', undefined, column(toggle('auto-open', autoOpen(), () => { void setAutoOpen($, !autoOpen()) }))),
         <Text size="footnote" key="auto-open-note" dimColor>in a terminal also in /config as {$.plugin.name}.autoOpen</Text>,
       ])}
       {o?.error !== undefined && <Text size="footnote" color="error">{o.error}</Text>}
