@@ -605,7 +605,10 @@ test('the Budget tab: auto-open through the config menu, the limits through the 
   const tree = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   const t = texts(tree)
   expect(t.some(x => x.text === 'Open pane at session start')).toBe(true)
-  expect(t.filter(x => /^[A-Z][A-Z ]+$/.test(x.text) && x.props.dimColor).map(x => x.text)).toEqual(['OPTIONS', 'LIMITS'])
+  expect(t.filter(x => /^[A-Z][A-Z ]+$/.test(x.text) && x.props.dimColor && x.text !== 'USD').map(x => x.text)).toEqual(['OPTIONS', 'LIMITS'])
+  // the units sit behind the fields, not after the names
+  expect(t.filter(x => x.text === 'USD' || x.text === '%').map(x => x.text)).toEqual(['USD', 'USD', '%'])
+  expect(t.some(x => x.text === 'This session')).toBe(true)
   expect(elements(tree, 'Button').find(b => b.key === 'auto-open')?.label).toBe('on')
   // the fields hold budget.json's values, "off" for null, grouped tokens
   const inputs = elements(tree, 'Input')

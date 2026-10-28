@@ -892,24 +892,28 @@ function budgetTab($: EngineInterface, e: RenderEvent): RenderChildren {
   const { Box, Text, Button } = $.ui.resolve(e)
   const o = options
   const mobile = e.surface === 'mobile'
-  // One column for every control, so the fields share a width and the switches line up with them
-  const column = (ctl: RenderChildren, stretch = false) => (
-    <Box width={16} flexShrink={0} flexDirection="column" alignItems={stretch ? 'stretch' : 'flex-start'}>{ctl}</Box>
+  // One column for every control, so the fields share a width and the switches line up with them;
+  // the unit slot is kept empty where there is none so the columns stay aligned
+  const column = (ctl: RenderChildren, stretch = false, unit?: string) => (
+    <Box gap={1} flexShrink={0} alignItems="center">
+      <Box width={16} flexShrink={0} flexDirection="column" alignItems={stretch ? 'stretch' : 'flex-start'}>{ctl}</Box>
+      <Box width={3} flexShrink={0}>{unit !== undefined && <Text size="footnote" dimColor>{unit}</Text>}</Box>
+    </Box>
   )
   const toggle = (key: string, on: boolean, onPress: () => void): RenderChildren => mobile
     ? <Text size="footnote" mono weight="semibold">{on ? 'on' : 'off'}</Text>
     : <Button key={key} label={on ? 'on' : 'off'} variant={on ? 'primary' : 'secondary'} onPress={onPress} />
   const control = (s: Setting): RenderChildren => {
     const v = at(o?.budget, s.key)
-    if (s.kind === 'switch') return column(toggle(`b-${s.key}`, v === true, () => { void setBudget($, s.key, v === true ? 'off' : 'on') }))
-    if (mobile) return column(<Text size="footnote" mono tabular weight="semibold">{shown(v)}</Text>)
+    if (s.kind === 'switch') return column(toggle(`b-${s.key}`, v === true, () => { void setBudget($, s.key, v === true ? 'off' : 'on') }), false, s.unit)
+    if (mobile) return column(<Text size="footnote" mono tabular weight="semibold">{shown(v)}</Text>, false, s.unit)
     const { Input } = $.ui.resolve(e)
-    return column(<Input key={`b-${s.key}`} value={shown(v)} placeholder="off" submitLabel="save" onSubmit={t => { void setBudget($, s.key, t) }} />, true)
+    return column(<Input key={`b-${s.key}`} value={shown(v)} placeholder="off" submitLabel="save" onSubmit={t => { void setBudget($, s.key, t) }} />, true, s.unit)
   }
-  const row = (key: string, name: string, unit: string | undefined, ctl: RenderChildren, error?: string) => (
+  const row = (key: string, name: string, ctl: RenderChildren, error?: string) => (
     <Box key={`row-${key}`} flexDirection="column">
       <Box gap={1} alignItems="center" justifyContent="space-between">
-        <Text size="footnote">{name}{unit !== undefined && <Text dimColor>{`  ${unit}`}</Text>}</Text>
+        <Text size="footnote">{name}</Text>
         {ctl}
       </Box>
       {error !== undefined && <Text size="footnote" color="error">{error}</Text>}
@@ -928,14 +932,14 @@ function budgetTab($: EngineInterface, e: RenderEvent): RenderChildren {
   return (
     <Box flexDirection="column" gap={1}>
       {section('options', undefined, [
-        row('auto-open', 'Open pane at session start', undefined, column(toggle('auto-open', autoOpen(), () => { void setAutoOpen($, !autoOpen()) }))),
+        row('auto-open', 'Open pane at session start', column(toggle('auto-open', autoOpen(), () => { void setAutoOpen($, !autoOpen()) }))),
         <Text size="footnote" key="auto-open-note" dimColor>in a terminal also in /config as {$.plugin.name}.autoOpen</Text>,
       ])}
       {o?.error !== undefined && <Text size="footnote" color="error">{o.error}</Text>}
       {SECTIONS.flatMap(sec => [
         rule($, e, `rule-${sec.title}`),
         section(sec.title, sec.toggle && control(sec.toggle), [
-          ...sec.rows.map(s => row(s.key, s.label, s.unit, control(s), o?.errors[s.key])),
+          ...sec.rows.map(s => row(s.key, s.label, control(s), o?.errors[s.key])),
           sec.toggle !== undefined && !checked
             && <Text size="footnote" key="toggle-note" dimColor>switched off: the limits are kept, none is checked</Text>,
           sec.toggle !== undefined && o?.errors[sec.toggle.key] !== undefined
