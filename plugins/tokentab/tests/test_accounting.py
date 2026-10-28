@@ -208,6 +208,8 @@ def pane_check(store, prices):
         errs.append(f"pane report: session against its limit is wrong: {s}")
     if abs(sum(r["cost"] for r in rep["rates"]) - rep["total"]["cost"]) > 1e-6:
         errs.append("pane report: rates do not sum to the total")
+    if len(rep["models"]) < 2 or abs(sum(m["cost"] for m in rep["models"]) - rep["total"]["cost"]) > 1e-6:
+        errs.append("pane report: the models do not sum to the total")
     if not rep["tools"] or any(abs(t["ask"] + t["ctx"] + t["read"] - t["cost"]) > 1e-6 for t in rep["tools"]):
         errs.append("pane report: a tool's ask + ctx + re-read is not its cost")
     if kt.pane_report(store, "fx", prices, {})["session"]["frac"] is not None:

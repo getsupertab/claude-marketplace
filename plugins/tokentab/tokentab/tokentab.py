@@ -868,7 +868,7 @@ def snapshot(store, sid, prices, led=None):
 def pane_report(store, sid, prices, budget, led=None):
     """The pane's Spend tab as data (`--report`), from the same report() as the live view
     and the status line, so the figures agree: spend (the session against its limit, the
-    rate breakdown, today and this month over every session) and tools."""
+    rate breakdown, the models, today and this month over every session) and tools."""
     R = report(store, sid, prices, budget, True, led)
     b, src = R["bucket"], source(store, led, sid)[1]
     out = {"sid": sid, "session": None, "prices_verified": R["prices_verified"],
@@ -887,6 +887,9 @@ def pane_report(store, sid, prices, budget, led=None):
                     for r in R["rates"]]
     out["total"] = {"tokens": R["total"]["tokens"], "cost": R["total"]["cost"]}
     out["unmatched"] = R["unmatched"]
+    spent = {m: sum(d.values()) for m, d in b.cost_bm.items()}
+    out["models"] = [{"name": m, "msgs": b.models.get(m, 0), "cost": c, "share": (c / b.cost) if b.cost else 0}
+                     for m, c in sorted(spent.items(), key=lambda kv: -kv[1]) if c > 0 or b.models.get(m)]
     out["tools"] = [{"name": nm.split("__")[-1], "calls": e["calls"], "cost": e["cost"],
                      "ask": e["ask"] + e["think"], "ctx": e["result"], "read": e["read"], "ctx_tokens": e["rtokens"]}
                     for nm, e in R["tools"]]
