@@ -189,6 +189,8 @@ export type Report = {
   unmatched?: number
   models?: { name: string; msgs: number; cost: number; share: number }[]
   tools: { name: string; calls: number; cost: number; ask: number; ctx: number; read: number; ctx_tokens: number }[]
+  /** This month's spend per session, costliest first. */
+  sessions?: { sid: string; name: string; cost: number; share: number }[]
 }
 
 const grouped = (n: number, digits: number) =>
@@ -311,6 +313,7 @@ type Options = { budget?: Json; path: string; errors: Record<string, string>; er
 let opts: PluginOptions = {}           // the manifest's userConfig values, from register()
 let view: View = 'spend'
 let detailsOpen = false                 // Spend's rate breakdown and tools, folded until asked for
+let sessionsOpen = false                // Spend's table of this month's sessions, likewise
 let report: Report | undefined          // the last `--report`; a reload starts empty
 let error: string | undefined           // the last refresh's failure, drawn above the tab
 let options: Options | undefined        // the last budget.json read
@@ -756,10 +759,11 @@ function cell($: EngineInterface, e: RenderEvent, text: string, width: number, s
 
 /** Spend, Figma's "A · Hero number": the session against its limit as one figure and a
  *  bar, the rate breakdown, what each tool and each model cost (folded under "details"), then every
- *  session today and this month. */
+ *  session today and this month, with this month's sessions as a table (folded too). */
 function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren {
   const { Box, Text, Button } = $.ui.resolve(e)
   const s = r.session
+  const sessions = r.sessions ?? []
   const allSessions = (
     <Box key="all" flexDirection="column" gap="xs">
       {label($, e, 'all sessions')}
@@ -771,6 +775,38 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
           </Box>
         ))}
       </Box>
+      {sessions.length > 0 && (
+        <Box key="all-toggle" alignItems="center" gap={2}>
+          <Button key="sessions-toggle" label="SESSIONS" hotkey="a" plain
+            onPress={() => { sessionsOpen = !sessionsOpen; $.ui.invalidate('ui.render') }}>
+            <Text size="footnote" dimColor>{`${sessionsOpen ? '▾' : '▸'} SESSIONS`}</Text>
+          </Button>
+          {!sessionsOpen && (
+            <Box flexGrow={1} flexShrink={1}>
+              <Text size="footnote" mono dimColor wrap="truncate">{`${sessions.length} this month`}</Text>
+            </Box>
+          )}
+        </Box>
+      )}
+      {sessionsOpen && sessions.length > 0 && (
+        <Box key="all-table" flexDirection="column">
+          <Box key="all-head" alignItems="center">
+            <Box flexGrow={1} flexShrink={1}><Text size="footnote" mono dimColor>Name</Text></Box>
+            {cell($, e, 'Cost', 10, { dim: true })}
+            {cell($, e, '% of costs', 11, { dim: true })}
+          </Box>
+          {sessions.map(session => (
+            <Box key={`all-${session.sid}`} alignItems="center">
+              {/* minWidth 0 lets the row shrink below the title, so Desktop truncates it instead of wrapping */}
+              <Box flexGrow={1} flexShrink={1} minWidth={0}>
+                <Text size="footnote" mono bold={session.sid === r.sid} wrap="truncate">{session.name}</Text>
+              </Box>
+              {cell($, e, usd(session.cost), 10, { bold: session.sid === r.sid })}
+              {cell($, e, pct(session.share), 11, { dim: true })}
+            </Box>
+          ))}
+        </Box>
+      )}
     </Box>
   )
   if (s === null) {

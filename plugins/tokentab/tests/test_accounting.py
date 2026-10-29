@@ -212,6 +212,10 @@ def pane_check(store, prices):
         errs.append("pane report: the models do not sum to the total")
     if not rep["tools"] or any(abs(t["ask"] + t["ctx"] + t["read"] - t["cost"]) > 1e-6 for t in rep["tools"]):
         errs.append("pane report: a tool's ask + ctx + re-read is not its cost")
+    if abs(sum(x["cost"] for x in rep["sessions"]) - rep["month"]) > 1e-6:
+        errs.append("pane report: this month's sessions do not sum to the month")
+    if rep["sessions"] and abs(sum(x["share"] for x in rep["sessions"]) - 1) > 1e-6:
+        errs.append("pane report: the sessions' shares do not sum to 100%")
     if kt.pane_report(store, "fx", prices, {})["session"]["frac"] is not None:
         errs.append("pane report: no limit should give no fraction")
     now = kt.datetime.now().timestamp()
