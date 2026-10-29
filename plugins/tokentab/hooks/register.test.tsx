@@ -107,7 +107,7 @@ const REPORT: Report = {
     { sid: 'f9e8d7c6-other', name: 'Ledger rewrite', cost: 24.767, share: 0.8727 },
     { sid: 'a0b1c2d3-session', name: 'Token type sidebar', cost: 3.613, share: 0.1273 },
   ],
-  session: { title: 'Token type sidebar', cost: 3.613, tokens: 532533, msgs: 47, limit_usd: 2, frac: 1.8065, warn_at: 70, hard_stop: false },
+  session: { title: 'Token type sidebar', cost: 3.613, tokens: 532533, msgs: 47, limits_on: true, limit_usd: 2, frac: 1.8065, warn_at: 70, hard_stop: false },
   rates: [
     { label: 'input', key: 'input', tokens: 5134, cost: 0.0205, share: 0.0057 },
     { label: 'cache write 1h', key: 'cache_write_1h', tokens: 226784, cost: 1.8143, share: 0.5022 },
@@ -386,6 +386,12 @@ test('Spend without a limit has no bar and no badge; before the first call it sa
   expect(elements(tree, 'Svg').filter(s => s.alt !== 'separator').map(s => s.alt)[0]).toMatch(/^this session by rate/)
   expect(texts(tree).some(x => x.text.startsWith('Over') || x.text.endsWith('used'))).toBe(false)
   expect(texts(tree).some(x => x.text === '532,533 tokens · no session limit set')).toBe(true)
+
+  report.value = { ...REPORT, session: { ...REPORT.session!, limits_on: false, limit_usd: null, frac: null } }
+  await $.telemetry.log(request({}))
+  await clock.advance(1000)
+  const off = await $.ui.render({ surface: 'desktop', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
+  expect(texts(off).some(x => x.text === '532,533 tokens · limits off')).toBe(true)
 
   report.value = { ...REPORT, session: null, tools: [] }
   await $.telemetry.log(request({}))

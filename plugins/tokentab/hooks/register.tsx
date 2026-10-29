@@ -181,7 +181,7 @@ export type Report = {
   overhead: number
   session: null | {
     title: string; cost: number; tokens: number; msgs: number
-    limit_usd: number | null; frac: number | null
+    limits_on: boolean; limit_usd: number | null; frac: number | null
     warn_at: number; hard_stop: boolean
   }
   rates?: { label: string; key: string; tokens: number; cost: number; share: number }[]
@@ -854,7 +854,7 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
   const under = [
     s.limit_usd !== null ? `of ${usd(s.limit_usd)}` : '',
     `${int(s.tokens)} tokens`,
-    s.frac !== null ? mode : 'no session limit set',
+    s.frac !== null ? mode : s.limits_on ? 'no session limit set' : 'limits off',
   ].filter(x => x !== '').join(' · ')
   const rates = r.rates ?? []
   const series = (key: string) => (SERIES[key] ? key : 'input')
