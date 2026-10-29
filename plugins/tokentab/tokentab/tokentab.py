@@ -887,11 +887,12 @@ def pane_report(store, sid, prices, budget, led=None):
            "sessions": month_sessions(store, src)}
     if not b:
         return out
-    ulim = budget.get("session_limit_usd")
+    on = budget.get("budgets_on") is True
+    ulim = budget.get("session_limit_usd") if on else None
     row = budget_row("session", b.cost, ulim)
     out["session"] = {
         "title": R["session"]["title"], "cost": b.cost, "tokens": b.wtok, "msgs": b.msgs,
-        "limit_usd": float(ulim) if ulim else None,
+        "limits_on": on, "limit_usd": float(ulim) if ulim else None,
         "frac": row["frac"] if row else None,
         "warn_at": budget.get("warn_at_percent", 70), "hard_stop": bool(budget.get("hard_stop")),
     }

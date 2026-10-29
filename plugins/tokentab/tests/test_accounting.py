@@ -201,7 +201,7 @@ def pane_check(store, prices):
     """`--report`, what the pane draws: JSON, the session against its limit, the rates
     summing to the total, tools with the three draws; this month counts only this month."""
     errs = []
-    budget = {"session_limit_usd": 0.0001, "warn_at_percent": 70}
+    budget = {"budgets_on": True, "session_limit_usd": 0.0001, "warn_at_percent": 70}
     rep = json.loads(json.dumps(kt.pane_report(store, "fx", prices, budget)))
     s = rep["session"]
     if not s or s["limit_usd"] != 0.0001 or not s["frac"] or s["frac"] < 1:
@@ -218,6 +218,8 @@ def pane_check(store, prices):
         errs.append("pane report: the sessions' shares do not sum to 100%")
     if kt.pane_report(store, "fx", prices, {})["session"]["frac"] is not None:
         errs.append("pane report: no limit should give no fraction")
+    if kt.pane_report(store, "fx", prices, {**budget, "budgets_on": False})["session"]["frac"] is not None:
+        errs.append("pane report: limits switched off should give no fraction")
     now = kt.datetime.now().timestamp()
     if abs(kt.month_total([(now, 1.5, 0), (now - 400 * 86400, 9.0, 0)]) - 1.5) > 1e-9:
         errs.append("month_total counts a day outside this month")
