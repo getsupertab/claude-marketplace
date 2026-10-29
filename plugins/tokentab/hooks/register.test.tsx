@@ -103,6 +103,10 @@ const STATUS = 'session $2.0228 · today $7.9406'
 // $2.00 limit (181%), warn only, and three tools.
 const REPORT: Report = {
   sid: 'a0b1c2d3-session', prices_verified: true, today: 5.94, month: 28.38, overhead: 0.0039,
+  sessions: [
+    { sid: 'f9e8d7c6-other', name: 'Ledger rewrite', cost: 24.767, share: 0.8727 },
+    { sid: 'a0b1c2d3-session', name: 'Token type sidebar', cost: 3.613, share: 0.1273 },
+  ],
   session: { title: 'Token type sidebar', cost: 3.613, tokens: 532533, msgs: 47, limit_usd: 2, frac: 1.8065, warn_at: 70, hard_stop: false },
   rates: [
     { label: 'input', key: 'input', tokens: 5134, cost: 0.0205, share: 0.0057 },
@@ -303,12 +307,16 @@ test('an interactive session opens the pane and draws the Spend tab', async ($, 
   // the tab row: Spend is the primary one, then Budget and the browser button; then the details toggle
   expect(elements(folded, 'Button').map(b => [b.key, b.variant, b.hotkey])).toEqual([
     ['tab-spend', 'primary', 's'], ['tab-budget', 'secondary', 'b'], ['open-browser', undefined, 'o'],
-    ['details-toggle', undefined, 'd'],
+    ['details-toggle', undefined, 'd'], ['sessions-toggle', undefined, 'a'],
   ])
   // the breakdown starts folded: the toggle shows, the rate table and the tools do not
   expect(texts(folded).some(x => x.text === '▸ DETAILS')).toBe(true)
   expect(texts(folded).some(x => x.text === '  total' || x.text === 'TOOLS')).toBe(false)
+  expect(texts(folded).some(x => x.text === '▸ SESSIONS')).toBe(true)
+  expect(texts(folded).some(x => x.text === '2 this month')).toBe(true)
+  expect(texts(folded).some(x => x.text === 'Ledger rewrite')).toBe(false)
   await $.ui.press(press('details-toggle'))
+  await $.ui.press(press('sessions-toggle'))
 
   const tree = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   const t = texts(tree)
@@ -322,23 +330,27 @@ test('an interactive session opens the pane and draws the Spend tab', async ($, 
   // the breakdown: a row per rate with its dot in the series colour, the total, the note;
   // then the tools' legend
   expect(t.filter(x => x.text === '● ').map(x => x.props.color)).toEqual(
-    ['input', 'cache_write_1h', 'cache_read', 'output', 'thinking', 'ask', 'ctx', 'read'].map(k => SERIES[k]![0]))
+    ['input', 'cache_write_1h', 'cache_read', 'output', 'thinking', 'ask', 'ctx', 'read', 'session_1', 'session_2'].map(k => SERIES[k]![0]))
   for (const s of ['cache write 1h', '226,784', '$1.8143', '50%', '  total', '5,561,099', '$3.6130']) expect(find(s)).toBeDefined()
   expect(t.some(x => x.text.startsWith('125 output tok have no transcript line'))).toBe(true)
   // every session, today and this month
   expect([find('Today'), find('$5.94'), find('This month'), find('$28.38')].every(x => x !== undefined)).toBe(true)
+  // this month's sessions as a table, this one in bold
+  for (const s of ['  Name', 'Cost', '% of costs', 'Ledger rewrite', '$24.77', '87%', '13%']) expect(find(s)).toBeDefined()
+  expect(t.some(x => x.text === 'Token type sidebar' && x.props.bold === true)).toBe(true)
   // the terminal has no Svg: the bars are block characters, the session's in the error tone
   expect(sources(tree, 'Svg')).toEqual([])
   expect(t.find(x => x.props.color === SERIES.error![0])?.text).toMatch(/^█+$/)
 
-  // a remote surface: the same tree with the bars as Svg, the session's, the rates' and one per tool
+  // a remote surface: the same tree with the bars as Svg, the session's, the rates', one per tool and the sessions'
   for (const surface of ['desktop', 'vscode', 'mobile'] as const) {
     const remote = await $.ui.render({ surface, component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
     const svgs = elements(remote, 'Svg').filter(s => s.alt !== 'separator')
-    expect(svgs.length).toBe(2 + REPORT.tools.length)
+    expect(svgs.length).toBe(3 + REPORT.tools.length)
     expect(svgs[0]!.source).toBe(barSvg([{ series: 'error', frac: 1.8065 }], 8))
     expect(svgs[0]!.alt).toBe('181% of the session limit')
     expect(svgs[1]!.alt).toBe('this session by rate: input 1%, cache write 1h 50%, cache read 29%, output text 13%, thinking 7%')
+    expect(svgs.at(-1)!.alt).toBe('this month by session: Ledger rewrite 87%, Token type sidebar 13%')
     expect(texts(remote).find(x => x.text === '$3.61')?.props.size).toBe('title')
   }
 

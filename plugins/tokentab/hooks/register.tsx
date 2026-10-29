@@ -189,6 +189,8 @@ export type Report = {
   unmatched?: number
   models?: { name: string; msgs: number; cost: number; share: number }[]
   tools: { name: string; calls: number; cost: number; ask: number; ctx: number; read: number; ctx_tokens: number }[]
+  /** This month's spend per session, costliest first. */
+  sessions?: { sid: string; name: string; cost: number; share: number }[]
 }
 
 const grouped = (n: number, digits: number) =>
@@ -228,6 +230,18 @@ export const SERIES: Record<string, [string, string]> = {
   model_3: ['#5ba899', '#6cc2b1'],
   model_4: ['#c9a227', '#e5c04a'],
   model_5: ['#9a99a6', '#a9a8b4'],
+  // Spend's sessions this month, costliest first; the rest share grey, and one bar segment
+  session_1: ['#c26b4a', '#e08a68'],
+  session_2: ['#4f86c6', '#6fa3e0'],
+  session_3: ['#5ba899', '#6cc2b1'],
+  session_4: ['#c9a227', '#e5c04a'],
+  session_5: ['#a874c9', '#c08fe0'],
+  session_6: ['#c75b8f', '#e07aaa'],
+  session_7: ['#6a9a4a', '#86b865'],
+  session_8: ['#6b6fc5', '#8d90e0'],
+  session_9: ['#e0973a', '#f0ab55'],
+  session_10: ['#3f9fbf', '#5cb8d8'],
+  session_other: ['#9a99a6', '#a9a8b4'],
 }
 const BAR_STYLE = Object.entries(SERIES).map(([k, [light]]) => `.${k}{fill:${light}}`).join('')
   + '@media(prefers-color-scheme:dark){' + Object.entries(SERIES).map(([k, [, dark]]) => `.${k}{fill:${dark}}`).join('') + '}'
@@ -311,6 +325,7 @@ type Options = { budget?: Json; path: string; errors: Record<string, string>; er
 let opts: PluginOptions = {}           // the manifest's userConfig values, from register()
 let view: View = 'spend'
 let detailsOpen = false                 // Spend's rate breakdown and tools, folded until asked for
+let sessionsOpen = false                // Spend's table of this month's sessions, likewise
 let report: Report | undefined          // the last `--report`; a reload starts empty
 let error: string | undefined           // the last refresh's failure, drawn above the tab
 let options: Options | undefined        // the last budget.json read
@@ -754,12 +769,21 @@ function cell($: EngineInterface, e: RenderEvent, text: string, width: number, s
   )
 }
 
+/** The colour of a share by its rank: four hues, then grey for the rest. */
+const shareSeries = (rank: number) => `model_${Math.min(rank + 1, 5)}`
+const SESSIONS_COLOURED = 10
+const sessionSeries = (rank: number) => (rank < SESSIONS_COLOURED ? `session_${rank + 1}` : 'session_other')
+
 /** Spend, Figma's "A · Hero number": the session against its limit as one figure and a
  *  bar, the rate breakdown, what each tool and each model cost (folded under "details"), then every
- *  session today and this month. */
+ *  session today and this month, with this month's sessions as a table (folded too). */
 function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren {
   const { Box, Text, Button } = $.ui.resolve(e)
   const s = r.session
+  const sessions = r.sessions ?? []
+  const othersShare = sessions.slice(SESSIONS_COLOURED).reduce((sum, session) => sum + session.share, 0)
+  const sessionParts = sessions.slice(0, SESSIONS_COLOURED).map((session, rank) => ({ series: sessionSeries(rank), frac: session.share }))
+    .concat(othersShare > 0 ? [{ series: 'session_other', frac: othersShare }] : [])
   const allSessions = (
     <Box key="all" flexDirection="column" gap="xs">
       {label($, e, 'all sessions')}
@@ -771,6 +795,45 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
           </Box>
         ))}
       </Box>
+      {sessions.length > 0 && (
+        <Box key="all-toggle" alignItems="center" gap={2}>
+          <Button key="sessions-toggle" label="SESSIONS" hotkey="a" plain
+            onPress={() => { sessionsOpen = !sessionsOpen; $.ui.invalidate('ui.render') }}>
+            <Text size="footnote" dimColor>{`${sessionsOpen ? '▾' : '▸'} SESSIONS`}</Text>
+          </Button>
+          {!sessionsOpen && (
+            <Box flexGrow={1} flexShrink={1}>
+              <Text size="footnote" mono dimColor wrap="truncate">{`${sessions.length} this month`}</Text>
+            </Box>
+          )}
+        </Box>
+      )}
+      {sessionsOpen && sessions.length > 0 && (
+        <Box key="all-table" flexDirection="column" gap="xs">
+          {bar($, e, sessionParts, `this month by session: ${sessions.slice(0, 5).map(session => `${session.name} ${pct(session.share)}`).join(', ')}`
+            + (othersShare > 0 ? `, others ${pct(othersShare)}` : ''))}
+          <Box flexDirection="column">
+            <Box key="all-head" alignItems="center">
+              <Box flexGrow={1} flexShrink={1}><Text size="footnote" mono dimColor>{'  Name'}</Text></Box>
+              {cell($, e, 'Cost', 10, { dim: true })}
+              {cell($, e, '% of costs', 11, { dim: true })}
+            </Box>
+            {rule($, e, 'all-head-rule')}
+            {sessions.map((session, rank) => (
+              <Box key={`all-${session.sid}`} alignItems="center">
+                {/* minWidth 0 lets the row shrink below the title, so Desktop truncates it instead of wrapping */}
+                <Box flexGrow={1} flexShrink={1} minWidth={0}>
+                  <Text size="footnote" mono bold={session.sid === r.sid} wrap="truncate">
+                    <Text color={SERIES[sessionSeries(rank)]![0]}>● </Text>{session.name}
+                  </Text>
+                </Box>
+                {cell($, e, usd(session.cost), 10, { bold: session.sid === r.sid })}
+                {cell($, e, pct(session.share), 11, { dim: true })}
+              </Box>
+            ))}
+          </Box>
+        </Box>
+      )}
     </Box>
   )
   if (s === null) {
@@ -796,7 +859,6 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
   const rates = r.rates ?? []
   const series = (key: string) => (SERIES[key] ? key : 'input')
   const models = r.models ?? []
-  const modelSeries = (rank: number) => `model_${Math.min(rank + 1, 5)}`
   const toolCalls = r.tools.reduce((n, t) => n + t.calls, 0)
   const detailsSummary = `${int(s.msgs)} msgs · ${r.tools.length} tools · ${toolCalls} calls · ${models.length} ${models.length === 1 ? 'model' : 'models'}`
   const COLS = { tokens: 11, cost: 10, share: 5 }
@@ -854,12 +916,12 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
             {models.length > 0 && (
               <Box key="models" flexDirection="column" gap="xs">
                 {heading($, e, 'MODELS', `${models.length} used`)}
-                {bar($, e, models.map((model, rank) => ({ series: modelSeries(rank), frac: model.share })),
+                {bar($, e, models.map((model, rank) => ({ series: shareSeries(rank), frac: model.share })),
                   `this session by model: ${models.map(model => `${model.name} ${pct(model.share)}`).join(', ')}`)}
                 {models.map((model, rank) => (
                   <Box key={`model-${model.name}`} alignItems="center">
                     <Box flexGrow={1} flexShrink={1}>
-                      <Text size="footnote" mono wrap="truncate"><Text color={SERIES[modelSeries(rank)]![0]}>● </Text>{model.name.replace(/^claude-/, '')}</Text>
+                      <Text size="footnote" mono wrap="truncate"><Text color={SERIES[shareSeries(rank)]![0]}>● </Text>{model.name.replace(/^claude-/, '')}</Text>
                     </Box>
                     {cell($, e, `${int(model.msgs)} msgs`, COLS.tokens, { dim: true })}
                     {cell($, e, usd(model.cost, 4), COLS.cost)}

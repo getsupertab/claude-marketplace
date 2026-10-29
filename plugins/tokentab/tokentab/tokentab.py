@@ -613,6 +613,17 @@ def month_total(events):
                if (d := datetime.fromtimestamp(ts)).year == now.year and d.month == now.month)
 
 
+def month_sessions(store, src):
+    """This month's spend per session, costliest first: [{sid, name, cost, share}]."""
+    now = datetime.now().astimezone()
+    spent = {sid: c for sid, b in src.sessions.items()
+             if (c := sum(dc for ts, dc in b.calls
+                          if (d := datetime.fromtimestamp(ts)).year == now.year and d.month == now.month)) > 0}
+    total = sum(spent.values())
+    return [{"sid": sid, "name": store.title(sid) or sid[:8], "cost": c, "share": c / total if total else 0}
+            for sid, c in sorted(spent.items(), key=lambda kv: -kv[1])]
+
+
 def parse_ts(s):
     if not s:
         return None
@@ -872,7 +883,8 @@ def pane_report(store, sid, prices, budget, led=None):
     R = report(store, sid, prices, budget, True, led)
     b, src = R["bucket"], source(store, led, sid)[1]
     out = {"sid": sid, "session": None, "prices_verified": R["prices_verified"],
-           "today": src.day_total()[0], "month": month_total(src.events), "tools": [], "overhead": 0.0}
+           "today": src.day_total()[0], "month": month_total(src.events), "tools": [], "overhead": 0.0,
+           "sessions": month_sessions(store, src)}
     if not b:
         return out
     ulim = budget.get("session_limit_usd")
