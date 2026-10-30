@@ -4,7 +4,7 @@
     "name": "Supertab"
   },
   "metadata": {
-    "description": "Supertab's private Claude Code plugin marketplace. Contains keeptabs and its rewrite TokenTab."
+    "description": "Supertab's Claude Code plugin marketplace. Contains keeptabs and its rewrite TokenTab."
   },
   "plugins": [
     {

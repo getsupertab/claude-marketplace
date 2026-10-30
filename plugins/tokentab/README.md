@@ -10,13 +10,11 @@ numbers are worked out, budgets, the threat model) is in
 Needs **Claude Code 2.1.304 or later**: TokenTab's core is a hooks module, which
 versions before 2.1.287 do not load (the first prompt then says so, and nothing is
 tracked), and the pane uses text sizes and monospaced figures, which 2.1.292 and older
-refuse to draw. macOS,
-Python 3 (standard library only).
+refuse to draw. macOS, Linux or Windows, with Python 3 (standard library only).
 
 ## Install
 
-The repo is private: you need access and working git credentials, see the
-[marketplace README](../../README.md). Inside a session:
+Inside a session:
 
 ```
 /plugin install tokentab --marketplace getsupertab/claude-marketplace

@@ -9,9 +9,6 @@ macOS, Python 3 (standard library only).
 
 ## Install
 
-The repo is private: you need access and working git credentials, see the
-[marketplace README](../../README.md).
-
 **In one step** (Claude Code v2.1.275 or later), inside a session. This adds the
 marketplace and installs keeptabs; Claude Code asks you to confirm the source, then
 to pick a scope (choose "Install for you" to have it in every project):
