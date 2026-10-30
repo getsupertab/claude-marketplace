@@ -69,6 +69,18 @@ tool() {  # tool <tool name> <command>
 }
 check "guard denies a tool call past a hard session limit" \
   "$(tool Read "" | "$SCRIPTS/guard.sh")" '"permissionDecision": "deny"'
+# Percent: the same tiny USD limit is not checked while the plan's 5-hour window counts
+mkdir -p "$DATA/state"
+printf '%s\n' '{"windows": [{"kind": "five_hour", "percentUsed": 85, "resetsAt": "2999-01-01T00:00:00Z"}]}' > "$DATA/state/rate_limits.json"
+cat > "$DATA/budget.json" <<'EOF'
+{"budgets_on": true, "limit_unit": "auto", "session_limit_usd": 0.000001, "five_hour_limit_percent": 90, "weekly_limit_percent": null, "warn_at_percent": 70, "hard_stop": true}
+EOF
+check "guard counts the plan's 5-hour window in percent and warns below its limit" \
+  "$(tool Read "" | "$SCRIPTS/guard.sh")" "85% used, limit 90%"
+sed 's/"limit_unit": "auto"/"limit_unit": "usd"/' "$DATA/budget.json" > "$DATA/b.tmp" && mv "$DATA/b.tmp" "$DATA/budget.json"
+check "guard counts USD when limit_unit says so, usage windows or not" \
+  "$(tool Read "" | "$SCRIPTS/guard.sh")" '"permissionDecision": "deny"'
+rm "$DATA/state/rate_limits.json"
 check "guard lets TokenTab's own report command through" \
   "$(tool Bash "python3 /plugins/tokentab/tokentab/tokentab.py --status" | "$SCRIPTS/guard.sh")" ""
 # Each launcher the hooks may find Python with, and Windows paths (JSON-escaped below:

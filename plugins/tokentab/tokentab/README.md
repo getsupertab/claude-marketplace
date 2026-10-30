@@ -133,7 +133,7 @@ more from a (model, rate) than it holds, every Sankey column sums to the session
 
 ## Budgets
 
-All in `budget.json`, in USD. `null` turns one off.
+All in `budget.json`. `null` turns one off.
 
 `budgets_on` is the switch for the limits below. It ships `false`, so a fresh install
 checks no budget until you turn it on (`/tokentab:budget` or the pane's Options tab); the
@@ -144,6 +144,13 @@ warnings, the cold-resume check and the new-session check work either way.
 |---|---|---|
 | Session | `session_limit_usd` | new session |
 | Today | `daily_limit_usd` | midnight, all sessions and projects |
+| 5-hour window | `five_hour_limit_percent` | with the plan's window |
+| This week | `weekly_limit_percent` | with the plan's window |
+
+`limit_unit` says which pair is checked: `usd` (session, today), `percent` (of the plan's
+usage windows, Pro and Max) or `auto` (the default): percent where Claude Code reports
+usage windows, else USD. The hooks module saves the latest reading in
+`state/rate_limits.json`, shared by every session of the account.
 
 `warn_at_percent` (default 70) starts warnings, once per 10% band. `hard_stop: true`
 blocks at 100%; `false` (the default) only warns. Every warning names

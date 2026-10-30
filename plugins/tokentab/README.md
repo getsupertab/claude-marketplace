@@ -44,6 +44,11 @@ Budgets are off out of the box: one switch, `budgets_on`, turns them on with
 `hard_stop` makes it stop tool calls. Out of the box nothing is blocked except a prompt
 sent after the prompt cache has expired. See Budgets in the POC README.
 
+On a Pro or Max subscription the limits count in percent of the plan's 5-hour and weekly
+usage windows instead (80% and 90%). `limit_unit` (`auto` by default) picks the unit:
+percent where Claude Code reports usage windows, USD otherwise. "Limit unit" on the
+Budget tab switches it when the guess is wrong; each scope keeps one field, in the unit in effect.
+
 In two steps instead (`/plugin marketplace add getsupertab/claude-marketplace`, then
 `/plugin install tokentab@supertab`), or from a shell: `claude plugin marketplace add
 getsupertab/claude-marketplace` and `claude plugin install tokentab@supertab`.
