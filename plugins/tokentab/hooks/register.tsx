@@ -1,13 +1,13 @@
 import type { EngineInterface, PluginOptions, Register, RenderChildren, TelemetryRecordEntry, Timer, UiOpenResult } from 'claude-code'
 
-// TokenTab's hooks module (docs/plan-CORE-537-status-page-tabs.md), three parts:
+// TokenTab's hooks module, three parts:
 //
-// The ledger (phase 0). Every API request the engine makes reaches `telemetry.log` as
+// The ledger. Every API request the engine makes reaches `telemetry.log` as
 // an `api_request` record for the operator's collector, with or without telemetry
 // switched on, main loop and helpers alike. This module prices it and appends one
 // line to the session's ledger file; the Python accounting reads those.
 //
-// The pane (phase 1, tabs and the flow 2026-10-16; the Figma redesign 2026-10-21).
+// The pane.
 // `session.start` opens a pane beside the chat (the `autoOpen` option); `/tokentab:status`
 // (the status skill, answered by a hook) opens it asked. `ui.render` draws one of two
 // tabs: Spend, the session against its limit, its cost by rate and what each tool cost,

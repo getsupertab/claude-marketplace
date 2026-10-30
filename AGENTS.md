@@ -2,7 +2,8 @@
 
 ## Testing a change to a plugin
 
-An installed plugin runs from a snapshot in `~/.claude/plugins/cache/supertab/<plugin>/<sha>/`,
+An installed plugin runs from a snapshot in `~/.claude/plugins/cache/supertab/<plugin>/<version>/`
+(the manifest's `version`, or the commit sha for a plugin without one),
 not from this working tree, so a change here is not live until a session reads it.
 Two loops, both without a commit:
 
@@ -32,6 +33,10 @@ and `/tokentab:status` places the pane. `tmux new-session -d -x 160 -y 50` and
 The GitHub marketplace (`supertab`) stays the way others install; after a commit lands
 on `main`, `claude plugin marketplace update supertab` and `claude plugin update
 tokentab@supertab`, then a new session.
+
+**Bump the version.** TokenTab's `plugin.json` has a `version`, and Claude Code only
+updates an installed plugin when that number changes. Raise it (semver) in every PR that
+changes a file under `plugins/tokentab/`, or users never get the change.
 
 When a job that changed a plugin is done, offer the user the reload, and remind them
 that a session they already had open runs the old copy's shell hooks until it ends.
