@@ -79,8 +79,41 @@ Once on, the defaults are $25 per session and $40 per day. TokenTab warns at 70%
 100% of a limit. It only warns unless you switch on `hard_stop`, which blocks tool calls
 past the limit.
 
-With budgets off, the one thing TokenTab still stops is a prompt sent after the prompt
-cache has expired, since that prompt pays to rebuild the whole context.
+### What it does with budgets off
+
+The limits are off, but these checks run from the start. Each one is set in
+`budget.json` (`/tokentab:budget` shows it):
+
+- **Expired cache.** When a long session (100k tokens of context or more) has sat idle
+  long enough for its prompt cache to expire, TokenTab holds back your next prompt once
+  and tells you what re-sending it will cost. Send it again within two minutes and it
+  goes through. Nothing has been sent at that point, so holding it back costs nothing.
+  Turn it off by removing `cold_resume`.
+- **Helpers can't start helpers.** A helper agent that tries to start or message another
+  agent is stopped. Set `helpers_may_delegate` to `true` to allow it.
+- **Notes to Claude.** When a session's context passes 200k and again 350k tokens, Claude
+  is told how much each call now costs and mentions it in one line. From 150k tokens on,
+  each prompt also carries a note of about 150 words asking Claude to suggest a new
+  session if the prompt doesn't need the conversation so far. Turn them off with
+  `context_warn_tokens: []` and `new_session.enabled: false`.
+- **Tamper check.** If the usage record for a session shrinks, which doesn't happen in
+  normal use, TokenTab stops the session and says why.
+
+## Privacy
+
+Everything stays on your machine. TokenTab sends nothing over the network and calls no
+outside service.
+
+- **What it records:** for each API call, the time, model, token counts, cost, session
+  id and request id. No prompts, replies or file contents.
+- **What it reads:** the cost records Claude Code produces for every API call (it reads
+  them and passes them on unchanged), and the session's transcript, to count tokens for
+  the budget guard. The transcript is only read, never copied.
+- **What it runs:** Python 3, to work out costs and draw the views; `open`, `xdg-open`
+  or `explorer.exe` when you choose "Open in browser"; and `uname`, to tell macOS from
+  Linux. Nothing else.
+- **Where it writes:** only `plugins/data/tokentab-supertab/` in your Claude config
+  folder. Uninstalling leaves that folder; delete it to remove the data.
 
 ## Update
 
