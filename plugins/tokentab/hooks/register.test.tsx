@@ -1,7 +1,7 @@
 import { test, expect, mock } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On, RenderElement, RenderNode } from 'claude-code'
-import { at, barCells, barSvg, dataDir, int, liveLines, pct, SERIES, shown, stripAnsi, toneOf, usd } from './register'
+import { at, barCells, barSvg, dataDir, inUnit, int, liveLines, pct, SECTIONS, SERIES, shown, stripAnsi, toneOf, unitLabel, unitOf, usd, withNewKeys } from './register'
 import type { Report } from './register'
 
 // The world beneath the plugin: `$.fs` reaches nothing under `claude plugin test`, and
@@ -107,7 +107,7 @@ const REPORT: Report = {
     { sid: 'f9e8d7c6-other', name: 'Ledger rewrite', cost: 24.767, share: 0.8727 },
     { sid: 'a0b1c2d3-session', name: 'Token type sidebar', cost: 3.613, share: 0.1273 },
   ],
-  session: { title: 'Token type sidebar', cost: 3.613, tokens: 532533, msgs: 47, limits_on: true, limit_usd: 2, frac: 1.8065, warn_at: 70, hard_stop: false },
+  session: { title: 'Token type sidebar', cost: 3.613, tokens: 532533, msgs: 47, limits_on: true, unit: 'usd', limit: '$3.61 of $2.00', frac: 1.8065, warn_at: 70, hard_stop: false },
   rates: [
     { label: 'input', key: 'input', tokens: 5134, cost: 0.0205, share: 0.0057 },
     { label: 'cache write 1h', key: 'cache_write_1h', tokens: 226784, cost: 1.8143, share: 0.5022 },
@@ -326,7 +326,7 @@ test('an interactive session opens the pane and draws the Spend tab', async ($, 
   expect(find('SESSION SPEND')?.props).toEqual({ size: 'footnote', dimColor: true })
   expect(find('$3.61')?.props).toEqual({ size: 'title', weight: 'bold', tabular: true })
   expect(find('Over · 181%')?.props).toEqual({ size: 'footnote', weight: 'semibold', color: 'error' })
-  expect(find('of $2.00 · 532,533 tokens · warn only, warns at 70%')).toBeDefined()
+  expect(find('$3.61 of $2.00 · 532,533 tokens · warn only, warns at 70%')).toBeDefined()
   // the breakdown: a row per rate with its dot in the series colour, the total, the note;
   // then the tools' legend
   expect(t.filter(x => x.text === '● ').map(x => x.props.color)).toEqual(
@@ -376,7 +376,7 @@ test('an interactive session opens the pane and draws the Spend tab', async ($, 
 test('Spend without a limit has no bar and no badge; before the first call it says so', async ($, on) => {
   mock.env(on, { HOME: '/home/t' })
   const clock = mock.clock(on, { now: T0 })
-  const report: { value: Report } = { value: { ...REPORT, session: { ...REPORT.session!, limit_usd: null, frac: null } } }
+  const report: { value: Report } = { value: { ...REPORT, session: { ...REPORT.session!, limit: null, frac: null } } }
   world(on, FILES, { is: true }, report)
   await $.session.start({ cwd: '/w', surface: 'desktop', isInteractive: true })
   await clock.settle()
@@ -387,7 +387,7 @@ test('Spend without a limit has no bar and no badge; before the first call it sa
   expect(texts(tree).some(x => x.text.startsWith('Over') || x.text.endsWith('used'))).toBe(false)
   expect(texts(tree).some(x => x.text === '532,533 tokens · no session limit set')).toBe(true)
 
-  report.value = { ...REPORT, session: { ...REPORT.session!, limits_on: false, limit_usd: null, frac: null } }
+  report.value = { ...REPORT, session: { ...REPORT.session!, limits_on: false, limit: null, frac: null } }
   await $.telemetry.log(request({}))
   await clock.advance(1000)
   const off = await $.ui.render({ surface: 'desktop', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
@@ -654,6 +654,43 @@ test('the Budget tab: auto-open through the config menu, the limits through the 
   const mobile = await $.ui.render({ surface: 'mobile', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   expect(elements(mobile, 'Input')).toEqual([])
   expect(texts(mobile).some(x => x.text === '40')).toBe(true)
+})
+
+test('the limit unit: chosen, else percent where the plan reports a usage window; one field per scope', () => {
+  const five = [{ kind: 'five_hour' }]
+  expect(unitOf({}, [])).toBe('usd')
+  expect(unitOf({ limit_unit: 'auto' }, five)).toBe('percent')
+  expect(unitOf({ limit_unit: 'auto' }, [{ kind: 'spend_limit' }])).toBe('usd')
+  expect(unitOf({ limit_unit: 'usd' }, five)).toBe('usd')
+  expect(unitOf({ limit_unit: 'percent' }, [])).toBe('percent')
+  expect([unitLabel('auto', 'percent'), unitLabel(undefined, 'usd'), unitLabel('usd', 'usd'), unitLabel('percent', 'percent')])
+    .toEqual(['auto: %', 'auto: $', '$ USD', '% of plan'])
+  const session = SECTIONS[0]!.rows.find(r => r.key === 'session_limit_usd')!
+  expect(inUnit(session, 'usd')).toBe(session)
+  expect(inUnit(session, 'percent')).toMatchObject({ key: 'five_hour_limit_percent', label: '5-hour window', unit: '%' })
+  // a newer version's keys join the user's file in the shipped order, the user's values kept
+  expect(withNewKeys({ a: 1, b: 2 }, { a: 0, b: 0 })).toBeUndefined()
+  expect(JSON.stringify(withNewKeys({ b: 5, x: 1 }, { a: 0, b: 0, c: 3 }))).toBe('{"a":0,"b":5,"c":3,"x":1}')
+})
+
+test('session.measure records the usage windows; the Budget tab then shows the percent fields', async ($, on) => {
+  mock.env(on, { HOME: '/home/t' })
+  const clock = mock.clock(on, { now: T0 })
+  const { fs, ui } = world(on, FILES)
+  on('session.measure', ($, e) => ({ changed: e.changed }))
+  await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  const rateLimits = [{ kind: 'five_hour', percentUsed: 42, resetsAt: '2026-10-15T18:00:00Z' }, { kind: 'seven_day', percentUsed: 7 }]
+  await $.session.measure({ context: { window: 200000 }, rateLimits, changed: ['context', 'rateLimits'] })
+  expect(JSON.parse(fs.get(`${DATA}/state/rate_limits.json`)!).windows).toEqual([
+    { kind: 'five_hour', percentUsed: 42, resetsAt: '2026-10-15T18:00:00Z' }, { kind: 'seven_day', percentUsed: 7, resetsAt: null }])
+  await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
+  await $.ui.press(press('tab-budget'))
+  const tree = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
+  expect(elements(tree, 'Input').map(i => i.key)).toEqual(['b-five_hour_limit_percent', 'b-weekly_limit_percent', 'b-warn_at_percent'])
+  expect(elements(tree, 'Button').find(b => b.key === 'b-limit_unit')?.label).toBe('auto: %')
+  await $.ui.press(press('b-limit_unit'))
+  expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'limit_unit', 'usd'])
 })
 
 test('where /config has no row for it (Desktop), the auto-open switch is kept in the store until /config changes it', async ($, on) => {

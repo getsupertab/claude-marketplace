@@ -8,7 +8,7 @@ and the budget skill alike.
   budget.py set KEY VALUE   change one existing key and write the file back, its order and
                             its _comment keys kept. VALUE: a number; "off", "none" or "" for
                             a limit that is switched off (null); on/off/true/false/yes/no
-                            for a switch. Prints the new value as JSON; a value that does
+                            for a switch; auto, usd or percent for limit_unit. Prints the new value as JSON; a value that does
                             not fit is refused on stderr with exit code 1, nothing written.
 
 A key that is not in the file is refused too, so a typo never adds one. Lists
@@ -20,12 +20,22 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import tokentab as kt  # noqa: E402
 
 PATH = os.path.join(kt.CFG, "budget.json")
+SHIPPED = os.path.join(os.path.dirname(os.path.abspath(__file__)), "budget.json")
 TRUE, FALSE = ("on", "true", "yes", "1"), ("off", "false", "no", "0")
+UNITS = {"auto": "auto", "usd": "usd", "$": "usd", "dollars": "usd",
+         "percent": "percent", "%": "percent", "pct": "percent"}
 
 
 def load():
     with open(PATH, encoding="utf-8") as f:
         return json.load(f)   # a dict keeps the file's key order
+
+
+def upgraded(cfg):
+    """cfg with the keys the shipped file has and cfg lacks, in the shipped order."""
+    with open(SHIPPED, encoding="utf-8") as f:
+        shipped = json.load(f)
+    return {**{k: cfg.get(k, v) for k, v in shipped.items()}, **cfg}
 
 
 def lookup(cfg, key):
@@ -44,7 +54,12 @@ def lookup(cfg, key):
 def parse(key, old, raw):
     """The new value for key from the text raw, by the key's name and the value it holds."""
     leaf = key.split(".")[-1]
-    text = str(raw).strip().lower().replace(",", "").replace("$", "")
+    if leaf == "limit_unit":
+        unit = UNITS.get(str(raw).strip().lower())
+        if unit is None:
+            raise ValueError(f"{key}: auto, usd or percent, not {raw!r}")
+        return unit
+    text = str(raw).strip().lower().replace(",", "").replace("$", "").rstrip("%").strip()
     if isinstance(old, bool):
         if text in TRUE: return True
         if text in FALSE: return False
@@ -52,7 +67,7 @@ def parse(key, old, raw):
     if isinstance(old, (list, dict)):
         raise ValueError(f"{key}: edit this one in the file")
     if text in ("", "off", "none", "null"):
-        if leaf.endswith("_usd"):
+        if leaf.endswith(("_usd", "_limit_percent")):
             return None
         raise ValueError(f"{key}: a number is needed")
     try:
@@ -81,6 +96,8 @@ def main():
         cfg = load()
         if a[1] == "budgets_on" and a[1] not in cfg:
             cfg = {"budgets_on": False, **cfg}     # a file from before the switch
+        if "." not in a[1] and a[1] not in cfg:
+            cfg = upgraded(cfg)                    # a key a newer version ships
         node, leaf = lookup(cfg, a[1])
         node[leaf] = parse(a[1], node[leaf], a[2])
         tmp = PATH + ".tmp"

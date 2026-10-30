@@ -11,7 +11,7 @@ between turns). Config: budget.json in the plugin's data folder (/tokentab:budge
 import glob, json, os, re, sys, time
 from datetime import datetime
 
-from tokentab import ROOT, data_dir, utf8_stdio   # noqa: E402  (same folder; env var, else the folder in use)
+from tokentab import ROOT, data_dir, limit_rows, read_windows, utf8_stdio   # noqa: E402  (same folder; env var, else the folder in use)
 CFG   = data_dir()  # plugin: data in the plugin's data folder, shipped files next to this script
 HERE  = os.path.dirname(os.path.abspath(__file__))
 STATE = os.path.join(CFG, "state")
@@ -62,7 +62,8 @@ def tally(transcript, prices, st, others=frozenset()):
     # State keeps RAW token counts per date and model. Cost and weighted tokens
     # are derived from them at the current prices every time, so a price change
     # re-prices history. The tamper check runs on raw counts, which only grow.
-    keep = {k: st.get(k) for k in ("band_session", "band_today", "ctx_band", "cold_block_at",
+    keep = {k: st.get(k) for k in ("band_session", "band_today", "band_five_hour", "band_seven_day",
+                                   "reset_five_hour", "reset_seven_day", "ctx_band", "cold_block_at",
                                    "turn_base_cost", "turn_base_tokens",
                                    "health_warned", "health_warned_at", "recent", "subs")}
     if "raw" not in st or st.get("v") != FORMAT:   # old format: re-read the transcript once
@@ -339,10 +340,6 @@ def main():
         return 0
     # budgets_on gates the limits; a file without it predates the switch.
     on = b.get("budgets_on") is True
-    scopes_cfg = [
-        ("session", b.get("session_limit_usd")),
-        ("today",   b.get("daily_limit_usd")),
-    ] if on else []
 
     transcript = payload.get("transcript_path")
     # A new session's first prompt arrives before Claude Code has written the
@@ -420,21 +417,24 @@ def main():
     # Other sessions today may send telemetry even if this one does not.
     day_c, day_t = max(day_c, l_dc), max(day_t, l_dt)
 
-    measured = {"session": cost, "today": day_c}
+    _, limits = limit_rows(b, {"session": cost, "today": day_c}, read_windows()) if on else (None, [])
 
     warn_at = float(b.get("warn_at_percent", 70)) / 100.0
     hard    = bool(b.get("hard_stop", False))
 
     # Each scope is judged on its own and keeps its own warn band, so a scope
     # that is already over (today) cannot hide another's warning (this session).
-    def judge(name, frac, detail):
+    def judge(name, frac, detail, reset=None):
         """("deny" | "note", user message, model message) for one scope, or None."""
         pct = int(frac * 100)
         band_key = "band_" + name
-        label = {"session": "session", "today": "today's"}[name]
+        if reset != st.get("reset_" + name):      # a usage window started over: warn afresh
+            st[band_key], st["reset_" + name] = 0, reset
+        label = {"session": "session", "today": "today's", "five_hour": "the 5-hour window's",
+                 "seven_day": "this week's"}[name]
         if frac >= 1.0 and hard:
             st[band_key] = 100
-            scope = "session" if name == "session" else "daily"
+            scope = {"session": "session", "today": "daily", "five_hour": "5-hour", "seven_day": "weekly"}[name]
             return ("deny",
                 f"TokenTab: {scope} budget exhausted. {detail} ({pct}%). Raise the "
                 f"{scope} limit in budget.json (/tokentab:budget) to continue.",
@@ -551,11 +551,8 @@ def main():
             f"instructions and adds its own start-up cost. Do the work yourself, or stop and "
             f"report back to the agent that started you."))
 
-    for name, ulim in scopes_cfg:
-        if not ulim:
-            continue
-        c = measured[name]
-        v = judge(name, c / float(ulim), f"${c:,.2f} of ${float(ulim):,.2f}")
+    for row in limits:
+        v = judge(row["scope"], row["frac"], row["parts"][0], row["reset"])
         if v:
             verdicts.append(v)
 
