@@ -1,9 +1,14 @@
 {
   "name": "tokentab",
-  "description": "keeptabs rewritten around a Claude Code hooks module: every API call in a ledger from the first prompt, no telemetry setup; budget guard and cost views (Supertab proof of concept, testing beside keeptabs).",
+  "version": "1.0.0",
+  "description": "See what Claude Code is spending while you work: every API call priced from the first prompt, a live cost pane, and budget limits that warn or stop. No setup.",
   "author": {
-    "name": "Supertab"
+    "name": "Supertab",
+    "url": "https://supertab.co"
   },
+  "homepage": "https://github.com/getsupertab/claude-marketplace/tree/main/plugins/tokentab",
+  "repository": "https://github.com/getsupertab/claude-marketplace",
+  "license": "Apache-2.0",
   "userConfig": {
     "autoOpen": {
       "title": "Open the pane at session start",

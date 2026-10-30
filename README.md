@@ -1,29 +1,19 @@
 # claude-marketplace
 
-Supertab's private plugin marketplace for Claude Code. Marketplace name: `supertab`.
+Supertab's plugin marketplace for Claude Code. Marketplace name: `supertab`.
 
 ## Plugins
 
 | Plugin | Install id | What it does |
 |---|---|---|
 | [keeptabs](plugins/keeptabs/README.md) | `keeptabs@supertab` | Shows what Claude Code is spending, stops it at limits you set, and gives the agent the numbers it needs to stay inside a budget. Proof of concept. |
-| [TokenTab](plugins/tokentab/README.md) | `tokentab@supertab` | keeptabs rewritten around a Claude Code hooks module (Claude Code 2.1.287 or later): every API call in a ledger from the first prompt, no telemetry setup. Being tested beside keeptabs; install one or the other. |
+| [TokenTab](plugins/tokentab/README.md) | `tokentab@supertab` | See what Claude Code is spending while you work, with a live cost pane and budget limits that warn or stop. Needs Claude Code 2.1.304 or later. |
 
 Each plugin's README covers what it needs after install and how to remove it cleanly.
 
 ## Add the marketplace
 
-The repo is private, so Claude Code fetches it with your own git credentials. You need
-either an SSH key GitHub knows, or the GitHub CLI:
-
-```bash
-gh auth login && gh auth setup-git
-```
-
-(With HTTPS only, also set `CLAUDE_CODE_PLUGIN_PREFER_HTTPS=1` to skip the SSH attempt.)
-No tokens are stored in this repo.
-
-In Claude Code:
+The repo is public, so no git credentials are needed. In Claude Code:
 
 ```
 /plugin marketplace add getsupertab/claude-marketplace
@@ -58,8 +48,7 @@ command confirms it. Then start a new session (or run `/reload-plugins`).
 Automatic updates are off by default for custom marketplaces. To turn them on: `/plugin`
 → Marketplaces → supertab → Enable auto-update. Claude Code then checks
 at startup, and an update applies from the next session. keeptabs' `/keeptabs:setup`
-turns this on for you. The repository is private, so the check needs git credentials
-that work without a prompt (an SSH key in `ssh-agent`, or `gh auth setup-git`).
+turns this on for you.
 
 **Not from the Claude Desktop app.** Desktop starts its bundled `claude` with
 `DISABLE_AUTOUPDATER=1` (the app updates that binary itself), and Claude Code skips
