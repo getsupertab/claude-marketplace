@@ -1,7 +1,7 @@
 {
   "name": "tokentab",
   "version": "1.0.0",
-  "description": "keeptabs rewritten around a Claude Code hooks module: every API call in a ledger from the first prompt, no telemetry setup; budget guard and cost views (Supertab proof of concept, testing beside keeptabs).",
+  "description": "See what Claude Code is spending while you work: every API call priced from the first prompt, a live cost pane, and budget limits that warn or stop. No setup.",
   "author": {
     "name": "Supertab"
   },

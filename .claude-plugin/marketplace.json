@@ -4,7 +4,7 @@
     "name": "Supertab"
   },
   "metadata": {
-    "description": "Supertab's Claude Code plugin marketplace. Contains keeptabs and its rewrite TokenTab."
+    "description": "Supertab's Claude Code plugin marketplace."
   },
   "plugins": [
     {
@@ -15,7 +15,7 @@
     {
       "name": "tokentab",
       "source": "./plugins/tokentab",
-      "description": "keeptabs rewritten around a Claude Code hooks module (2.1.304 or later): every API call in a ledger from the first prompt, no telemetry setup. Install this or keeptabs, not both."
+      "description": "See what Claude Code is spending while you work: every API call priced from the first prompt, a live cost pane, and budget limits that warn or stop. No setup. Needs Claude Code 2.1.304 or later."
     }
   ]
 }
