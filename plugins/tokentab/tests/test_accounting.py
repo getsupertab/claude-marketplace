@@ -187,6 +187,7 @@ def main():
         errs.append("snapshot cost_by does not sum to cost_usd")
     kt.render(store, "fx", prices, {}, True)
     errs += pane_check(store, prices)
+    errs += breakdown_check(store, prices)
     errs += series_check(b, "transcript", store)
     errs += ledger_case(root, store, prices)
     errs += utf8_case(root, prices)
@@ -235,6 +236,36 @@ def pane_check(store, prices):
     now = kt.datetime.now().timestamp()
     if abs(kt.month_total([(now, 1.5, 0), (now - 400 * 86400, 9.0, 0)]) - 1.5) > 1e-9:
         errs.append("month_total counts a day outside this month")
+    return errs
+
+
+def breakdown_check(store, prices):
+    """A tool's layers: Bash by program and subcommand, file tools by file; in the pane
+    report every layer's draws sum to its parent's."""
+    errs = []
+    cases = [("cd repo && FOO=1 git status -s", ("git", "status")), ("sudo brew install jq", ("brew", "install")),
+             ("npx -y tsc", ("npx",)), ("python3 x.py | head", ("python3",)), ("export A=1; ls", ("ls",)), ("", ())]
+    for cmd, want in cases:
+        if kt.shell_layers(cmd) != want:
+            errs.append(f"shell_layers({cmd!r}) = {kt.shell_layers(cmd)}, want {want}")
+    for name, inp, want in [("Read", {"file_path": "/a/b/c.py"}, ("c.py",)), ("Agent", {"subagent_type": "Explore"}, ("Explore",)),
+                            ("WebFetch", {"url": "https://example.com/x"}, ("example.com",)), ("Grep", {"pattern": "x"}, ())]:
+        if kt.tool_layers(name, inp) != want:
+            errs.append(f"tool_layers({name}) = {kt.tool_layers(name, inp)}, want {want}")
+    rep = kt.pane_report(store, "fx", prices, {}, windows={})
+    bash = next((t for t in rep["tools"] if t["name"] == "Bash"), None)
+    if not bash or sorted(k["name"] for k in bash["children"]) != ["ls", "make"]:
+        errs.append(f"pane report: Bash should break down into ls and make: {bash and bash['children']}")
+    def sums(t):
+        kids = t.get("children") or []
+        if kids and any(abs(sum(k[f] for k in kids) - t[f]) > 1e-9 for f in ("calls", "cost", "ask", "ctx", "read")):
+            errs.append(f"pane report: {t['name']}'s layers do not sum to it")
+        for k in kids:
+            sums(k)
+    for t in rep["tools"]:
+        sums(t)
+    if any(t["children"] for t in rep["tools"] if t["name"] == "Grep"):
+        errs.append("pane report: Grep has no layers")
     return errs
 
 

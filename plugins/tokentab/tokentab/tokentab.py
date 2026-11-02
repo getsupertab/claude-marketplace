@@ -14,7 +14,7 @@ per-tool attribution. No dependencies.
   tokentab.py --status        one plain line for a status bar (for the hooks module)
   tokentab.py --all           live view across every project
 """
-import argparse, bisect, glob, json, os, re, sys, time
+import argparse, bisect, glob, json, os, re, shlex, sys, time
 from datetime import datetime, timezone
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -132,6 +132,69 @@ def overhead_total(b):
     """TokenTab's own hook text (budget hints, job checks), summed over models."""
     return tool_totals({None: b.overhead} if b and b.overhead else {None: {}})[0][1]
 
+# A tool's breakdown, the layers under it in the pane: Bash by program, then subcommand
+# for these; file tools by file; Agent by subagent; Skill by skill; WebFetch by host.
+SUBCOMMANDS = {"git", "gh", "npm", "npx", "pnpm", "yarn", "bun", "cargo", "go", "docker", "kubectl",
+               "brew", "pip", "pip3", "uv", "claude", "make", "terraform", "aws", "gcloud", "tmux", "deno"}
+SHELL_PREFIX = {"sudo", "time", "env", "nohup", "exec", "command"}
+SHELL_SETUP = {"cd", "export", "source", ".", "set", "pushd", "unset"}
+
+def shell_layers(cmd):
+    """("git", "status") for `cd repo && FOO=1 git status -s`: the first segment that is
+    not setup, its program and, for SUBCOMMANDS, the subcommand."""
+    for seg in re.split(r"&&|\|\||;|\||\n", cmd or ""):
+        try:
+            words = shlex.split(seg, comments=True)
+        except ValueError:
+            words = seg.split()
+        words = [w for w in words if not re.match(r"^[A-Za-z_]\w*=", w)]
+        while words and words[0] in SHELL_PREFIX:
+            words = words[1:]
+        if not words or words[0] in SHELL_SETUP:
+            continue
+        prog = words[0].rsplit("/", 1)[-1]
+        sub_ = words[1] if len(words) > 1 and prog in SUBCOMMANDS else ""
+        return (prog, sub_) if re.match(r"^[\w:.-]+$", sub_) and not sub_.startswith("-") else (prog,)
+    return ()
+
+def tool_layers(name, inp):
+    """The breakdown key of one tool_use under its tool, () where there is none."""
+    inp = inp if isinstance(inp, dict) else {}
+    if name == "Bash":
+        return shell_layers(inp.get("command"))
+    path = inp.get("file_path") or inp.get("notebook_path")
+    if name in ("Read", "Edit", "Write", "MultiEdit", "NotebookEdit") and isinstance(path, str):
+        return (path.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1],)
+    pick = {"Agent": "subagent_type", "Task": "subagent_type", "Skill": "skill"}.get(name)
+    if pick and isinstance(inp.get(pick), str):
+        return (inp[pick],)
+    if name == "WebFetch" and isinstance(inp.get("url"), str):
+        host = re.match(r"^\w+://([^/:?#]+)", inp["url"])
+        return (host.group(1),) if host else ()
+    return ()
+
+def tool_tree(name, parts, cap=12):
+    """One tool's breakdown as nested rows, costliest first: parts maps (name, *layers)
+    to its fields. Past `cap` children, the rest fold into one "N more" row."""
+    def node(label, items, depth):
+        rows = {}
+        for key, f in items:
+            if len(key) > depth:
+                rows.setdefault(key[depth], []).append((key, f))
+        out = []
+        for lab, sub_items in rows.items():
+            t = {k: sum(f.get(k, 0) for _, f in sub_items) for k in ("calls", "rtokens", *TOOL_DRAWS)}
+            t["cost"] = sum(t[k] for k in TOOL_DRAWS)
+            t["result"] = t["result_1h"] + t["result_5m"]
+            out.append((lab, t, node(lab, sub_items, depth + 1)))
+        out.sort(key=lambda r: -r[1]["cost"])
+        if len(out) > cap:
+            rest = out[cap:]
+            t = {k: sum(r[1][k] for r in rest) for k in out[0][1]}
+            out = out[:cap] + [(f"{len(rest)} more", t, [])]
+        return out
+    return node(name, [(k, f) for k, f in parts.items() if k[0] == name], 1)
+
 def tool_totals(tools):
     """{name: {model: fields}} -> [(name, fields summed over models)], costliest first.
     Adds result (1h + 5m) and cost (everything the tool draws)."""
@@ -148,7 +211,7 @@ def tool_totals(tools):
 
 class Bucket:
     __slots__ = ("inp","cw5","cw1h","cr","out","think","cost","msgs","models","first","last",
-                 "tools","overhead","threads","cost_by","cost_bm","by_source","wtok","ctx","ctx_model","ttl","calls",
+                 "tools","parts","overhead","threads","cost_by","cost_bm","by_source","wtok","ctx","ctx_model","ttl","calls",
                  "series","_open")
     def __init__(self):
         self.inp = self.cw5 = self.cw1h = self.cr = self.out = self.think = 0
@@ -160,6 +223,7 @@ class Bucket:
         self.first = None
         self.last = None
         self.tools = {}       # name -> model -> {calls, ask, think, result_1h, result_5m, rtokens}
+        self.parts = {}       # (name, *layers) -> the tools fields summed over models (tool_layers)
         self.overhead = {}    # model -> {result_1h, result_5m, read, rtokens}: TokenTab's own hook text
         self.threads = {}     # transcripts only: per conversation (main, each helper) attribution state
         self.cost_by = {}     # rate key -> USD, summed over models (output = text only)
@@ -175,10 +239,18 @@ class Bucket:
         return self.tools.setdefault(name, {}).setdefault(model, {
             "calls": 0, "ask": 0.0, "think": 0.0, "result_1h": 0.0, "result_5m": 0.0, "read": 0.0, "rtokens": 0})
 
+    def _add(self, key, model, field, v):
+        """Charge a draw to a tool (key: (name, *layers)) or, key None, to TokenTab."""
+        self._tool(key and key[0], model)[field] += v
+        if key and len(key) > 1:
+            p = self.parts.setdefault(key, {"calls": 0, "ask": 0.0, "think": 0.0, "result_1h": 0.0,
+                                            "result_5m": 0.0, "read": 0.0, "rtokens": 0})
+            p[field] += v
+
     def _thread(self, agent):
         # since: what entered context after the last call, sized; it is in the next call's write.
         # res: tokens each tool (None: TokenTab) has resident in context. ctx: the last call's.
-        # ids: tool_use id -> name. req: the open call, whose lines may still be coming.
+        # ids: tool_use id -> (name, *layers); tools and res are keyed the same way. req: the open call, whose lines may still be coming.
         return self.threads.setdefault(agent or "", {"since": {"tools": {}, "other": 0, "kt": 0},
                                                      "res": {}, "ctx": 0, "ids": {}, "req": None})
 
@@ -216,14 +288,14 @@ class Bucket:
             t["ctx"] = ctx
             cr = r * rate(prices, model, "cache_read") / 1_000_000.0
             for nm, f in resident_shares(t["res"], ctx).items():
-                self._tool(nm, model)["read"] += cr * f
+                self._add(nm, model, "read", cr * f)
             s = t["since"]
             if w1 + w5:
                 c1 = w1 * rate(prices, model, "cache_write_1h") / 1_000_000.0
                 c5 = w5 * rate(prices, model, "cache_write_5m") / 1_000_000.0
                 for nm, f in size_shares({**s["tools"], None: s["kt"]}, s["other"], w1 + w5).items():
-                    e = self._tool(nm, model)
-                    e["result_1h"] += c1 * f; e["result_5m"] += c5 * f; e["rtokens"] += round((w1 + w5) * f)
+                    for field, v in (("result_1h", c1 * f), ("result_5m", c5 * f), ("rtokens", round((w1 + w5) * f))):
+                        self._add(nm, model, field, v)
                     t["res"][nm] = t["res"].get(nm, 0) + (w1 + w5) * f
             t["since"] = {"tools": {}, "other": 0, "kt": 0}
             req = t["req"] = {"key": key, "model": model, "o": 0, "th": 0, "uses": {},
@@ -235,9 +307,10 @@ class Bucket:
             n = block_chars(blk)
             t["since"]["other"] += n          # in context, so in the next call's write
             if blk.get("type") == "tool_use" and blk.get("name"):
-                t["ids"][blk.get("id")] = blk["name"]
-                req["uses"][blk.get("id")] = (blk["name"], n)
-                self._tool(blk["name"], model)["calls"] += 1
+                k = (blk["name"], *tool_layers(blk["name"], blk.get("input")))
+                t["ids"][blk.get("id")] = k
+                req["uses"][blk.get("id")] = (k, n)
+                self._add(k, model, "calls", 1)
             elif blk.get("type") == "thinking":
                 req["think"] += n
             else:
@@ -247,7 +320,7 @@ class Bucket:
         # reports no thinking tokens), thinking per THINKING_TO_TOOLS.
         m = req["model"]
         for nm, f, v in req["applied"]:
-            self._tool(nm, m)[f] -= v
+            self._add(nm, m, f, -v)
         req["applied"] = []
         if req["uses"]:
             per = rate(prices, m, "output") / 1_000_000.0
@@ -258,7 +331,7 @@ class Bucket:
                 for f, v in (("ask", (req["o"] - req["th"]) * per * ask.get(i, 0)),
                              ("think", req["th"] * per * think.get(i, 0))):
                     if v:
-                        self._tool(nm, m)[f] += v; req["applied"].append((nm, f, v))
+                        self._add(nm, m, f, v); req["applied"].append((nm, f, v))
 
     def _charge(self, model, key, usd):
         if self._open is not None:
@@ -955,9 +1028,11 @@ def pane_report(store, sid, prices, budget, led=None, windows=None):
     spent = {m: sum(d.values()) for m, d in b.cost_bm.items()}
     out["models"] = [{"name": m, "msgs": b.models.get(m, 0), "cost": c, "share": (c / b.cost) if b.cost else 0}
                      for m, c in sorted(spent.items(), key=lambda kv: -kv[1]) if c > 0 or b.models.get(m)]
-    out["tools"] = [{"name": nm.split("__")[-1], "calls": e["calls"], "cost": e["cost"],
-                     "ask": e["ask"] + e["think"], "ctx": e["result"], "read": e["read"], "ctx_tokens": e["rtokens"]}
-                    for nm, e in R["tools"]]
+    row = lambda name, e, kids: {"name": name, "calls": e["calls"], "cost": e["cost"], "ask": e["ask"] + e["think"],
+                                 "ctx": e["result"], "read": e["read"], "ctx_tokens": e["rtokens"],
+                                 "children": [row(*kid) for kid in kids]}
+    parts = R["transcript"].parts if R["transcript"] else {}
+    out["tools"] = [row(nm.split("__")[-1], e, tool_tree(nm, parts)) for nm, e in R["tools"]]
     out["overhead"] = R["overhead"]["cost"]
     return out
 
