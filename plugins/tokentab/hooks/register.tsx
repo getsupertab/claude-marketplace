@@ -1,6 +1,6 @@
 import type { EngineInterface, PluginOptions, Register, RenderChildren, TelemetryRecordEntry, Timer, UiOpenResult } from 'claude-code'
 
-// TokenTab's hooks module (docs/plan-CORE-537-status-page-tabs.md), three parts:
+// TokenTab's hooks module, three parts:
 //
 // The ledger (phase 0). Every API request the engine makes reaches `telemetry.log` as
 // an `api_request` record for the operator's collector, with or without telemetry
