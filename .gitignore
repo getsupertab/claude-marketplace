@@ -5,3 +5,6 @@ plugins/*/.claude-plugin/types/
 
 # local ticket drafts
 plans/
+
+# local plan docs
+docs/
