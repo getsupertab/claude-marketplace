@@ -118,7 +118,12 @@ const REPORT: Report = {
   total: { tokens: 5561099, cost: 3.613 }, unmatched: 125,
   tools: [
     { name: 'use_figma', calls: 12, cost: 0.5457, ask: 0.3332, ctx: 0.1498, read: 0.0627, ctx_tokens: 18721 },
-    { name: 'Bash', calls: 5, cost: 0.0373, ask: 0.0183, ctx: 0.0148, read: 0.0042, ctx_tokens: 1853 },
+    { name: 'Bash', calls: 5, cost: 0.0373, ask: 0.0183, ctx: 0.0148, read: 0.0042, ctx_tokens: 1853, children: [
+      { name: 'git', calls: 3, cost: 0.0273, ask: 0.0133, ctx: 0.0108, read: 0.0032, ctx_tokens: 1353, children: [
+        { name: 'status', calls: 3, cost: 0.0273, ask: 0.0133, ctx: 0.0108, read: 0.0032, ctx_tokens: 1353, children: [] },
+      ] },
+      { name: 'ls', calls: 2, cost: 0.01, ask: 0.005, ctx: 0.004, read: 0.001, ctx_tokens: 500, children: [] },
+    ] },
     { name: 'computer', calls: 1, cost: 0.0072, ask: 0.0017, ctx: 0.004, read: 0.0015, ctx_tokens: 503 },
   ],
 }
@@ -289,6 +294,35 @@ test('the figures as the design writes them, and the bars in Svg and in cells', 
   expect(shown(at(cfg, 'session_limit_usd'))).toBe('off')
   expect(shown(at(cfg, 'daily_limit_usd'))).toBe('40')
   expect(shown(at(cfg, 'cold_resume.min_context_tokens'))).toBe('100,000')
+})
+
+test('a tool row opens to its breakdown, one layer at a time', async ($, on) => {
+  mock.env(on, { HOME: '/home/t' })
+  const clock = mock.clock(on, { now: T0 })
+  world(on, FILES)
+  await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  const draw = async () => texts(await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })).map(x => x.text)
+  await draw()
+  await $.ui.press(press('details-toggle'))
+  let t = await draw()
+  // a tool with layers is a toggle, folded; one without is plain text
+  expect(t).toContain('▸ Bash')
+  expect(t).toContain('use_figma')
+  expect(t).not.toContain('▸ git')
+  await $.ui.press(press('tool-toggle-Bash'))
+  t = await draw()
+  expect(t).toContain('▾ Bash')
+  expect(t).toContain('▸ git')
+  expect(t).toContain('  ls')
+  expect(t).not.toContain('  status')
+  await $.ui.press(press('tool-toggle-Bash/git'))
+  t = await draw()
+  expect(t).toContain('▾ git')
+  expect(t).toContain('  status')
+  await $.ui.press(press('tool-toggle-Bash'))
+  expect(await draw()).not.toContain('▸ git')
+  await $.ui.press(press('details-toggle'))
 })
 
 test('an interactive session opens the pane and draws the Spend tab', async ($, on) => {

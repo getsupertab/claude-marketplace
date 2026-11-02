@@ -190,9 +190,15 @@ export type Report = {
   total?: { tokens: number; cost: number }
   unmatched?: number
   models?: { name: string; msgs: number; cost: number; share: number }[]
-  tools: { name: string; calls: number; cost: number; ask: number; ctx: number; read: number; ctx_tokens: number }[]
+  tools: ToolRow[]
   /** This month's spend per session, costliest first. */
   sessions?: { sid: string; name: string; cost: number; share: number }[]
+}
+
+/** A tool, or a layer of its breakdown (Bash's program, then its subcommand). */
+export type ToolRow = {
+  name: string; calls: number; cost: number; ask: number; ctx: number; read: number; ctx_tokens: number
+  children?: ToolRow[]
 }
 
 const grouped = (n: number, digits: number) =>
@@ -368,6 +374,7 @@ let opts: PluginOptions = {}           // the manifest's userConfig values, from
 let view: View = 'spend'
 let detailsOpen = false                 // Spend's rate breakdown and tools, folded until asked for
 let sessionsOpen = false                // Spend's table of this month's sessions, likewise
+const toolsOpen = new Set<string>()     // the tool rows opened to their breakdown, by path
 let report: Report | undefined          // the last `--report`; a reload starts empty
 let error: string | undefined           // the last refresh's failure, drawn above the tab
 let options: Options | undefined        // the last budget.json read
@@ -1030,22 +1037,7 @@ function toolsSection($: EngineInterface, e: RenderEvent, r: Report): RenderChil
         <Text size="footnote" mono dimColor>cost = asking + answer into context + re-reading it (estimates)</Text>
       </Box>
       {tools.length === 0 && <Text dimColor>No tool calls in this session yet.</Text>}
-      {tools.slice(0, TOOLS_SHOWN).map(t => (
-        <Box key={`tool-${t.name}`} flexDirection="column">
-          <Box alignItems="center">
-            <Box flexGrow={1} flexShrink={1}><Text size="footnote" mono bold wrap="truncate">{t.name}</Text></Box>
-            <Box flexShrink={0} gap={2}>
-              <Text size="footnote" mono dimColor>{`${t.calls} ${t.calls === 1 ? 'call' : 'calls'}`}</Text>
-              <Text size="footnote" mono tabular bold>{usd(t.cost, 4)}</Text>
-            </Box>
-          </Box>
-          {bar($, e, [{ series: 'ask', frac: t.ask / top }, { series: 'ctx', frac: t.ctx / top }, { series: 'read', frac: t.read / top }],
-            `${t.name}: ask ${usd(t.ask, 4)}, context ${usd(t.ctx, 4)}, re-read ${usd(t.read, 4)}`, 4)}
-          <Text size="caption" mono dimColor wrap="truncate">
-            {`ask ${usd(t.ask, 4)} · ctx ${usd(t.ctx, 4)} (${int(t.ctx_tokens)} tok) · re-read ${usd(t.read, 4)}`}
-          </Text>
-        </Box>
-      ))}
+      {tools.slice(0, TOOLS_SHOWN).map(t => toolRow($, e, t, t.name, top, 0))}
       {tools.length > TOOLS_SHOWN && <Text size="footnote" mono dimColor>{`+${tools.length - TOOLS_SHOWN} more, in the browser view`}</Text>}
       {r.overhead > 0 && <Text size="footnote" mono dimColor>{`TokenTab overhead ${usd(r.overhead, 4)}: its hook text in context`}</Text>}
       {tools.length > 0 && (
@@ -1053,6 +1045,42 @@ function toolsSection($: EngineInterface, e: RenderEvent, r: Report): RenderChil
           {([['ask', 'ask'], ['ctx', 'ctx'], ['read', 're-read']] as const).map(([k, name]) => (
             <Text size="caption" mono key={`legend-${k}`} dimColor><Text color={SERIES[k]![0]}>● </Text>{name}</Text>
           ))}
+        </Box>
+      )}
+    </Box>
+  )
+}
+
+/** One tool row: name, calls, cost, its bar against the costliest sibling and the three
+ *  figures. A row with a breakdown is a toggle that opens its layers beneath it, indented. */
+function toolRow($: EngineInterface, e: RenderEvent, t: ToolRow, path: string, top: number, depth: number): RenderChildren {
+  const { Box, Text, Button } = $.ui.resolve(e)
+  const kids = t.children ?? []
+  const open = kids.length > 0 && toolsOpen.has(path)
+  const name = kids.length === 0
+    ? <Text size="footnote" mono bold={depth === 0} wrap="truncate">{depth === 0 ? t.name : `  ${t.name}`}</Text>
+    : <Button key={`tool-toggle-${path}`} label={`${open ? '▾' : '▸'} ${t.name}`} plain
+        onPress={() => { if (!toolsOpen.delete(path)) toolsOpen.add(path); $.ui.invalidate('ui.render') }}>
+        <Text size="footnote" mono bold={depth === 0}>{`${open ? '▾' : '▸'} ${t.name}`}</Text>
+      </Button>
+  const kidTop = Math.max(...kids.map(kid => kid.cost), 1e-9)
+  return (
+    <Box key={`tool-${path}`} flexDirection="column" paddingLeft={depth === 0 ? 0 : 2}>
+      <Box alignItems="center">
+        <Box flexGrow={1} flexShrink={1} minWidth={0}>{name}</Box>
+        <Box flexShrink={0} gap={2}>
+          <Text size="footnote" mono dimColor>{`${t.calls} ${t.calls === 1 ? 'call' : 'calls'}`}</Text>
+          <Text size="footnote" mono tabular bold={depth === 0}>{usd(t.cost, 4)}</Text>
+        </Box>
+      </Box>
+      {bar($, e, [{ series: 'ask', frac: t.ask / top }, { series: 'ctx', frac: t.ctx / top }, { series: 'read', frac: t.read / top }],
+        `${t.name}: ask ${usd(t.ask, 4)}, context ${usd(t.ctx, 4)}, re-read ${usd(t.read, 4)}`, 4)}
+      <Text size="caption" mono dimColor wrap="truncate">
+        {`ask ${usd(t.ask, 4)} · ctx ${usd(t.ctx, 4)} (${int(t.ctx_tokens)} tok) · re-read ${usd(t.read, 4)}`}
+      </Text>
+      {open && (
+        <Box key={`tool-kids-${path}`} flexDirection="column" gap="xs" paddingTop={1}>
+          {kids.map(kid => toolRow($, e, kid, `${path}/${kid.name}`, kidTop, depth + 1))}
         </Box>
       )}
     </Box>
