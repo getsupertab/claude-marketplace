@@ -1,9 +1,8 @@
 # TokenTab
 
-keeptabs rewritten around a Claude Code hooks module, being tested beside the original
-`keeptabs` plugin. Supertab's proof of concept that shows what Claude Code is spending, stops it at limits
-you set, and gives the agent the numbers it needs to stay inside a budget. Packaged as
-a plugin in [claude-marketplace](../../README.md). The POC's own documentation (how the
+Supertab's proof of concept, built on a Claude Code hooks module, that shows what
+Claude Code is spending, stops it at limits you set, and gives the agent the numbers it
+needs to stay inside a budget. Packaged as a plugin in [claude-marketplace](../../README.md). The POC's own documentation (how the
 numbers are worked out, budgets, the threat model) is in
 [`tokentab/README.md`](tokentab/README.md).
 
@@ -23,12 +22,7 @@ The repo is private: you need access and working git credentials, see the
 ```
 
 Claude Code asks you to confirm the source, then to pick a scope (choose "Install for
-you" to have it in every project). If you have the original `keeptabs` installed, switch
-it off first, or both guards run on every prompt:
-
-```bash
-claude plugin disable keeptabs@supertab
-```
+you" to have it in every project).
 
 That is the whole install: no setup, no settings
 change, no restart. **Start a new session** (or run `/reload-plugins`) and TokenTab is
@@ -116,7 +110,7 @@ data (ledger, guard state and your `budget.json`) stays in
 | `tokentab/tokentab.py`, `tokentab/sankey.py` | Python, run by the hooks module, the spend skill or by hand | The accounting, the terminal live view (`--once`), the pane's data (`--report`) and the status line (`--status`); the status page (`--out`), its live data file (`--push`) and the pane's Sankey (`--flow-svg`); `budget.py` validates and writes one limit |
 | `skills/status` | `/tokentab:status`, answered by the hooks module | Opens the pane and hands Claude the figures; the skill's own text runs only where the module did not load |
 | `skills/spend`, `skills/budget` | Claude, when asked what was spent; `/tokentab:budget` | Answer in words from `tokentab.py --once`; show or change the limits |
-| Data: `budget.json`, `ledger/<day>/<session>.jsonl`, `state/`, `status/<session>.html` | `plugins/data/tokentab-supertab/` under `$CLAUDE_CONFIG_DIR`, else under `~/.claude`, one fixed path, separate from keeptabs' folder | Kept across updates; the status page and its data file `status/<session>.js` are rewritten on each "open in browser", the data file on every redraw for 30 minutes after |
+| Data: `budget.json`, `ledger/<day>/<session>.jsonl`, `state/`, `status/<session>.html` | `plugins/data/tokentab-supertab/` under `$CLAUDE_CONFIG_DIR`, else under `~/.claude`, one fixed path | Kept across updates; the status page and its data file `status/<session>.js` are rewritten on each "open in browser", the data file on every redraw for 30 minutes after |
 
 Code runs from the plugin folder, `${CLAUDE_PLUGIN_ROOT}`
 (`~/.claude/plugins/cache/supertab/tokentab/<version>/`, the version being the git

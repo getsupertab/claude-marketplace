@@ -1,6 +1,6 @@
 {
   "name": "tokentab",
-  "description": "keeptabs rewritten around a Claude Code hooks module: every API call in a ledger from the first prompt, no telemetry setup; budget guard and cost views (Supertab proof of concept, testing beside keeptabs).",
+  "description": "Shows what Claude Code is spending and stops it at limits you set, built on a Claude Code hooks module: every API call in a ledger from the first prompt, no telemetry setup (Supertab proof of concept).",
   "author": {
     "name": "Supertab"
   },
