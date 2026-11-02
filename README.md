@@ -6,8 +6,7 @@ Supertab's private plugin marketplace for Claude Code. Marketplace name: `supert
 
 | Plugin | Install id | What it does |
 |---|---|---|
-| [keeptabs](plugins/keeptabs/README.md) | `keeptabs@supertab` | Shows what Claude Code is spending, stops it at limits you set, and gives the agent the numbers it needs to stay inside a budget. Proof of concept. |
-| [TokenTab](plugins/tokentab/README.md) | `tokentab@supertab` | keeptabs rewritten around a Claude Code hooks module (Claude Code 2.1.287 or later): every API call in a ledger from the first prompt, no telemetry setup. Being tested beside keeptabs; install one or the other. |
+| [TokenTab](plugins/tokentab/README.md) | `tokentab@supertab` | Shows what Claude Code is spending and stops it at limits you set, built on a Claude Code hooks module (Claude Code 2.1.304 or later): every API call in a ledger from the first prompt, no telemetry setup. Proof of concept. |
 
 Each plugin's README covers what it needs after install and how to remove it cleanly.
 
@@ -57,8 +56,7 @@ command confirms it. Then start a new session (or run `/reload-plugins`).
 
 Automatic updates are off by default for custom marketplaces. To turn them on: `/plugin`
 → Marketplaces → supertab → Enable auto-update. Claude Code then checks
-at startup, and an update applies from the next session. keeptabs' `/keeptabs:setup`
-turns this on for you. The repository is private, so the check needs git credentials
+at startup, and an update applies from the next session. The repository is private, so the check needs git credentials
 that work without a prompt (an SSH key in `ssh-agent`, or `gh auth setup-git`).
 
 **Not from the Claude Desktop app.** Desktop starts its bundled `claude` with
@@ -79,7 +77,7 @@ claude plugin marketplace remove supertab
 ```
 
 Some plugins change things outside Claude Code's plugin folders; their READMEs say how
-to undo that. Do it before uninstalling. For keeptabs, run `/keeptabs:uninstall` first.
+to undo that. Do it before uninstalling.
 
 ## Adding a plugin
 
