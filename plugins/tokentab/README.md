@@ -14,8 +14,7 @@ Python 3 (standard library only).
 
 ## Install
 
-The repo is private: you need access and working git credentials, see the
-[marketplace README](../../README.md). Inside a session:
+Inside a session:
 
 ```
 /plugin install tokentab --marketplace getsupertab/claude-marketplace
