@@ -1016,6 +1016,7 @@ def pane_report(store, sid, prices, budget, led=None, windows=None):
     row = next((r for r in rows if r["scope"] in ("session", "five_hour")), None) if on else None
     out["session"] = {
         "title": R["session"]["title"], "cost": b.cost, "tokens": b.wtok, "msgs": b.msgs,
+        "minutes": round((b.last - b.first).total_seconds() / 60) if b.first and b.last else 0,
         "limits_on": on, "unit": unit,
         "limit": None if not row else row["parts"][0] if unit == "usd" else f"5-hour window {row['parts'][0]}",
         "frac": row["frac"] if row else None,

@@ -180,7 +180,7 @@ export type Report = {
   month: number
   overhead: number
   session: null | {
-    title: string; cost: number; tokens: number; msgs: number
+    title: string; cost: number; tokens: number; msgs: number; minutes?: number
     limits_on: boolean; unit: Unit
     /** The hero's limit as text: `$0.82 of $1.00`, `5-hour window 42% used, limit 80%`. */
     limit: string | null; frac: number | null
@@ -374,6 +374,8 @@ let opts: PluginOptions = {}           // the manifest's userConfig values, from
 let view: View = 'spend'
 let detailsOpen = false                 // Spend's rate breakdown and tools, folded until asked for
 let sessionsOpen = false                // Spend's table of this month's sessions, likewise
+let shareOpen = false                   // Spend's share view stands in for the tab while open
+let shareDescription = true             // the share card carries the session's title
 const toolsOpen = new Set<string>()     // the tool rows opened to their breakdown, by path
 let report: Report | undefined          // the last `--report`; a reload starts empty
 let error: string | undefined           // the last refresh's failure, drawn above the tab
@@ -706,6 +708,7 @@ export const register: Register = (on, pluginOptions) => {
     )
     const body = view === 'budget' ? budgetTab($, e)
       : report === undefined ? <Text dimColor>loading...</Text>
+      : shareOpen && report.session !== null ? shareView($, e, report)
       : spendTab($, e, report)
     return (
       <Box flexDirection="column" gap={1}>
@@ -959,7 +962,11 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
           {label($, e, 'session spend')}
           {badge}
         </Box>
-        <Text size="title" weight="bold" tabular>{usd(s.cost)}</Text>
+        <Box justifyContent="space-between" alignItems="center">
+          <Text size="title" weight="bold" tabular>{usd(s.cost)}</Text>
+          <Button key="share" label="↑ Share" hotkey="h"
+            onPress={() => { shareOpen = true; $.ui.invalidate('ui.render') }} />
+        </Box>
         {s.frac !== null && tone !== undefined && bar($, e, [{ series: tone, frac: s.frac }], `${pct(s.frac)} of the ${s.unit === 'percent' ? '5-hour window' : 'session'} limit`, 8)}
         <Text size="footnote" dimColor>{under}</Text>
       </Box>
@@ -1149,6 +1156,183 @@ function budgetTab($: EngineInterface, e: RenderEvent): RenderChildren {
             && <Text size="footnote" key="toggle-error" color="error">{o.errors[sec.toggle.key]}</Text>,
         ]),
       ])}
+    </Box>
+  )
+}
+
+// ---------- the share view ----------
+
+/** What the share card shows: the session's figures, its title only while the switch is on. */
+export type ShareCard = {
+  date: string; cost: number; description?: string
+  minutes: number; msgs: number; calls: number; tokens: number; model?: string
+}
+
+export function shareCard(r: Report, now: Date, withDescription: boolean): ShareCard | undefined {
+  const s = r.session
+  if (s === null) return undefined
+  return {
+    date: now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+    cost: s.cost,
+    description: withDescription && s.title ? s.title : undefined,
+    minutes: s.minutes ?? 0,
+    msgs: s.msgs,
+    calls: r.tools.reduce((n, t) => n + t.calls, 0),
+    tokens: s.tokens,
+    model: r.models?.[0]?.name,
+  }
+}
+
+const duration = (minutes: number) => minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} h ${minutes % 60} min`
+
+const shareRows = (card: ShareCard): [string, string][] => [
+  ['time', duration(card.minutes)],
+  ['messages', int(card.msgs)],
+  ['tool calls', int(card.calls)],
+  ['tokens', int(card.tokens)],
+  ...(card.model ? [['model', card.model] as [string, string]] : []),
+]
+
+/** The card as plain text, what "Copy as text" and the post links carry. */
+export function shareText(card: ShareCard): string {
+  return [
+    `This task cost me ${usd(card.cost)} with Claude.`,
+    ...(card.description ? [card.description] : []),
+    shareRows(card).map(([name, value]) => `${name}: ${value}`).join(' · '),
+    'Tracked with TokenTab · supertab.co',
+  ].join('\n')
+}
+
+const xml = (text: string) => text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+
+/** Words into lines of at most `width` characters, at most `max` lines, the last cut with an ellipsis. */
+export function wrapWords(text: string, width: number, max: number): string[] {
+  const lines: string[] = []
+  for (const word of text.split(/\s+/).filter(Boolean)) {
+    const last = lines[lines.length - 1]
+    if (last !== undefined && last.length + 1 + word.length <= width) lines[lines.length - 1] = `${last} ${word}`
+    else lines.push(word)
+  }
+  if (lines.length <= max) return lines
+  const kept = lines.slice(0, max)
+  kept[max - 1] = `${kept[max - 1]!.slice(0, width - 1)}…`
+  return kept
+}
+
+/** Figma's "share-card (image)", 320 wide: logo and date, the cost, the description, the
+ *  figures, the footer. Also the file "Save image" writes, so it carries its own fonts and colours. */
+export function shareCardSvg(card: ShareCard): string {
+  const W = 320, PAD = 19
+  const sans = 'font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Inter,sans-serif"'
+  const mono = 'font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace"'
+  const parts: string[] = []
+  let y = 19
+  parts.push(`<rect x="${PAD}" y="${y}" width="20" height="20" rx="5" fill="#1a1a1a"/>`,
+    `<text x="${PAD + 10}" y="${y + 14.5}" text-anchor="middle" ${sans} font-size="12" font-weight="700" fill="#fff">T</text>`,
+    `<text x="${PAD + 28}" y="${y + 14.5}" ${sans} font-size="13" font-weight="600" fill="#1a1a1a">TokenTab</text>`,
+    `<text x="${W - PAD}" y="${y + 14}" text-anchor="end" ${sans} font-size="11" fill="#8a8a85">${xml(card.date)}</text>`)
+  y = 51
+  parts.push(`<text x="${PAD}" y="${y + 13}" ${sans} font-size="12" fill="#6b6b66">This task cost me</text>`,
+    `<text x="${PAD}" y="${y + 60}" ${sans} font-size="44" font-weight="700" letter-spacing="-1" fill="#1a1a1a">${xml(usd(card.cost))}</text>`)
+  y = 135
+  if (card.description) {
+    for (const line of wrapWords(card.description, 40, 3)) {
+      parts.push(`<text x="${PAD}" y="${y + 14}" ${sans} font-size="14" font-weight="500" fill="#1a1a1a">${xml(line)}</text>`)
+      y += 19
+    }
+    y += 12
+  }
+  parts.push(`<rect x="${PAD}" y="${y}" width="${W - 2 * PAD}" height="1" fill="#e6e5df"/>`)
+  y += 13
+  for (const [name, value] of shareRows(card)) {
+    parts.push(`<text x="${PAD}" y="${y + 13}" ${sans} font-size="12" fill="#6b6b66">${xml(name)}</text>`,
+      `<text x="${W - PAD}" y="${y + 13}" text-anchor="end" ${mono} font-size="12" fill="#1a1a1a">${xml(value)}</text>`)
+    y += 23
+  }
+  y += 4
+  parts.push(`<rect x="${PAD}" y="${y}" width="${W - 2 * PAD}" height="1" fill="#e6e5df"/>`,
+    `<text x="${PAD}" y="${y + 24}" ${sans} font-size="10" fill="#8a8a85">Tracked with TokenTab · supertab.co</text>`)
+  const H = y + 40
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">`
+    + `<defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#f1effa"/></linearGradient></defs>`
+    + `<rect x="0.5" y="0.5" width="${W - 1}" height="${H - 1}" rx="12" fill="url(#bg)" stroke="#e6e5df"/>`
+    + parts.join('') + '</svg>'
+}
+
+/** Post links: X takes the text; LinkedIn's documented share link takes only a URL, so the
+ *  feed's `text` parameter (undocumented) carries it. Neither can attach the image. */
+export const shareLinks = (text: string) => ({
+  x: `https://x.com/intent/post?text=${encodeURIComponent(text)}`,
+  linkedin: `https://www.linkedin.com/feed/?shareActive=true&text=${encodeURIComponent(text)}`,
+})
+
+/** "Save image": the card as an SVG in the data folder, the one place the module surely may write. */
+async function saveCard($: EngineInterface, svg: string): Promise<void> {
+  try {
+    const path = `${await home($)}/share/${(await sid($)).slice(0, 8)}.svg`
+    await $.fs.write(path, svg)
+    $.ui.toast(`TokenTab: card saved as ${path}`)
+  } catch (err) {
+    $.ui.toast(`TokenTab: the card was not saved (${err instanceof Error ? err.message : String(err)})`)
+  }
+}
+
+async function copyText($: EngineInterface, text: string, surface: Parameters<EngineInterface['ui']['copy']>[0]['surface']): Promise<void> {
+  const copied = await $.ui.copy({ text, surface }).catch(err => ({ isCopied: false as const, reason: String(err) }))
+  $.ui.toast(copied.isCopied ? 'TokenTab: copied as text' : `TokenTab: not copied (${copied.reason})`)
+}
+
+/** Figma's "Share popup / E", inside the pane rather than over the window (a plugin draws no
+ *  modal): the card, the description switch, the ways out. Columns stack below 72 cells. */
+function shareView($: EngineInterface, e: RenderEvent, r: Report): RenderChildren {
+  const { Box, Text, Button, Link } = $.ui.resolve(e)
+  const card = shareCard(r, new Date(), shareDescription)!
+  const text = shareText(card)
+  const links = shareLinks(text)
+  const svg = shareCardSvg(card)
+  const close = () => { shareOpen = false; $.ui.invalidate('ui.render') }
+  const preview = e.surface !== 'terminal'
+    ? (() => { const { Svg } = $.ui.resolve(e); return <Svg source={svg} alt={text} height={Number(/height="(\d+)"/.exec(svg)![1])} /> })()
+    : (
+      <Box flexDirection="column" borderStyle="round" paddingX={1}>
+        <Text dimColor>TokenTab · {card.date}</Text>
+        <Text dimColor>This task cost me</Text>
+        <Text bold>{usd(card.cost)}</Text>
+        {card.description && <Text>{card.description}</Text>}
+        {shareRows(card).map(([name, value]) => (
+          <Box key={`share-${name}`} justifyContent="space-between"><Text dimColor>{name}</Text><Text>{value}</Text></Box>
+        ))}
+        <Text dimColor>Tracked with TokenTab · supertab.co</Text>
+      </Box>
+    )
+  const actions = (
+    <Box flexDirection="column" gap="xs" flexGrow={1}>
+      <Box justifyContent="space-between" alignItems="center">
+        <Text>Show task description</Text>
+        <Button key="share-description" label={shareDescription ? 'on' : 'off'} hotkey="t"
+          variant={shareDescription ? 'primary' : 'secondary'}
+          onPress={() => { shareDescription = !shareDescription; $.ui.invalidate('ui.render') }} />
+      </Box>
+      {rule($, e, 'share-rule')}
+      <Button key="share-save" label="↓ Save image (SVG)" hotkey="i" variant="primary" onPress={() => { void saveCard($, svg) }} />
+      <Button key="share-copy" label="¶ Copy as text" hotkey="c" onPress={press => { void copyText($, text, press.surface) }} />
+      <Text><Link href={links.x}>𝕏 Share on X ↗</Link></Text>
+      <Text><Link href={links.linkedin}>in Share on LinkedIn ↗</Link></Text>
+    </Box>
+  )
+  return (
+    <Box flexDirection="column" gap={1}>
+      <Box justifyContent="space-between" alignItems="center">
+        <Box flexDirection="column">
+          <Text weight="semibold">Share this session</Text>
+          <Text size="footnote" dimColor>{r.session?.title ?? r.sid.slice(0, 8)}</Text>
+        </Box>
+        <Button key="share-close" label="Close" hotkey="x" plain onPress={close} />
+      </Box>
+      <Box flexDirection={columns >= 72 ? 'row' : 'column'} gap={2}>
+        {preview}
+        {actions}
+      </Box>
     </Box>
   )
 }
