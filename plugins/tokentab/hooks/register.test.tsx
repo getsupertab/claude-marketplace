@@ -1,7 +1,7 @@
 import { test, expect, mock } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On, RenderElement, RenderNode } from 'claude-code'
-import { at, barCells, barSvg, dataDir, inUnit, int, liveLines, pct, SECTIONS, SERIES, shareCard, shareCardSvg, shareLinks, shareText, shown, stripAnsi, toneOf, unitLabel, unitOf, usd, withNewKeys, wrapWords } from './register'
+import { at, barCells, barSvg, dataDir, inUnit, int, liveLines, pct, SECTIONS, SERIES, shareCard, shareCardSvg, shareLinks, sharePageHtml, shareText, shown, stripAnsi, toneOf, unitLabel, unitOf, usd, withNewKeys, wrapWords } from './register'
 import type { Report } from './register'
 
 // The world beneath the plugin: `$.fs` reaches nothing under `claude plugin test`, and
@@ -284,6 +284,9 @@ test('the share card: the session figures, its title behind the switch, escaped 
   expect(shareCardSvg(card)).toContain('Fix &lt;tabs&gt; &amp; bars')
   expect(shareLinks('a b').x).toBe('https://x.com/intent/post?text=a%20b')
   expect(wrapWords('one two three four', 9, 2)).toEqual(['one two', 'three…'])
+  const page = sharePageHtml(card, shareCard(r, new Date('2026-10-29T12:00:00Z'), false)!, 'a </script> title')
+  expect(page).toContain('a &lt;/script&gt; title')
+  expect(page.match(/<\/script>/g)).toHaveLength(1)
 })
 
 test('the figures as the design writes them, and the bars in Svg and in cells', async () => {

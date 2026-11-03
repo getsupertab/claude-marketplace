@@ -1266,14 +1266,115 @@ export const shareLinks = (text: string) => ({
   linkedin: `https://www.linkedin.com/feed/?shareActive=true&text=${encodeURIComponent(text)}`,
 })
 
-/** "Save image": the card as an SVG in the data folder, the one place the module surely may write. */
-async function saveCard($: EngineInterface, svg: string): Promise<void> {
+/** The share page: the card with and without its description, and the ways out the pane
+ *  lacks, done by the browser: the image to the clipboard and as a PNG, through a canvas. */
+export function sharePageHtml(withDescription: ShareCard, without: ShareCard, title: string): string {
+  const variants = [withDescription, without].map(card => {
+    const text = shareText(card)
+    return { svg: shareCardSvg(card), text, links: shareLinks(text) }
+  })
+  // `<` escaped so a title can never close the script
+  const data = JSON.stringify({ variants, file: `tokentab-${withDescription.date.replace(/[^0-9A-Za-z]+/g, '-')}.png` }).replace(/</g, '\\u003c')
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Share · TokenTab</title>
+<style>
+:root{--bg:#f4f3ee;--panel:#fff;--stage:#f1f0ea;--text:#1a1a1a;--dim:#6b6b66;--line:#e6e5df;--btn:#f1f0ea;--btn-hover:#e8e7e0;--primary:#1a1a1a;--on-primary:#fff}
+@media(prefers-color-scheme:dark){:root{--bg:#141413;--panel:#1f1f1d;--stage:#2a2a27;--text:#f2f1ec;--dim:#a3a29b;--line:#34342f;--btn:#2a2a27;--btn-hover:#34342f;--primary:#f2f1ec;--on-primary:#1a1a1a}}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--bg);color:var(--text);font:14px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif;padding:16px}
+.modal{background:var(--panel);border-radius:14px;box-shadow:0 20px 60px rgba(0,0,0,.18);width:min(680px,100%);padding:18px 20px 20px}
+h1{font-size:17px;margin:0}.sub{color:var(--dim);font-size:12px;margin:2px 0 16px}
+.body{display:flex;gap:20px;flex-wrap:wrap}
+.stage{background:var(--stage);border-radius:10px;padding:20px;flex:1 1 300px;display:grid;place-items:center}
+.stage svg{max-width:100%;height:auto;filter:drop-shadow(0 6px 16px rgba(0,0,0,.08))}
+.actions{flex:1 1 220px;display:flex;flex-direction:column;gap:6px}
+.toggle{display:flex;justify-content:space-between;align-items:center;padding:8px 0 12px;border-bottom:1px solid var(--line);margin-bottom:8px;cursor:pointer}
+.toggle input{width:30px;height:17px;accent-color:var(--primary)}
+button,a.btn{all:unset;box-sizing:border-box;display:flex;gap:10px;align-items:center;padding:9px 14px;border-radius:8px;background:var(--btn);cursor:pointer;color:var(--text)}
+button:hover,a.btn:hover{background:var(--btn-hover)}
+button:focus-visible,a.btn:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+button.primary{background:var(--primary);color:var(--on-primary)}
+.icon{width:16px;text-align:center}
+.status{color:var(--dim);font-size:12px;min-height:16px;margin-top:4px}
+</style></head><body>
+<main class="modal">
+<h1>Share this session</h1><div class="sub">${xml(title)} · ${xml(withDescription.date)}</div>
+<div class="body">
+<div class="stage" id="card"></div>
+<div class="actions">
+<label class="toggle">Show task description <input type="checkbox" id="desc" checked></label>
+<button class="primary" id="copy-image"><span class="icon">⧉</span>Copy image</button>
+<button id="download"><span class="icon">↓</span>Download PNG</button>
+<a class="btn" id="x" target="_blank" rel="noopener"><span class="icon">𝕏</span>Share on X</a>
+<a class="btn" id="linkedin" target="_blank" rel="noopener"><span class="icon">in</span>Share on LinkedIn</a>
+<button id="copy-text"><span class="icon">¶</span>Copy as text</button>
+<div class="status" id="status" role="status"></div>
+</div></div></main>
+<script>
+const DATA = ${data};
+const $ = id => document.getElementById(id);
+const current = () => DATA.variants[$('desc').checked ? 0 : 1];
+const say = text => { $('status').textContent = text; };
+function draw() {
+  const v = current();
+  $('card').innerHTML = v.svg;
+  $('x').href = v.links.x;
+  $('linkedin').href = v.links.linkedin;
+}
+function png() {
+  const svg = current().svg;
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = 3, canvas = document.createElement('canvas');
+      canvas.width = img.width * scale; canvas.height = img.height * scale;
+      const ctx = canvas.getContext('2d'); ctx.scale(scale, scale); ctx.drawImage(img, 0, 0);
+      canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('no image')), 'image/png');
+    };
+    img.onerror = () => reject(new Error('the card did not render'));
+    img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+  });
+}
+$('desc').addEventListener('change', draw);
+$('copy-image').addEventListener('click', async () => {
   try {
-    const path = `${await home($)}/share/${(await sid($)).slice(0, 8)}.svg`
-    await $.fs.write(path, svg)
-    $.ui.toast(`TokenTab: card saved as ${path}`)
+    // A promise in the ClipboardItem keeps Safari's user gesture alive while the PNG renders
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': png() })]);
+    say('Image copied.');
+  } catch (err) { say('Not copied: ' + err.message + '. Use Download PNG instead.'); }
+});
+$('download').addEventListener('click', async () => {
+  try {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(await png()); a.download = DATA.file; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    say('PNG downloaded.');
+  } catch (err) { say('Not downloaded: ' + err.message); }
+});
+$('copy-text').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText(current().text); say('Text copied.'); }
+  catch (err) { say('Not copied: ' + err.message); }
+});
+draw();
+</script></body></html>
+`
+}
+
+/** "Open share page": the page written to the data folder and opened in the default browser. */
+async function openSharePage($: EngineInterface, r: Report): Promise<void> {
+  let written: string | undefined
+  try {
+    const now = new Date()
+    const path = `${await home($)}/share/${(await sid($)).slice(0, 8)}.html`
+    await $.fs.write(path, sharePageHtml(shareCard(r, now, true)!, shareCard(r, now, false)!, r.session?.title ?? r.sid.slice(0, 8)))
+    written = path
+    const { argv, checkExit } = await opener($, path)
+    const opened = await $.process.run(argv, { timeoutMs: HELPER_TIMEOUT_MS })
+    if (checkExit && opened.exitCode !== 0) throw new Error(opened.stderr.trim() || `${argv[0]} exited ${opened.exitCode}`)
+    $.ui.toast(`TokenTab: share page opened (${path})`)
   } catch (err) {
-    $.ui.toast(`TokenTab: the card was not saved (${err instanceof Error ? err.message : String(err)})`)
+    $.ui.toast(`TokenTab: could not open the share page${written ? ` (${written})` : ''}: ${err instanceof Error ? err.message : String(err)}`)
   }
 }
 
@@ -1314,7 +1415,7 @@ function shareView($: EngineInterface, e: RenderEvent, r: Report): RenderChildre
           onPress={() => { shareDescription = !shareDescription; $.ui.invalidate('ui.render') }} />
       </Box>
       {rule($, e, 'share-rule')}
-      <Button key="share-save" label="↓ Save image (SVG)" hotkey="i" variant="primary" onPress={() => { void saveCard($, svg) }} />
+      <Button key="share-page" label="Open share page ↗" hotkey="p" variant="primary" onPress={() => { void openSharePage($, r) }} />
       <Button key="share-copy" label="¶ Copy as text" hotkey="c" onPress={press => { void copyText($, text, press.surface) }} />
       <Text><Link href={links.x}>𝕏 Share on X ↗</Link></Text>
       <Text><Link href={links.linkedin}>in Share on LinkedIn ↗</Link></Text>
