@@ -14,7 +14,7 @@ per-tool attribution. No dependencies.
   tokentab.py --status        one plain line for a status bar (for the hooks module)
   tokentab.py --all           live view across every project
 """
-import argparse, bisect, glob, json, os, re, sys, time
+import argparse, bisect, glob, json, os, re, shlex, sys, time
 from datetime import datetime, timezone
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -34,6 +34,8 @@ def data_dir():
 CFG  = data_dir()  # plugin: data in the plugin's data folder, shipped files next to this script
 PRICES_PATH = os.path.join(HERE, "prices.json")
 BUDGET_PATH = os.path.join(CFG, "budget.json")
+# The plan's usage windows as the hooks module last read them (session.measure); account-wide
+RATE_LIMITS_PATH = os.path.join(CFG, "state", "rate_limits.json")
 
 def utf8_stdio():
     """The hooks module and Claude Code speak UTF-8 on the pipes; Windows would use the ANSI code page."""
@@ -130,6 +132,69 @@ def overhead_total(b):
     """TokenTab's own hook text (budget hints, job checks), summed over models."""
     return tool_totals({None: b.overhead} if b and b.overhead else {None: {}})[0][1]
 
+# A tool's breakdown, the layers under it in the pane: Bash by program, then subcommand
+# for these; file tools by file; Agent by subagent; Skill by skill; WebFetch by host.
+SUBCOMMANDS = {"git", "gh", "npm", "npx", "pnpm", "yarn", "bun", "cargo", "go", "docker", "kubectl",
+               "brew", "pip", "pip3", "uv", "claude", "make", "terraform", "aws", "gcloud", "tmux", "deno"}
+SHELL_PREFIX = {"sudo", "time", "env", "nohup", "exec", "command"}
+SHELL_SETUP = {"cd", "export", "source", ".", "set", "pushd", "unset"}
+
+def shell_layers(cmd):
+    """("git", "status") for `cd repo && FOO=1 git status -s`: the first segment that is
+    not setup, its program and, for SUBCOMMANDS, the subcommand."""
+    for seg in re.split(r"&&|\|\||;|\||\n", cmd or ""):
+        try:
+            words = shlex.split(seg, comments=True)
+        except ValueError:
+            words = seg.split()
+        words = [w for w in words if not re.match(r"^[A-Za-z_]\w*=", w)]
+        while words and words[0] in SHELL_PREFIX:
+            words = words[1:]
+        if not words or words[0] in SHELL_SETUP:
+            continue
+        prog = words[0].rsplit("/", 1)[-1]
+        sub_ = words[1] if len(words) > 1 and prog in SUBCOMMANDS else ""
+        return (prog, sub_) if re.match(r"^[\w:.-]+$", sub_) and not sub_.startswith("-") else (prog,)
+    return ()
+
+def tool_layers(name, inp):
+    """The breakdown key of one tool_use under its tool, () where there is none."""
+    inp = inp if isinstance(inp, dict) else {}
+    if name == "Bash":
+        return shell_layers(inp.get("command"))
+    path = inp.get("file_path") or inp.get("notebook_path")
+    if name in ("Read", "Edit", "Write", "MultiEdit", "NotebookEdit") and isinstance(path, str):
+        return (path.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1],)
+    pick = {"Agent": "subagent_type", "Task": "subagent_type", "Skill": "skill"}.get(name)
+    if pick and isinstance(inp.get(pick), str):
+        return (inp[pick],)
+    if name == "WebFetch" and isinstance(inp.get("url"), str):
+        host = re.match(r"^\w+://([^/:?#]+)", inp["url"])
+        return (host.group(1),) if host else ()
+    return ()
+
+def tool_tree(name, parts, cap=12):
+    """One tool's breakdown as nested rows, costliest first: parts maps (name, *layers)
+    to its fields. Past `cap` children, the rest fold into one "N more" row."""
+    def node(label, items, depth):
+        rows = {}
+        for key, f in items:
+            if len(key) > depth:
+                rows.setdefault(key[depth], []).append((key, f))
+        out = []
+        for lab, sub_items in rows.items():
+            t = {k: sum(f.get(k, 0) for _, f in sub_items) for k in ("calls", "rtokens", *TOOL_DRAWS)}
+            t["cost"] = sum(t[k] for k in TOOL_DRAWS)
+            t["result"] = t["result_1h"] + t["result_5m"]
+            out.append((lab, t, node(lab, sub_items, depth + 1)))
+        out.sort(key=lambda r: -r[1]["cost"])
+        if len(out) > cap:
+            rest = out[cap:]
+            t = {k: sum(r[1][k] for r in rest) for k in out[0][1]}
+            out = out[:cap] + [(f"{len(rest)} more", t, [])]
+        return out
+    return node(name, [(k, f) for k, f in parts.items() if k[0] == name], 1)
+
 def tool_totals(tools):
     """{name: {model: fields}} -> [(name, fields summed over models)], costliest first.
     Adds result (1h + 5m) and cost (everything the tool draws)."""
@@ -146,7 +211,7 @@ def tool_totals(tools):
 
 class Bucket:
     __slots__ = ("inp","cw5","cw1h","cr","out","think","cost","msgs","models","first","last",
-                 "tools","overhead","threads","cost_by","cost_bm","by_source","wtok","ctx","ctx_model","ttl","calls",
+                 "tools","parts","overhead","threads","cost_by","cost_bm","by_source","wtok","ctx","ctx_model","ttl","calls",
                  "series","_open")
     def __init__(self):
         self.inp = self.cw5 = self.cw1h = self.cr = self.out = self.think = 0
@@ -158,6 +223,7 @@ class Bucket:
         self.first = None
         self.last = None
         self.tools = {}       # name -> model -> {calls, ask, think, result_1h, result_5m, rtokens}
+        self.parts = {}       # (name, *layers) -> the tools fields summed over models (tool_layers)
         self.overhead = {}    # model -> {result_1h, result_5m, read, rtokens}: TokenTab's own hook text
         self.threads = {}     # transcripts only: per conversation (main, each helper) attribution state
         self.cost_by = {}     # rate key -> USD, summed over models (output = text only)
@@ -173,10 +239,18 @@ class Bucket:
         return self.tools.setdefault(name, {}).setdefault(model, {
             "calls": 0, "ask": 0.0, "think": 0.0, "result_1h": 0.0, "result_5m": 0.0, "read": 0.0, "rtokens": 0})
 
+    def _add(self, key, model, field, v):
+        """Charge a draw to a tool (key: (name, *layers)) or, key None, to TokenTab."""
+        self._tool(key and key[0], model)[field] += v
+        if key and len(key) > 1:
+            p = self.parts.setdefault(key, {"calls": 0, "ask": 0.0, "think": 0.0, "result_1h": 0.0,
+                                            "result_5m": 0.0, "read": 0.0, "rtokens": 0})
+            p[field] += v
+
     def _thread(self, agent):
         # since: what entered context after the last call, sized; it is in the next call's write.
         # res: tokens each tool (None: TokenTab) has resident in context. ctx: the last call's.
-        # ids: tool_use id -> name. req: the open call, whose lines may still be coming.
+        # ids: tool_use id -> (name, *layers); tools and res are keyed the same way. req: the open call, whose lines may still be coming.
         return self.threads.setdefault(agent or "", {"since": {"tools": {}, "other": 0, "kt": 0},
                                                      "res": {}, "ctx": 0, "ids": {}, "req": None})
 
@@ -214,14 +288,14 @@ class Bucket:
             t["ctx"] = ctx
             cr = r * rate(prices, model, "cache_read") / 1_000_000.0
             for nm, f in resident_shares(t["res"], ctx).items():
-                self._tool(nm, model)["read"] += cr * f
+                self._add(nm, model, "read", cr * f)
             s = t["since"]
             if w1 + w5:
                 c1 = w1 * rate(prices, model, "cache_write_1h") / 1_000_000.0
                 c5 = w5 * rate(prices, model, "cache_write_5m") / 1_000_000.0
                 for nm, f in size_shares({**s["tools"], None: s["kt"]}, s["other"], w1 + w5).items():
-                    e = self._tool(nm, model)
-                    e["result_1h"] += c1 * f; e["result_5m"] += c5 * f; e["rtokens"] += round((w1 + w5) * f)
+                    for field, v in (("result_1h", c1 * f), ("result_5m", c5 * f), ("rtokens", round((w1 + w5) * f))):
+                        self._add(nm, model, field, v)
                     t["res"][nm] = t["res"].get(nm, 0) + (w1 + w5) * f
             t["since"] = {"tools": {}, "other": 0, "kt": 0}
             req = t["req"] = {"key": key, "model": model, "o": 0, "th": 0, "uses": {},
@@ -233,9 +307,10 @@ class Bucket:
             n = block_chars(blk)
             t["since"]["other"] += n          # in context, so in the next call's write
             if blk.get("type") == "tool_use" and blk.get("name"):
-                t["ids"][blk.get("id")] = blk["name"]
-                req["uses"][blk.get("id")] = (blk["name"], n)
-                self._tool(blk["name"], model)["calls"] += 1
+                k = (blk["name"], *tool_layers(blk["name"], blk.get("input")))
+                t["ids"][blk.get("id")] = k
+                req["uses"][blk.get("id")] = (k, n)
+                self._add(k, model, "calls", 1)
             elif blk.get("type") == "thinking":
                 req["think"] += n
             else:
@@ -245,7 +320,7 @@ class Bucket:
         # reports no thinking tokens), thinking per THINKING_TO_TOOLS.
         m = req["model"]
         for nm, f, v in req["applied"]:
-            self._tool(nm, m)[f] -= v
+            self._add(nm, m, f, -v)
         req["applied"] = []
         if req["uses"]:
             per = rate(prices, m, "output") / 1_000_000.0
@@ -256,7 +331,7 @@ class Bucket:
                 for f, v in (("ask", (req["o"] - req["th"]) * per * ask.get(i, 0)),
                              ("think", req["th"] * per * think.get(i, 0))):
                     if v:
-                        self._tool(nm, m)[f] += v; req["applied"].append((nm, f, v))
+                        self._add(nm, m, f, v); req["applied"].append((nm, f, v))
 
     def _charge(self, model, key, usd):
         if self._open is not None:
@@ -650,11 +725,59 @@ def bar(frac, width=28):
     color = GREEN if frac < 0.7 else (YELLOW if frac < 1.0 else RED)
     return color + "█" * filled + DIM + "·" * (width - filled) + RESET
 
-def budget_row(name, c, ulim):
-    """One scope against its limit: {name, frac, parts}, or None without a limit."""
-    if not ulim:
-        return None
-    return {"name": name, "frac": c / float(ulim), "parts": [f"{money(c)} of ${float(ulim):,.2f}"]}
+# ---------- limits: USD, or percent of the plan's usage windows ----------
+
+# The limits of each unit, one field per scope: (scope, budget.json key, label)
+LIMITS = {"usd": (("session", "session_limit_usd", "session"), ("today", "daily_limit_usd", "today")),
+          "percent": (("five_hour", "five_hour_limit_percent", "5 hours"),
+                      ("seven_day", "weekly_limit_percent", "week"))}
+
+def read_windows(path=None):
+    """{kind: window} of the 5-hour and weekly windows; {} off a subscription or before a reading."""
+    try:
+        with open(path or RATE_LIMITS_PATH, encoding="utf-8") as fh:
+            ws = json.load(fh).get("windows") or []
+    except (OSError, ValueError, AttributeError):
+        return {}
+    return {w["kind"]: w for w in ws if isinstance(w, dict) and w.get("kind") in ("five_hour", "seven_day")}
+
+def limit_unit(budget, windows):
+    """"usd" or "percent": the one chosen, else (auto) percent where the plan reports usage windows."""
+    unit = budget.get("limit_unit", "auto")
+    if unit in LIMITS:
+        return unit
+    return "percent" if windows else "usd"
+
+def window_used(w, now=None):
+    """Percent of a window used; 0 once it has reset since the reading."""
+    try:
+        reset = datetime.fromisoformat(str(w.get("resetsAt")).replace("Z", "+00:00")).timestamp()
+        if reset <= (now or time.time()):
+            return 0.0
+    except ValueError:
+        pass
+    return float(w.get("percentUsed") or 0)
+
+def limit_rows(budget, spent, windows):
+    """(unit, rows): each limit set in the unit in effect, {scope, name, frac, parts, reset}.
+    spent is {"session": usd, "today": usd}; a percent limit with no reading yet is left out."""
+    unit = limit_unit(budget, windows)
+    rows = []
+    for scope, key, name in LIMITS[unit]:
+        lim = budget.get(key)
+        if not lim:
+            continue
+        lim = float(lim)
+        if unit == "usd":
+            used, detail, reset = spent[scope], f"{money(spent[scope])} of ${lim:,.2f}", None
+        elif scope in windows:
+            w = windows[scope]
+            used, reset = window_used(w), w.get("resetsAt")
+            detail = f"{used:g}% used, limit {lim:g}%"
+        else:
+            continue
+        rows.append({"scope": scope, "name": name, "frac": used / lim, "parts": [detail], "reset": reset})
+    return unit, rows
 
 
 def budget_text(r):
@@ -722,10 +845,8 @@ def report(store, sid, prices, budget, show_all, led=None):
     if budget:
         cold = budget.get("cold_resume") or {}
         on = budget.get("budgets_on") is True
-        lines = [budget_row(name, c, budget.get(f"{key}_limit_usd"))
-                 for name, key, c in (("session", "session", b.cost),
-                                      ("today", "daily", dc))] if on else []
-        lines = [x for x in lines if x]
+        unit, lines = limit_rows(budget, {"session": b.cost, "today": dc}, read_windows())
+        lines = lines if on else []
         ctx = None
         if tb and tb.ctx:
             # Same rules as guard.py: re-read cost per call, and whether the
@@ -738,7 +859,7 @@ def report(store, sid, prices, budget, show_all, led=None):
                    "per_call": tb.ctx * rate(prices, tb.ctx_model, "cache_read") / 1e6,
                    "cold": idle >= lim, "minutes_left": int((lim - idle) // 60),
                    "rewrite": tb.ctx * rate(prices, tb.ctx_model, "cache_write_" + tb.ttl) / 1e6}
-        R["budget"] = {"on": on, "hard_stop": bool(budget.get("hard_stop")), "warn_at": budget.get("warn_at_percent", 70),
+        R["budget"] = {"on": on, "unit": unit, "hard_stop": bool(budget.get("hard_stop")), "warn_at": budget.get("warn_at_percent", 70),
                        "lines": lines, "context": ctx}
 
     R["tools"] = tool_totals(tb.tools) if tb and tb.tools else []
@@ -801,7 +922,8 @@ def render(store, sid, prices, budget, show_all, led=None):
         lines = [budget_text(r) for r in bg["lines"]]
         if lines or bg["context"]:
             L.append("")
-            mode = ((f"{'hard stop' if bg['hard_stop'] else 'warn only'} · warns at {bg['warn_at']}%")
+            mode = ((f"{'hard stop' if bg['hard_stop'] else 'warn only'} · warns at {bg['warn_at']}%"
+                     f"{' of plan usage' if bg['unit'] == 'percent' else ''}")
                     if bg["on"] else "off · /tokentab:budget turns budgets on")
             L.append(f"  {BOLD}BUDGET{RESET}  {DIM}{mode}{RESET}")
             L.extend(lines)
@@ -876,7 +998,7 @@ def snapshot(store, sid, prices, led=None):
     }
 
 
-def pane_report(store, sid, prices, budget, led=None):
+def pane_report(store, sid, prices, budget, led=None, windows=None):
     """The pane's Spend tab as data (`--report`), from the same report() as the live view
     and the status line, so the figures agree: spend (the session against its limit, the
     rate breakdown, the models, today and this month over every session) and tools."""
@@ -888,11 +1010,14 @@ def pane_report(store, sid, prices, budget, led=None):
     if not b:
         return out
     on = budget.get("budgets_on") is True
-    ulim = budget.get("session_limit_usd") if on else None
-    row = budget_row("session", b.cost, ulim)
+    windows = read_windows() if windows is None else windows
+    unit, rows = limit_rows(budget, {"session": b.cost, "today": out["today"]}, windows)
+    # The hero's bar: this session in USD, the 5-hour window in percent
+    row = next((r for r in rows if r["scope"] in ("session", "five_hour")), None) if on else None
     out["session"] = {
         "title": R["session"]["title"], "cost": b.cost, "tokens": b.wtok, "msgs": b.msgs,
-        "limits_on": on, "limit_usd": float(ulim) if ulim else None,
+        "limits_on": on, "unit": unit,
+        "limit": None if not row else row["parts"][0] if unit == "usd" else f"5-hour window {row['parts'][0]}",
         "frac": row["frac"] if row else None,
         "warn_at": budget.get("warn_at_percent", 70), "hard_stop": bool(budget.get("hard_stop")),
     }
@@ -903,9 +1028,11 @@ def pane_report(store, sid, prices, budget, led=None):
     spent = {m: sum(d.values()) for m, d in b.cost_bm.items()}
     out["models"] = [{"name": m, "msgs": b.models.get(m, 0), "cost": c, "share": (c / b.cost) if b.cost else 0}
                      for m, c in sorted(spent.items(), key=lambda kv: -kv[1]) if c > 0 or b.models.get(m)]
-    out["tools"] = [{"name": nm.split("__")[-1], "calls": e["calls"], "cost": e["cost"],
-                     "ask": e["ask"] + e["think"], "ctx": e["result"], "read": e["read"], "ctx_tokens": e["rtokens"]}
-                    for nm, e in R["tools"]]
+    row = lambda name, e, kids: {"name": name, "calls": e["calls"], "cost": e["cost"], "ask": e["ask"] + e["think"],
+                                 "ctx": e["result"], "read": e["read"], "ctx_tokens": e["rtokens"],
+                                 "children": [row(*kid) for kid in kids]}
+    parts = R["transcript"].parts if R["transcript"] else {}
+    out["tools"] = [row(nm.split("__")[-1], e, tool_tree(nm, parts)) for nm, e in R["tools"]]
     out["overhead"] = R["overhead"]["cost"]
     return out
 
@@ -919,7 +1046,10 @@ def status_line(store, sid, prices, budget, led=None):
         sess, today = R["total"]["cost"], R["totals"]["today"]
     else:
         sess, today = 0.0, source(store, led, sid)[1].day_total()[0]
-    return f"session {money(sess)} · today {money(today)}"      # the engine draws the plugin name before the line
+    windows = read_windows()
+    plan = "".join(f" · {name} {window_used(windows[scope]):g}%" for scope, _, name in LIMITS["percent"]
+                   if scope in windows) if limit_unit(budget, windows) == "percent" else ""
+    return f"session {money(sess)} · today {money(today)}{plan}"      # the engine draws the plugin name before the line
 
 
 def main():

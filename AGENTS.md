@@ -51,7 +51,7 @@ that a session they already had open runs the old copy's shell hooks until it en
   `on(...)` hooks and settles the module's unawaited redraws with `mock.clock`'s `settle()`.
   A slash command of the module's is a skill the `command.run` hook answers in its place
   (`{ command: 'tokentab:status' }`); `$.command.register` makes a flat `/<name>` that
-  a built-in of the same name shadows, see the plan doc's phase 1 notes.
+  a built-in of the same name shadows.
 - `npx -y -p typescript tsc -p plugins/tokentab` (no global `tsc` here): type-checks
   the module and its test against the types Claude Code lays in
   `plugins/tokentab/.claude-plugin/types/` when it loads the plugin from a

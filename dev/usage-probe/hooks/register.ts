@@ -1,8 +1,8 @@
 import type { Register } from 'claude-code'
 
 // Where the probe appends one JSON line per event. Compared afterwards with
-// keeptabs' OpenTelemetry ledger for the same session.
-const LOG = '/private/tmp/claude-501/-Users-jannes-Projects-supertab-experimental-keeptabs/d03c0057-3149-497b-bee8-0c45bd537f1f/scratchpad/usage-probe.jsonl'
+// the OpenTelemetry ledger for the same session.
+const LOG = '/private/tmp/usage-probe.jsonl'
 
 // $.fs.write replaces the file, so appends are serialised through one chain.
 let queue: Promise<void> = Promise.resolve()

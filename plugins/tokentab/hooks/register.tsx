@@ -181,16 +181,24 @@ export type Report = {
   overhead: number
   session: null | {
     title: string; cost: number; tokens: number; msgs: number
-    limits_on: boolean; limit_usd: number | null; frac: number | null
+    limits_on: boolean; unit: Unit
+    /** The hero's limit as text: `$0.82 of $1.00`, `5-hour window 42% used, limit 80%`. */
+    limit: string | null; frac: number | null
     warn_at: number; hard_stop: boolean
   }
   rates?: { label: string; key: string; tokens: number; cost: number; share: number }[]
   total?: { tokens: number; cost: number }
   unmatched?: number
   models?: { name: string; msgs: number; cost: number; share: number }[]
-  tools: { name: string; calls: number; cost: number; ask: number; ctx: number; read: number; ctx_tokens: number }[]
+  tools: ToolRow[]
   /** This month's spend per session, costliest first. */
   sessions?: { sid: string; name: string; cost: number; share: number }[]
+}
+
+/** A tool, or a layer of its breakdown (Bash's program, then its subcommand). */
+export type ToolRow = {
+  name: string; calls: number; cost: number; ask: number; ctx: number; read: number; ctx_tokens: number
+  children?: ToolRow[]
 }
 
 const grouped = (n: number, digits: number) =>
@@ -288,20 +296,60 @@ export const TABS: { view: View; label: string; hotkey: string }[] = [
 const TOOLS_SHOWN = 12
 
 // The budget limits the Budget tab edits, in budget.json's keys (dotted below the
-// top level), as sections of rows: a limit is an Input, a switch an on/off Button.
-// A section's `toggle` sits in its heading. Every write goes through
-// tokentab/budget.py, the one validator.
-export type Setting = { key: string; label: string; kind: 'limit' | 'switch'; unit?: string }
+// top level), as sections of rows: a limit is an Input, a switch an on/off Button,
+// the unit a Button that steps through UNITS. A section's `toggle` sits in its heading.
+// A limit with a `percent` twin is one field: the twin stands in while the unit in
+// effect is percent. Every write goes through tokentab/budget.py, the one validator.
+export type Unit = 'usd' | 'percent'
+export type Setting = {
+  key: string; label: string; kind: 'limit' | 'switch' | 'unit'; unit?: string
+  percent?: { key: string; label: string }
+}
 export const SECTIONS: { title: string; toggle?: Setting; rows: Setting[] }[] = [
   { title: 'limits', toggle: { key: 'budgets_on', label: 'check the limits', kind: 'switch' }, rows: [
-    { key: 'session_limit_usd', label: 'This session', unit: 'USD', kind: 'limit' },
-    { key: 'daily_limit_usd', label: 'Today', unit: 'USD', kind: 'limit' },
+    { key: 'limit_unit', label: 'Limit unit', kind: 'unit' },
+    { key: 'session_limit_usd', label: 'This session', unit: 'USD', kind: 'limit',
+      percent: { key: 'five_hour_limit_percent', label: '5-hour window' } },
+    { key: 'daily_limit_usd', label: 'Today', unit: 'USD', kind: 'limit',
+      percent: { key: 'weekly_limit_percent', label: 'This week' } },
     { key: 'warn_at_percent', label: 'Warn at', unit: '%', kind: 'limit' },
     { key: 'hard_stop', label: 'Hard stop at 100%', kind: 'switch' },
   ] },
 ]
 
 type Json = Record<string, unknown>
+
+// limit_unit's values in the order the Budget tab's button steps through them
+export const UNITS = ['auto', 'usd', 'percent'] as const
+const WINDOWS = ['five_hour', 'seven_day']
+
+/** The unit in effect: the one chosen, else (auto) percent where the plan reports a usage
+ *  window, the same rule as limit_unit() in tokentab.py. */
+export function unitOf(budget: Json | undefined, windows: { kind: string }[]): Unit {
+  const chosen = budget?.limit_unit
+  if (chosen === 'usd' || chosen === 'percent') return chosen
+  return windows.some(w => WINDOWS.includes(w.kind)) ? 'percent' : 'usd'
+}
+
+/** A row as the unit in effect shows it: a limit's percent twin under percent. */
+export function inUnit(s: Setting, unit: Unit): Setting {
+  return unit === 'percent' && s.percent ? { ...s, key: s.percent.key, label: s.percent.label, unit: '%' } : s
+}
+
+/** The unit button's label: what is chosen, and under auto what it found. */
+export function unitLabel(chosen: unknown, unit: Unit): string {
+  const name = (u: Unit) => (u === 'usd' ? '$ USD' : '% of plan')
+  return chosen === 'usd' || chosen === 'percent' ? name(chosen) : `auto: ${unit === 'usd' ? '$' : '%'}`
+}
+
+/** The user's budget.json with the keys a newer shipped file has added, in the shipped
+ *  order; undefined when nothing is missing. */
+export function withNewKeys(user: Json, shipped: Json): Json | undefined {
+  if (Object.keys(shipped).every(k => k in user)) return undefined
+  const out: Json = {}
+  for (const k of Object.keys(shipped)) out[k] = k in user ? user[k] : shipped[k]
+  return { ...out, ...user }
+}
 
 /** The value under a dotted key of a parsed budget.json. */
 export function at(cfg: Json | undefined, key: string): unknown {
@@ -320,12 +368,13 @@ export function shown(v: unknown): string {
   return String(v)
 }
 
-type Options = { budget?: Json; path: string; errors: Record<string, string>; error?: string }
+type Options = { budget?: Json; path: string; errors: Record<string, string>; error?: string; windows: { kind: string }[] }
 
 let opts: PluginOptions = {}           // the manifest's userConfig values, from register()
 let view: View = 'spend'
 let detailsOpen = false                 // Spend's rate breakdown and tools, folded until asked for
 let sessionsOpen = false                // Spend's table of this month's sessions, likewise
+const toolsOpen = new Set<string>()     // the tool rows opened to their breakdown, by path
 let report: Report | undefined          // the last `--report`; a reload starts empty
 let error: string | undefined           // the last refresh's failure, drawn above the tab
 let options: Options | undefined        // the last budget.json read
@@ -339,6 +388,7 @@ let again = false
 let columns = 60                        // the pane body's width in cells, from the last render
 let waiting = false                     // session.start's open left the pane undrawn: the first prompt opens it
 let showing = false                     // this session's auto-open and clock have started (startShowing)
+let measured = false                    // this load has written the usage windows once
 let autoOpenHere: boolean | undefined   // the switch set where /config had no row for it, `$.store`'s AUTO_OPEN
 
 // An SDK host (the Desktop app, `claude -p`) lists no plugin's /config row, so there the
@@ -416,13 +466,21 @@ async function pageIsOpen($: EngineInterface): Promise<boolean> {
   return pageOpenedAt !== undefined && (await $.clock.now()) - pageOpenedAt < PAGE_MS
 }
 
+async function readWindows($: EngineInterface): Promise<{ kind: string }[]> {
+  try {
+    const w = (JSON.parse(await $.fs.read(`${await home($)}/state/rate_limits.json`)) as Json).windows
+    return Array.isArray(w) ? w as { kind: string }[] : []
+  } catch { return [] }
+}
+
 async function readBudget($: EngineInterface): Promise<void> {
   const path = `${await home($)}/budget.json`
   const errors = options?.errors ?? {}
+  const windows = await readWindows($)
   try {
-    options = { budget: JSON.parse(await $.fs.read(path)) as Json, path, errors }
+    options = { budget: JSON.parse(await $.fs.read(path)) as Json, path, errors, windows }
   } catch (err) {
-    options = { path, errors, error: `budget.json: ${err instanceof Error ? err.message : String(err)}` }
+    options = { path, errors, windows, error: `budget.json: ${err instanceof Error ? err.message : String(err)}` }
   }
 }
 
@@ -588,9 +646,16 @@ export const register: Register = (on, pluginOptions) => {
       const data = await home($)
       // The loaded marker: scripts/loaded-check.sh looks for it on the first prompt.
       await $.fs.write(`${data}/state/loaded/${await $.session.id()}`, new Date(await $.clock.now()).toISOString() + '\n')
-      // First run: the shipped limits become the user's budget.json, never touched again.
+      // First run: the shipped limits become the user's budget.json. After that only keys
+      // a newer version ships are added, the user's values kept.
+      const shipped = await $.fs.read(`${$.plugin.root}/tokentab/budget.json`)
       if (!(await $.fs.exists(`${data}/budget.json`))) {
-        await $.fs.write(`${data}/budget.json`, await $.fs.read(`${$.plugin.root}/tokentab/budget.json`))
+        await $.fs.write(`${data}/budget.json`, shipped)
+      } else {
+        try {
+          const added = withNewKeys(JSON.parse(await $.fs.read(`${data}/budget.json`)) as Json, JSON.parse(shipped) as Json)
+          if (added) await $.fs.write(`${data}/budget.json`, JSON.stringify(added, null, 2) + '\n')
+        } catch { /* a file that does not parse is the guard's to report, never overwritten */ }
       }
     } catch { /* nothing to track yet; the shell gate reports a module that did not load */ }
 
@@ -695,6 +760,22 @@ export const register: Register = (on, pluginOptions) => {
       if (!(await isPlaced($)) && (await openPane($)).isPlaced) void refresh($)
     }
     return next(e)
+  }).catch(($, e, next) => next(e))
+
+  // The plan's usage windows (5-hour, weekly; none off a subscription) for the guard and the
+  // report, which run outside the engine. Account-wide, so one file; written when a
+  // window moved and on this load's first measurement, which also records "none".
+  on('session.measure', async ($, e, next) => {
+    const r = await next(e)
+    if (!measured || e.changed.includes('rateLimits')) {
+      measured = true
+      try {
+        const windows = e.rateLimits.map(w => ({ kind: w.kind, percentUsed: w.percentUsed, resetsAt: w.resetsAt ?? null }))
+        await $.fs.write(`${await home($)}/state/rate_limits.json`,
+          JSON.stringify({ at: new Date(await $.clock.now()).toISOString(), windows }) + '\n')
+      } catch { /* the limits stay in the unit last read */ }
+    }
+    return r
   }).catch(($, e, next) => next(e))
 
   // Every API request's usage, in-process. The record goes on first (`next`), then our
@@ -852,9 +933,10 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
       </Text>
   const mode = `${s.hard_stop ? 'hard stop' : 'warn only'}, warns at ${s.warn_at}%`
   const under = [
-    s.limit_usd !== null ? `of ${usd(s.limit_usd)}` : '',
+    s.limit ?? '',
     `${int(s.tokens)} tokens`,
-    s.frac !== null ? mode : s.limits_on ? 'no session limit set' : 'limits off',
+    s.frac !== null ? mode : !s.limits_on ? 'limits off'
+      : s.unit === 'percent' ? 'no 5-hour limit set or no reading yet' : 'no session limit set',
   ].filter(x => x !== '').join(' · ')
   const rates = r.rates ?? []
   const series = (key: string) => (SERIES[key] ? key : 'input')
@@ -878,7 +960,7 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
           {badge}
         </Box>
         <Text size="title" weight="bold" tabular>{usd(s.cost)}</Text>
-        {s.frac !== null && tone !== undefined && bar($, e, [{ series: tone, frac: s.frac }], `${pct(s.frac)} of the session limit`, 8)}
+        {s.frac !== null && tone !== undefined && bar($, e, [{ series: tone, frac: s.frac }], `${pct(s.frac)} of the ${s.unit === 'percent' ? '5-hour window' : 'session'} limit`, 8)}
         <Text size="footnote" dimColor>{under}</Text>
       </Box>
       <Box key="details" flexDirection="column" gap="xs">
@@ -955,22 +1037,7 @@ function toolsSection($: EngineInterface, e: RenderEvent, r: Report): RenderChil
         <Text size="footnote" mono dimColor>cost = asking + answer into context + re-reading it (estimates)</Text>
       </Box>
       {tools.length === 0 && <Text dimColor>No tool calls in this session yet.</Text>}
-      {tools.slice(0, TOOLS_SHOWN).map(t => (
-        <Box key={`tool-${t.name}`} flexDirection="column">
-          <Box alignItems="center">
-            <Box flexGrow={1} flexShrink={1}><Text size="footnote" mono bold wrap="truncate">{t.name}</Text></Box>
-            <Box flexShrink={0} gap={2}>
-              <Text size="footnote" mono dimColor>{`${t.calls} ${t.calls === 1 ? 'call' : 'calls'}`}</Text>
-              <Text size="footnote" mono tabular bold>{usd(t.cost, 4)}</Text>
-            </Box>
-          </Box>
-          {bar($, e, [{ series: 'ask', frac: t.ask / top }, { series: 'ctx', frac: t.ctx / top }, { series: 'read', frac: t.read / top }],
-            `${t.name}: ask ${usd(t.ask, 4)}, context ${usd(t.ctx, 4)}, re-read ${usd(t.read, 4)}`, 4)}
-          <Text size="caption" mono dimColor wrap="truncate">
-            {`ask ${usd(t.ask, 4)} · ctx ${usd(t.ctx, 4)} (${int(t.ctx_tokens)} tok) · re-read ${usd(t.read, 4)}`}
-          </Text>
-        </Box>
-      ))}
+      {tools.slice(0, TOOLS_SHOWN).map(t => toolRow($, e, t, t.name, top, 0))}
       {tools.length > TOOLS_SHOWN && <Text size="footnote" mono dimColor>{`+${tools.length - TOOLS_SHOWN} more, in the browser view`}</Text>}
       {r.overhead > 0 && <Text size="footnote" mono dimColor>{`TokenTab overhead ${usd(r.overhead, 4)}: its hook text in context`}</Text>}
       {tools.length > 0 && (
@@ -978,6 +1045,42 @@ function toolsSection($: EngineInterface, e: RenderEvent, r: Report): RenderChil
           {([['ask', 'ask'], ['ctx', 'ctx'], ['read', 're-read']] as const).map(([k, name]) => (
             <Text size="caption" mono key={`legend-${k}`} dimColor><Text color={SERIES[k]![0]}>● </Text>{name}</Text>
           ))}
+        </Box>
+      )}
+    </Box>
+  )
+}
+
+/** One tool row: name, calls, cost, its bar against the costliest sibling and the three
+ *  figures. A row with a breakdown is a toggle that opens its layers beneath it, indented. */
+function toolRow($: EngineInterface, e: RenderEvent, t: ToolRow, path: string, top: number, depth: number): RenderChildren {
+  const { Box, Text, Button } = $.ui.resolve(e)
+  const kids = t.children ?? []
+  const open = kids.length > 0 && toolsOpen.has(path)
+  const name = kids.length === 0
+    ? <Text size="footnote" mono bold={depth === 0} wrap="truncate">{depth === 0 ? t.name : `  ${t.name}`}</Text>
+    : <Button key={`tool-toggle-${path}`} label={`${open ? '▾' : '▸'} ${t.name}`} plain
+        onPress={() => { if (!toolsOpen.delete(path)) toolsOpen.add(path); $.ui.invalidate('ui.render') }}>
+        <Text size="footnote" mono bold={depth === 0}>{`${open ? '▾' : '▸'} ${t.name}`}</Text>
+      </Button>
+  const kidTop = Math.max(...kids.map(kid => kid.cost), 1e-9)
+  return (
+    <Box key={`tool-${path}`} flexDirection="column" paddingLeft={depth === 0 ? 0 : 2}>
+      <Box alignItems="center">
+        <Box flexGrow={1} flexShrink={1} minWidth={0}>{name}</Box>
+        <Box flexShrink={0} gap={2}>
+          <Text size="footnote" mono dimColor>{`${t.calls} ${t.calls === 1 ? 'call' : 'calls'}`}</Text>
+          <Text size="footnote" mono tabular bold={depth === 0}>{usd(t.cost, 4)}</Text>
+        </Box>
+      </Box>
+      {bar($, e, [{ series: 'ask', frac: t.ask / top }, { series: 'ctx', frac: t.ctx / top }, { series: 'read', frac: t.read / top }],
+        `${t.name}: ask ${usd(t.ask, 4)}, context ${usd(t.ctx, 4)}, re-read ${usd(t.read, 4)}`, 4)}
+      <Text size="caption" mono dimColor wrap="truncate">
+        {`ask ${usd(t.ask, 4)} · ctx ${usd(t.ctx, 4)} (${int(t.ctx_tokens)} tok) · re-read ${usd(t.read, 4)}`}
+      </Text>
+      {open && (
+        <Box key={`tool-kids-${path}`} flexDirection="column" gap="xs" paddingTop={1}>
+          {kids.map(kid => toolRow($, e, kid, `${path}/${kid.name}`, kidTop, depth + 1))}
         </Box>
       )}
     </Box>
@@ -1000,8 +1103,15 @@ function budgetTab($: EngineInterface, e: RenderEvent): RenderChildren {
   const toggle = (key: string, on: boolean, onPress: () => void): RenderChildren => mobile
     ? <Text size="footnote" mono weight="semibold">{on ? 'on' : 'off'}</Text>
     : <Button key={key} label={on ? 'on' : 'off'} variant={on ? 'primary' : 'secondary'} onPress={onPress} />
+  const unit = unitOf(o?.budget, o?.windows ?? [])
   const control = (s: Setting): RenderChildren => {
     const v = at(o?.budget, s.key)
+    if (s.kind === 'unit') {
+      const chosen = UNITS.includes(v as typeof UNITS[number]) ? v as typeof UNITS[number] : 'auto'
+      const next = UNITS[(UNITS.indexOf(chosen) + 1) % UNITS.length]!
+      return column(mobile ? <Text size="footnote" mono weight="semibold">{unitLabel(chosen, unit)}</Text>
+        : <Button key={`b-${s.key}`} label={unitLabel(chosen, unit)} variant="secondary" onPress={() => { void setBudget($, s.key, next) }} />)
+    }
     if (s.kind === 'switch') return column(toggle(`b-${s.key}`, v === true, () => { void setBudget($, s.key, v === true ? 'off' : 'on') }))
     if (mobile) return column(<Text size="footnote" mono tabular weight="semibold">{shown(v)}</Text>)
     const { Input } = $.ui.resolve(e)
@@ -1034,7 +1144,7 @@ function budgetTab($: EngineInterface, e: RenderEvent): RenderChildren {
       {SECTIONS.flatMap(sec => [
         rule($, e, `rule-${sec.title}`),
         section(sec.title, sec.toggle && control(sec.toggle), [
-          ...sec.rows.map(s => row(s.key, s.unit === undefined ? s.label : `${s.label} (${s.unit})`, control(s), o?.errors[s.key])),
+          ...sec.rows.map(r => inUnit(r, unit)).map(s => row(s.key, s.unit === undefined ? s.label : `${s.label} (${s.unit})`, control(s), o?.errors[s.key])),
           sec.toggle !== undefined && o?.errors[sec.toggle.key] !== undefined
             && <Text size="footnote" key="toggle-error" color="error">{o.errors[sec.toggle.key]}</Text>,
         ]),

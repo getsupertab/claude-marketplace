@@ -187,6 +187,7 @@ def main():
         errs.append("snapshot cost_by does not sum to cost_usd")
     kt.render(store, "fx", prices, {}, True)
     errs += pane_check(store, prices)
+    errs += breakdown_check(store, prices)
     errs += series_check(b, "transcript", store)
     errs += ledger_case(root, store, prices)
     errs += utf8_case(root, prices)
@@ -202,10 +203,22 @@ def pane_check(store, prices):
     summing to the total, tools with the three draws; this month counts only this month."""
     errs = []
     budget = {"budgets_on": True, "session_limit_usd": 0.0001, "warn_at_percent": 70}
-    rep = json.loads(json.dumps(kt.pane_report(store, "fx", prices, budget)))
+    rep = json.loads(json.dumps(kt.pane_report(store, "fx", prices, budget, windows={})))
     s = rep["session"]
-    if not s or s["limit_usd"] != 0.0001 or not s["frac"] or s["frac"] < 1:
+    if not s or s["unit"] != "usd" or not s["limit"].endswith("of $0.00") or not s["frac"] or s["frac"] < 1:
         errs.append(f"pane report: session against its limit is wrong: {s}")
+    # A plan with usage windows: auto counts the 5-hour window in percent, a forced unit wins
+    windows = {"five_hour": {"kind": "five_hour", "percentUsed": 40, "resetsAt": "2999-01-01T00:00:00Z"},
+               "seven_day": {"kind": "seven_day", "percentUsed": 12.5, "resetsAt": "2000-01-01T00:00:00Z"}}
+    plan = {**budget, "five_hour_limit_percent": 80, "weekly_limit_percent": 50}
+    s = kt.pane_report(store, "fx", prices, plan, windows=windows)["session"]
+    if s["unit"] != "percent" or abs(s["frac"] - 0.5) > 1e-9 or s["limit"] != "5-hour window 40% used, limit 80%":
+        errs.append(f"pane report: the 5-hour window against its limit is wrong: {s}")
+    if kt.pane_report(store, "fx", prices, {**plan, "limit_unit": "usd"}, windows=windows)["session"]["unit"] != "usd":
+        errs.append("pane report: limit_unit usd should win over the usage windows")
+    unit, rows = kt.limit_rows(plan, {"session": 0, "today": 0}, windows)
+    if [(r["scope"], r["frac"]) for r in rows] != [("five_hour", 0.5), ("seven_day", 0.0)]:
+        errs.append(f"limit_rows: a window past its reset should count 0%: {rows}")
     if abs(sum(r["cost"] for r in rep["rates"]) - rep["total"]["cost"]) > 1e-6:
         errs.append("pane report: rates do not sum to the total")
     if len(rep["models"]) < 2 or abs(sum(m["cost"] for m in rep["models"]) - rep["total"]["cost"]) > 1e-6:
@@ -216,13 +229,43 @@ def pane_check(store, prices):
         errs.append("pane report: this month's sessions do not sum to the month")
     if rep["sessions"] and abs(sum(x["share"] for x in rep["sessions"]) - 1) > 1e-6:
         errs.append("pane report: the sessions' shares do not sum to 100%")
-    if kt.pane_report(store, "fx", prices, {})["session"]["frac"] is not None:
+    if kt.pane_report(store, "fx", prices, {}, windows={})["session"]["frac"] is not None:
         errs.append("pane report: no limit should give no fraction")
-    if kt.pane_report(store, "fx", prices, {**budget, "budgets_on": False})["session"]["frac"] is not None:
+    if kt.pane_report(store, "fx", prices, {**budget, "budgets_on": False}, windows={})["session"]["frac"] is not None:
         errs.append("pane report: limits switched off should give no fraction")
     now = kt.datetime.now().timestamp()
     if abs(kt.month_total([(now, 1.5, 0), (now - 400 * 86400, 9.0, 0)]) - 1.5) > 1e-9:
         errs.append("month_total counts a day outside this month")
+    return errs
+
+
+def breakdown_check(store, prices):
+    """A tool's layers: Bash by program and subcommand, file tools by file; in the pane
+    report every layer's draws sum to its parent's."""
+    errs = []
+    cases = [("cd repo && FOO=1 git status -s", ("git", "status")), ("sudo brew install jq", ("brew", "install")),
+             ("npx -y tsc", ("npx",)), ("python3 x.py | head", ("python3",)), ("export A=1; ls", ("ls",)), ("", ())]
+    for cmd, want in cases:
+        if kt.shell_layers(cmd) != want:
+            errs.append(f"shell_layers({cmd!r}) = {kt.shell_layers(cmd)}, want {want}")
+    for name, inp, want in [("Read", {"file_path": "/a/b/c.py"}, ("c.py",)), ("Agent", {"subagent_type": "Explore"}, ("Explore",)),
+                            ("WebFetch", {"url": "https://example.com/x"}, ("example.com",)), ("Grep", {"pattern": "x"}, ())]:
+        if kt.tool_layers(name, inp) != want:
+            errs.append(f"tool_layers({name}) = {kt.tool_layers(name, inp)}, want {want}")
+    rep = kt.pane_report(store, "fx", prices, {}, windows={})
+    bash = next((t for t in rep["tools"] if t["name"] == "Bash"), None)
+    if not bash or sorted(k["name"] for k in bash["children"]) != ["ls", "make"]:
+        errs.append(f"pane report: Bash should break down into ls and make: {bash and bash['children']}")
+    def sums(t):
+        kids = t.get("children") or []
+        if kids and any(abs(sum(k[f] for k in kids) - t[f]) > 1e-9 for f in ("calls", "cost", "ask", "ctx", "read")):
+            errs.append(f"pane report: {t['name']}'s layers do not sum to it")
+        for k in kids:
+            sums(k)
+    for t in rep["tools"]:
+        sums(t)
+    if any(t["children"] for t in rep["tools"] if t["name"] == "Grep"):
+        errs.append("pane report: Grep has no layers")
     return errs
 
 

@@ -1,7 +1,0 @@
-{
-  "name": "keeptabs",
-  "description": "Budget guard, telemetry collector and live cost view for Claude Code (Supertab proof of concept).",
-  "author": {
-    "name": "Supertab"
-  }
-}

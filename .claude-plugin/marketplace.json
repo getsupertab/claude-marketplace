@@ -8,11 +8,6 @@
   },
   "plugins": [
     {
-      "name": "keeptabs",
-      "source": "./plugins/keeptabs",
-      "description": "Shows what Claude Code is spending, stops it at limits you set, and gives the agent the numbers it needs to stay inside a budget."
-    },
-    {
       "name": "tokentab",
       "source": "./plugins/tokentab",
       "description": "See what Claude Code is spending while you work: every API call priced from the first prompt, a live cost pane, and budget limits that warn or stop. No setup. Needs Claude Code 2.1.304 or later."
