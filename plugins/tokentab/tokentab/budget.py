@@ -8,7 +8,7 @@ and the budget skill alike.
   budget.py set KEY VALUE   change one existing key and write the file back, its order and
                             its _comment keys kept. VALUE: a number; "off", "none" or "" for
                             a limit that is switched off (null); on/off/true/false/yes/no
-                            for a switch; auto, usd or percent for limit_unit. Prints the new value as JSON; a value that does
+                            for a switch. Prints the new value as JSON; a value that does
                             not fit is refused on stderr with exit code 1, nothing written.
 
 A key that is not in the file is refused too, so a typo never adds one. Lists
@@ -22,8 +22,6 @@ import tokentab as kt  # noqa: E402
 PATH = os.path.join(kt.CFG, "budget.json")
 SHIPPED = os.path.join(os.path.dirname(os.path.abspath(__file__)), "budget.json")
 TRUE, FALSE = ("on", "true", "yes", "1"), ("off", "false", "no", "0")
-UNITS = {"auto": "auto", "usd": "usd", "$": "usd", "dollars": "usd",
-         "percent": "percent", "%": "percent", "pct": "percent"}
 
 
 def load():
@@ -54,11 +52,8 @@ def lookup(cfg, key):
 def parse(key, old, raw):
     """The new value for key from the text raw, by the key's name and the value it holds."""
     leaf = key.split(".")[-1]
-    if leaf == "limit_unit":
-        unit = UNITS.get(str(raw).strip().lower())
-        if unit is None:
-            raise ValueError(f"{key}: auto, usd or percent, not {raw!r}")
-        return unit
+    if leaf == "limit_unit":   # an old file may still hold it
+        raise ValueError(f"{key}: no longer a setting; the account decides (percent on Pro and Max, else USD)")
     text = str(raw).strip().lower().replace(",", "").replace("$", "").rstrip("%").strip()
     if isinstance(old, bool):
         if text in TRUE: return True

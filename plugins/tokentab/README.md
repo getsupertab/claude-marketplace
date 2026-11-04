@@ -83,9 +83,9 @@ Once on, the defaults are $25 per session and $40 per day. TokenTab warns at 70%
 past the limit.
 
 On a Pro or Max plan the limits count in percent of the plan's 5-hour and weekly usage
-windows instead, 80% and 90% by default. TokenTab picks the unit on its own: percent
-where Claude Code reports usage windows, dollars otherwise. "Limit unit" on the Budget
-tab switches it when the guess is wrong.
+windows instead, 80% and 90% by default. TokenTab picks the unit from your account: percent
+where Claude Code reports usage windows, dollars otherwise. It's not a setting: your
+account decides.
 
 ### What it does with budgets off
 

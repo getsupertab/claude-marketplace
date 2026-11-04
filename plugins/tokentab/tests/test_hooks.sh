@@ -73,7 +73,7 @@ check "guard denies a tool call past a hard session limit" \
 mkdir -p "$DATA/state/windows"
 W85='[{"kind": "five_hour", "percentUsed": 85, "resetsAt": "2999-01-01T00:00:00Z"}]'
 cat > "$DATA/budget.json" <<'EOF'
-{"budgets_on": true, "limit_unit": "auto", "session_limit_usd": 0.000001, "five_hour_limit_percent": 90, "weekly_limit_percent": null, "warn_at_percent": 70, "hard_stop": true}
+{"budgets_on": true, "session_limit_usd": 0.000001, "five_hour_limit_percent": 90, "weekly_limit_percent": null, "warn_at_percent": 70, "hard_stop": true}
 EOF
 # Before the session's own reading: the last one written counts only if it was this login's
 printf '{"oauthAccount": {"accountUuid": "acc-pro", "organizationUuid": "org-pro"}}\n' > "$CLAUDE_CONFIG_DIR/.claude.json"
@@ -88,9 +88,9 @@ printf '{"account": "acc-other/org-other", "windows": []}\n' > "$DATA/state/rate
 printf '{"windows": [{"kind": "five_hour", "percentUsed": 95, "resetsAt": "2999-01-01T00:00:00Z"}]}\n' > "$DATA/state/windows/s-guard.json"
 check "guard counts the plan's 5-hour window in percent and stops past its limit" \
   "$(tool Read "" | "$SCRIPTS/guard.sh")" "95% used"
-sed 's/"limit_unit": "auto"/"limit_unit": "usd"/' "$DATA/budget.json" > "$DATA/b.tmp" && mv "$DATA/b.tmp" "$DATA/budget.json"
-check "guard counts USD when limit_unit says so, usage windows or not" \
-  "$(tool Read "" | "$SCRIPTS/guard.sh")" '"permissionDecision": "deny"'
+sed 's/"budgets_on": true,/"budgets_on": true, "limit_unit": "usd",/' "$DATA/budget.json" > "$DATA/b.tmp" && mv "$DATA/b.tmp" "$DATA/budget.json"
+check "guard ignores an old file's limit_unit while the plan reports windows" \
+  "$(tool Read "" | "$SCRIPTS/guard.sh")" "95% used"
 rm "$DATA/state/rate_limits.json" "$DATA/state/windows/s-guard.json" "$CLAUDE_CONFIG_DIR/.claude.json"
 check "guard lets TokenTab's own report command through" \
   "$(tool Bash "python3 /plugins/tokentab/tokentab/tokentab.py --status" | "$SCRIPTS/guard.sh")" ""
