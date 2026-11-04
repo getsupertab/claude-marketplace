@@ -320,18 +320,17 @@ export const TABS: { view: View; label: string; hotkey: string }[] = [
 const TOOLS_SHOWN = 12
 
 // The budget limits the Budget tab edits, in budget.json's keys (dotted below the
-// top level), as sections of rows: a limit is an Input, a switch an on/off Button,
-// the unit a Button that steps through UNITS. A section's `toggle` sits in its heading.
+// top level), as sections of rows: a limit is an Input, a switch an on/off Button.
+// A section's `toggle` sits in its heading.
 // A limit with a `percent` twin is one field: the twin stands in while the unit in
 // effect is percent. Every write goes through tokentab/budget.py, the one validator.
 export type Unit = 'usd' | 'percent'
 export type Setting = {
-  key: string; label: string; kind: 'limit' | 'switch' | 'unit'; unit?: string
+  key: string; label: string; kind: 'limit' | 'switch'; unit?: string
   percent?: { key: string; label: string }
 }
 export const SECTIONS: { title: string; toggle?: Setting; rows: Setting[] }[] = [
   { title: 'limits', toggle: { key: 'budgets_on', label: 'check the limits', kind: 'switch' }, rows: [
-    { key: 'limit_unit', label: 'Limit unit', kind: 'unit' },
     { key: 'session_limit_usd', label: 'This session', unit: 'USD', kind: 'limit',
       percent: { key: 'five_hour_limit_percent', label: '5-hour window' } },
     { key: 'daily_limit_usd', label: 'Today', unit: 'USD', kind: 'limit',
@@ -343,27 +342,17 @@ export const SECTIONS: { title: string; toggle?: Setting; rows: Setting[] }[] = 
 
 type Json = Record<string, unknown>
 
-// limit_unit's values in the order the Budget tab's button steps through them
-export const UNITS = ['auto', 'usd', 'percent'] as const
 const WINDOWS = ['five_hour', 'seven_day']
 
-/** The unit in effect: the one chosen, else (auto) percent where the plan reports a usage
- *  window; percent with no window counts USD. The same rule as limit_unit() in tokentab.py. */
-export function unitOf(budget: Json | undefined, windows: { kind: string }[]): Unit {
-  if (budget?.limit_unit === 'usd') return 'usd'
+/** The unit in effect, decided by the account, not a setting: percent where the plan reports
+ *  a usage window (Pro, Max), else USD. The same rule as limit_unit() in tokentab.py. */
+export function unitOf(windows: { kind: string }[]): Unit {
   return windows.some(window => WINDOWS.includes(window.kind)) ? 'percent' : 'usd'
 }
 
 /** A row as the unit in effect shows it: a limit's percent twin under percent. */
 export function inUnit(s: Setting, unit: Unit): Setting {
   return unit === 'percent' && s.percent ? { ...s, key: s.percent.key, label: s.percent.label, unit: '%' } : s
-}
-
-/** The unit button's label: what is chosen, and under auto, or percent with no window, what it found. */
-export function unitLabel(chosen: unknown, unit: Unit): string {
-  if (chosen === 'usd') return '$ USD'
-  if (chosen === 'percent') return unit === 'percent' ? '% of plan' : '% of plan (no usage windows: checking $)'
-  return `auto: ${unit === 'usd' ? '$' : '%'}`
 }
 
 /** The user's budget.json with the keys a newer shipped file has added, in the shipped
@@ -1166,15 +1155,9 @@ function budgetTab($: EngineInterface, e: RenderEvent): RenderChildren {
   const toggle = (key: string, on: boolean, onPress: () => void): RenderChildren => mobile
     ? <Text size="footnote" mono weight="semibold">{on ? 'on' : 'off'}</Text>
     : <Button key={key} label={on ? 'on' : 'off'} variant={on ? 'primary' : 'secondary'} onPress={onPress} />
-  const unit = unitOf(o?.budget, o?.windows ?? [])
+  const unit = unitOf(o?.windows ?? [])
   const control = (s: Setting): RenderChildren => {
     const v = at(o?.budget, s.key)
-    if (s.kind === 'unit') {
-      const chosen = UNITS.includes(v as typeof UNITS[number]) ? v as typeof UNITS[number] : 'auto'
-      const next = UNITS[(UNITS.indexOf(chosen) + 1) % UNITS.length]!
-      return column(mobile ? <Text size="footnote" mono weight="semibold">{unitLabel(chosen, unit)}</Text>
-        : <Button key={`b-${s.key}`} label={unitLabel(chosen, unit)} variant="secondary" onPress={() => { void setBudget($, s.key, next) }} />)
-    }
     if (s.kind === 'switch') return column(toggle(`b-${s.key}`, v === true, () => { void setBudget($, s.key, v === true ? 'off' : 'on') }))
     if (mobile) return column(<Text size="footnote" mono tabular weight="semibold">{shown(v)}</Text>)
     const { Input } = $.ui.resolve(e)

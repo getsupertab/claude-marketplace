@@ -1,7 +1,7 @@
 import { test, expect, mock } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On, RenderElement, RenderNode } from 'claude-code'
-import { at, barCells, barSvg, dataDir, inUnit, int, liveLines, pct, SECTIONS, SERIES, shareCard, shareCardSvg, shareLinks, sharePageHtml, shareText, shown, stripAnsi, toneOf, unitLabel, unitOf, usd, withNewKeys, wrapWords } from './register'
+import { at, barCells, barSvg, dataDir, inUnit, int, liveLines, pct, SECTIONS, SERIES, shareCard, shareCardSvg, shareLinks, sharePageHtml, shareText, shown, stripAnsi, toneOf, unitOf, usd, withNewKeys, wrapWords } from './register'
 import type { Report } from './register'
 
 // The world beneath the plugin: `$.fs` reaches nothing under `claude plugin test`, and
@@ -738,18 +738,10 @@ test('the Budget tab: auto-open through the config menu, the limits through the 
   expect(texts(mobile).some(x => x.text === '40')).toBe(true)
 })
 
-test('the limit unit: chosen, else percent where the plan reports a usage window; one field per scope', () => {
-  const five = [{ kind: 'five_hour' }]
-  expect(unitOf({}, [])).toBe('usd')
-  expect(unitOf({ limit_unit: 'auto' }, five)).toBe('percent')
-  expect(unitOf({ limit_unit: 'auto' }, [{ kind: 'spend_limit' }])).toBe('usd')
-  expect(unitOf({ limit_unit: 'usd' }, five)).toBe('usd')
-  expect(unitOf({ limit_unit: 'percent' }, five)).toBe('percent')
-  // percent pinned on an account with no usage windows counts USD rather than nothing
-  expect(unitOf({ limit_unit: 'percent' }, [])).toBe('usd')
-  expect([unitLabel('auto', 'percent'), unitLabel(undefined, 'usd'), unitLabel('usd', 'usd'), unitLabel('percent', 'percent'),
-    unitLabel('percent', 'usd')])
-    .toEqual(['auto: %', 'auto: $', '$ USD', '% of plan', '% of plan (no usage windows: checking $)'])
+test('the limit unit follows the account: percent where the plan reports a usage window; one field per scope', () => {
+  expect(unitOf([])).toBe('usd')
+  expect(unitOf([{ kind: 'five_hour' }])).toBe('percent')
+  expect(unitOf([{ kind: 'spend_limit' }])).toBe('usd')
   const session = SECTIONS[0]!.rows.find(r => r.key === 'session_limit_usd')!
   expect(inUnit(session, 'usd')).toBe(session)
   expect(inUnit(session, 'percent')).toMatchObject({ key: 'five_hour_limit_percent', label: '5-hour window', unit: '%' })
@@ -761,7 +753,7 @@ test('the limit unit: chosen, else percent where the plan reports a usage window
 test('session.measure records the usage windows; the Budget tab then shows the percent fields', async ($, on) => {
   mock.env(on, { HOME: '/home/t' })
   const clock = mock.clock(on, { now: T0 })
-  const { fs, ui } = world(on, { ...FILES, '/home/t/.claude.json': JSON.stringify({ oauthAccount: { accountUuid: 'a1', organizationUuid: 'o1' } }) })
+  const { fs } = world(on, { ...FILES, '/home/t/.claude.json': JSON.stringify({ oauthAccount: { accountUuid: 'a1', organizationUuid: 'o1' } }) })
   on('session.measure', ($, e) => ({ changed: e.changed }))
   await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
   await clock.settle()
@@ -776,9 +768,7 @@ test('session.measure records the usage windows; the Budget tab then shows the p
   await $.ui.press(press('tab-budget'))
   const tree = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   expect(elements(tree, 'Input').map(i => i.key)).toEqual(['b-five_hour_limit_percent', 'b-weekly_limit_percent', 'b-warn_at_percent'])
-  expect(elements(tree, 'Button').find(b => b.key === 'b-limit_unit')?.label).toBe('auto: %')
-  await $.ui.press(press('b-limit_unit'))
-  expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'limit_unit', 'usd'])
+  expect(elements(tree, 'Button').some(b => b.key === 'b-limit_unit')).toBe(false)
 })
 
 test('where /config has no row for it (Desktop), the auto-open switch is kept in the store until /config changes it', async ($, on) => {

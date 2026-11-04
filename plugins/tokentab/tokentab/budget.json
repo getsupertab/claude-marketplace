@@ -1,8 +1,7 @@
 {
   "_budgets_comment": "Master switch for budgets: the limits below. false (the default) checks none of them and keeps their values for when you turn it on (/tokentab:budget or the pane).",
   "budgets_on": false,
-  "_unit_comment": "What the limits count: usd (session and today, priced from prices.json), percent (of the plan's 5-hour and weekly usage windows, on Pro and Max), or auto: percent where Claude Code reports usage windows, else usd. Only the pair in effect is checked.",
-  "limit_unit": "auto",
+  "_unit_comment": "Your account decides what the limits count: percent of the plan's 5-hour and weekly usage windows on Pro and Max, else USD (session and today, priced from prices.json). Only that pair is checked.",
   "_comment": "One limit per scope in each unit. null disables that one.",
   "session_limit_usd": 25,
   "daily_limit_usd": 40,

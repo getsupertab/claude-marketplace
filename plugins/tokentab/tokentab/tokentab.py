@@ -809,11 +809,8 @@ def read_windows(sid=None):
     return {w["kind"]: w for w in ws if isinstance(w, dict) and w.get("kind") in ("five_hour", "seven_day")}
 
 def limit_unit(budget, windows):
-    """"usd" or "percent": the one chosen, else (auto) percent where the plan reports usage windows.
-    Percent with no window reading counts USD, so a pinned unit never leaves nothing checked."""
-    unit = budget.get("limit_unit", "auto")
-    if unit == "usd":
-        return unit
+    """"percent" where the account reports plan usage windows (Pro, Max), else "usd". Not a setting:
+    the account decides. An old budget.json's limit_unit is ignored."""
     return "percent" if windows else "usd"
 
 def window_used(w, now=None):

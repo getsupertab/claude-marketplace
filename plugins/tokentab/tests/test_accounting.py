@@ -208,7 +208,7 @@ def pane_check(store, prices):
     s = rep["session"]
     if not s or s["unit"] != "usd" or not s["limit"].endswith("of $0.00") or not s["frac"] or s["frac"] < 1:
         errs.append(f"pane report: session against its limit is wrong: {s}")
-    # A plan with usage windows: auto counts the 5-hour window in percent, a forced unit wins
+    # A plan with usage windows counts the 5-hour window in percent
     windows = {"five_hour": {"kind": "five_hour", "percentUsed": 40, "resetsAt": "2999-01-01T00:00:00Z"},
                "seven_day": {"kind": "seven_day", "percentUsed": 12.5, "resetsAt": "2000-01-01T00:00:00Z"}}
     plan = {**budget, "five_hour_limit_percent": 80, "weekly_limit_percent": 50}
@@ -221,13 +221,13 @@ def pane_check(store, prices):
         errs.append("pane report: no plan windows means no subscription label")
     if kt.reset_text("2000-01-01T00:00:00Z") is not None or not kt.reset_text("2999-01-01T00:00:00Z"):
         errs.append("reset_text: a past reset should be None, a future one a time")
-    if kt.pane_report(store, "fx", prices, {**plan, "limit_unit": "usd"}, windows=windows)["session"]["unit"] != "usd":
-        errs.append("pane report: limit_unit usd should win over the usage windows")
-    # Percent pinned on an account with no usage windows (Enterprise, API key) checks the USD limits
+    if kt.pane_report(store, "fx", prices, {**plan, "limit_unit": "usd"}, windows=windows)["session"]["unit"] != "percent":
+        errs.append("pane report: an old file's limit_unit should not override the account")
+    # An account with no usage windows (Enterprise, API key) checks the USD limits, whatever an old file says
     unit, rows = kt.limit_rows({**plan, "limit_unit": "percent", "daily_limit_usd": 50},
                                {"session": 9, "today": 120}, {})
     if unit != "usd" or [(r["scope"], r["frac"] >= 1) for r in rows] != [("session", True), ("today", True)]:
-        errs.append(f"limit_rows: percent with no usage windows should check the USD limits: {unit} {rows}")
+        errs.append(f"limit_rows: no usage windows should check the USD limits: {unit} {rows}")
     unit, rows = kt.limit_rows(plan, {"session": 0, "today": 0}, windows)
     if [(r["scope"], r["frac"]) for r in rows] != [("five_hour", 0.5), ("seven_day", 0.0)]:
         errs.append(f"limit_rows: a window past its reset should count 0%: {rows}")
