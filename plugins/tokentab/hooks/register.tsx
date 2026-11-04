@@ -374,8 +374,6 @@ let opts: PluginOptions = {}           // the manifest's userConfig values, from
 let view: View = 'spend'
 let detailsOpen = false                 // Spend's rate breakdown and tools, folded until asked for
 let sessionsOpen = false                // Spend's table of this month's sessions, likewise
-let shareOpen = false                   // Spend's share view stands in for the tab while open
-let shareDescription = true             // the share card carries the session's title
 const toolsOpen = new Set<string>()     // the tool rows opened to their breakdown, by path
 let report: Report | undefined          // the last `--report`; a reload starts empty
 let error: string | undefined           // the last refresh's failure, drawn above the tab
@@ -708,7 +706,6 @@ export const register: Register = (on, pluginOptions) => {
     )
     const body = view === 'budget' ? budgetTab($, e)
       : report === undefined ? <Text dimColor>loading...</Text>
-      : shareOpen && report.session !== null ? shareView($, e, report)
       : spendTab($, e, report)
     return (
       <Box flexDirection="column" gap={1}>
@@ -965,7 +962,7 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
         <Box justifyContent="space-between" alignItems="center">
           <Text size="title" weight="bold" tabular>{usd(s.cost)}</Text>
           <Button key="share" label="↑ Share" hotkey="h"
-            onPress={() => { shareOpen = true; $.ui.invalidate('ui.render') }} />
+            onPress={() => { void openSharePage($, r) }} />
         </Box>
         {s.frac !== null && tone !== undefined && bar($, e, [{ series: tone, frac: s.frac }], `${pct(s.frac)} of the ${s.unit === 'percent' ? '5-hour window' : 'session'} limit`, 8)}
         <Text size="footnote" dimColor>{under}</Text>
@@ -1160,7 +1157,7 @@ function budgetTab($: EngineInterface, e: RenderEvent): RenderChildren {
   )
 }
 
-// ---------- the share view ----------
+// ---------- the share page ----------
 
 /** What the share card shows: the session's figures, its title only while the switch is on. */
 export type ShareCard = {
@@ -1291,6 +1288,7 @@ h1{font-size:17px;margin:0}.sub{color:var(--dim);font-size:12px;margin:2px 0 16p
 .actions{flex:1 1 220px;display:flex;flex-direction:column;gap:6px}
 .toggle{display:flex;justify-content:space-between;align-items:center;padding:8px 0 12px;border-bottom:1px solid var(--line);margin-bottom:8px;cursor:pointer}
 .toggle input{width:30px;height:17px;accent-color:var(--primary)}
+button[hidden]{display:none}
 button,a.btn{all:unset;box-sizing:border-box;display:flex;gap:10px;align-items:center;padding:9px 14px;border-radius:8px;background:var(--btn);cursor:pointer;color:var(--text)}
 button:hover,a.btn:hover{background:var(--btn-hover)}
 button:focus-visible,a.btn:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
@@ -1308,6 +1306,7 @@ button.primary{background:var(--primary);color:var(--on-primary)}
 <button id="download"><span class="icon">↓</span>Download PNG</button>
 <a class="btn" id="x" target="_blank" rel="noopener"><span class="icon">𝕏</span>Share on X</a>
 <a class="btn" id="linkedin" target="_blank" rel="noopener"><span class="icon">in</span>Share on LinkedIn</a>
+<button id="native" hidden><span class="icon">⇪</span>Share…</button>
 <button id="copy-text"><span class="icon">¶</span>Copy as text</button>
 <div class="status" id="status" role="status"></div>
 </div></div></main>
@@ -1337,13 +1336,37 @@ function png() {
   });
 }
 $('desc').addEventListener('change', draw);
+// A promise in the ClipboardItem keeps Safari's user gesture alive while the PNG renders
+const copyImage = () => navigator.clipboard.write([new ClipboardItem({ 'image/png': png() })]);
 $('copy-image').addEventListener('click', async () => {
-  try {
-    // A promise in the ClipboardItem keeps Safari's user gesture alive while the PNG renders
-    await navigator.clipboard.write([new ClipboardItem({ 'image/png': png() })]);
-    say('Image copied.');
-  } catch (err) { say('Not copied: ' + err.message + '. Use Download PNG instead.'); }
+  try { await copyImage(); say('Image copied.'); }
+  catch (err) { say('Not copied: ' + err.message + '. Use Download PNG instead.'); }
 });
+// Post links take only text, so the image goes on the clipboard first, to paste into the post
+for (const [id, name] of [['x', 'X'], ['linkedin', 'LinkedIn']]) {
+  $(id).addEventListener('click', async event => {
+    event.preventDefault();
+    const href = $(id).href;
+    let copied = true;
+    try { await copyImage(); } catch { copied = false; }
+    const tab = window.open(href, '_blank', 'noopener');
+    say((copied ? 'Image copied: paste it into the post with ⌘V / Ctrl+V.' : 'The image was not copied; use Download PNG and attach it.')
+      + (tab ? '' : ' Your browser blocked the new tab; click again.'));
+  });
+}
+// Rendered ahead: Safari refuses a share that waits on the render after the click
+let file;
+const prepare = () => { file = undefined; return png().then(blob => { file = new File([blob], DATA.file, { type: 'image/png' }); }, () => { file = undefined; }); };
+if (navigator.canShare && navigator.canShare({ files: [new File([''], DATA.file, { type: 'image/png' })] })) {
+  $('native').hidden = false;
+  $('desc').addEventListener('change', prepare);
+  prepare();
+  $('native').addEventListener('click', async () => {
+    if (!file) { say('Still preparing the image; try again.'); return; }
+    try { await navigator.share({ files: [file], text: current().text }); }
+    catch (err) { if (err.name !== 'AbortError') say('Not shared: ' + err.message); }
+  });
+}
 $('download').addEventListener('click', async () => {
   try {
     const a = document.createElement('a');
@@ -1376,64 +1399,4 @@ async function openSharePage($: EngineInterface, r: Report): Promise<void> {
   } catch (err) {
     $.ui.toast(`TokenTab: could not open the share page${written ? ` (${written})` : ''}: ${err instanceof Error ? err.message : String(err)}`)
   }
-}
-
-async function copyText($: EngineInterface, text: string, surface: Parameters<EngineInterface['ui']['copy']>[0]['surface']): Promise<void> {
-  const copied = await $.ui.copy({ text, surface }).catch(err => ({ isCopied: false as const, reason: String(err) }))
-  $.ui.toast(copied.isCopied ? 'TokenTab: copied as text' : `TokenTab: not copied (${copied.reason})`)
-}
-
-/** Figma's "Share popup / E", inside the pane rather than over the window (a plugin draws no
- *  modal): the card, the description switch, the ways out. Columns stack below 72 cells. */
-function shareView($: EngineInterface, e: RenderEvent, r: Report): RenderChildren {
-  const { Box, Text, Button, Link } = $.ui.resolve(e)
-  const card = shareCard(r, new Date(), shareDescription)!
-  const text = shareText(card)
-  const links = shareLinks(text)
-  const svg = shareCardSvg(card)
-  const close = () => { shareOpen = false; $.ui.invalidate('ui.render') }
-  const preview = e.surface !== 'terminal'
-    ? (() => { const { Svg } = $.ui.resolve(e); return <Svg source={svg} alt={text} height={Number(/height="(\d+)"/.exec(svg)![1])} /> })()
-    : (
-      <Box flexDirection="column" borderStyle="round" paddingX={1}>
-        <Text dimColor>TokenTab · {card.date}</Text>
-        <Text dimColor>This task cost me</Text>
-        <Text bold>{usd(card.cost)}</Text>
-        {card.description && <Text>{card.description}</Text>}
-        {shareRows(card).map(([name, value]) => (
-          <Box key={`share-${name}`} justifyContent="space-between"><Text dimColor>{name}</Text><Text>{value}</Text></Box>
-        ))}
-        <Text dimColor>Tracked with TokenTab · supertab.co</Text>
-      </Box>
-    )
-  const actions = (
-    <Box flexDirection="column" gap="xs" flexGrow={1}>
-      <Box justifyContent="space-between" alignItems="center">
-        <Text>Show task description</Text>
-        <Button key="share-description" label={shareDescription ? 'on' : 'off'} hotkey="t"
-          variant={shareDescription ? 'primary' : 'secondary'}
-          onPress={() => { shareDescription = !shareDescription; $.ui.invalidate('ui.render') }} />
-      </Box>
-      {rule($, e, 'share-rule')}
-      <Button key="share-page" label="Open share page ↗" hotkey="p" variant="primary" onPress={() => { void openSharePage($, r) }} />
-      <Button key="share-copy" label="¶ Copy as text" hotkey="c" onPress={press => { void copyText($, text, press.surface) }} />
-      <Text><Link href={links.x}>𝕏 Share on X ↗</Link></Text>
-      <Text><Link href={links.linkedin}>in Share on LinkedIn ↗</Link></Text>
-    </Box>
-  )
-  return (
-    <Box flexDirection="column" gap={1}>
-      <Box justifyContent="space-between" alignItems="center">
-        <Box flexDirection="column">
-          <Text weight="semibold">Share this session</Text>
-          <Text size="footnote" dimColor>{r.session?.title ?? r.sid.slice(0, 8)}</Text>
-        </Box>
-        <Button key="share-close" label="Close" hotkey="x" plain onPress={close} />
-      </Box>
-      <Box flexDirection={columns >= 72 ? 'row' : 'column'} gap={2}>
-        {preview}
-        {actions}
-      </Box>
-    </Box>
-  )
 }
