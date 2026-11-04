@@ -710,14 +710,17 @@ test('the limit unit: chosen, else percent where the plan reports a usage window
 test('session.measure records the usage windows; the Budget tab then shows the percent fields', async ($, on) => {
   mock.env(on, { HOME: '/home/t' })
   const clock = mock.clock(on, { now: T0 })
-  const { fs, ui } = world(on, FILES)
+  const { fs, ui } = world(on, { ...FILES, '/home/t/.claude.json': JSON.stringify({ oauthAccount: { accountUuid: 'a1', organizationUuid: 'o1' } }) })
   on('session.measure', ($, e) => ({ changed: e.changed }))
   await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
   await clock.settle()
   const rateLimits = [{ kind: 'five_hour', percentUsed: 42, resetsAt: '2026-10-15T18:00:00Z' }, { kind: 'seven_day', percentUsed: 7 }]
   await $.session.measure({ context: { window: 200000 }, rateLimits, changed: ['context', 'rateLimits'] })
-  expect(JSON.parse(fs.get(`${DATA}/state/rate_limits.json`)!).windows).toEqual([
+  const shared = JSON.parse(fs.get(`${DATA}/state/rate_limits.json`)!)
+  expect(shared.account).toBe('a1/o1')
+  expect(shared.windows).toEqual([
     { kind: 'five_hour', percentUsed: 42, resetsAt: '2026-10-15T18:00:00Z' }, { kind: 'seven_day', percentUsed: 7, resetsAt: null }])
+  expect(JSON.parse(fs.get(`${DATA}/state/windows/${SID}.json`)!).windows).toEqual(shared.windows)
   await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   await $.ui.press(press('tab-budget'))
   const tree = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
