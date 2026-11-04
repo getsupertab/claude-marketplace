@@ -182,6 +182,10 @@ export type Report = {
   session: null | {
     title: string; cost: number; tokens: number; msgs: number
     limits_on: boolean; unit: Unit
+    /** The account reports plan windows (Pro/Max): its dollars are API rates, not a bill. */
+    plan?: boolean
+    /** Under percent, each window with a limit and a reading; the first leads the hero. */
+    windows?: PlanWindow[]
     /** The hero's limit as text: `$0.82 of $1.00`, `5-hour window 42% used, limit 80%`. */
     limit: string | null; frac: number | null
     warn_at: number; hard_stop: boolean
@@ -194,6 +198,11 @@ export type Report = {
   /** This month's spend per session, costliest first. */
   sessions?: { sid: string; name: string; cost: number; share: number }[]
 }
+
+export type PlanWindow = { scope: 'five_hour' | 'seven_day'; used: number; limit: number; frac: number; resets: string | null }
+const WINDOW_NAME = { five_hour: '5-hour window', seven_day: 'weekly window' } as const
+const WINDOW_SHORT = { five_hour: '5-hour', seven_day: 'week' } as const
+const percent = (n: number) => `${Math.round(n * 10) / 10}%`
 
 /** A tool, or a layer of its breakdown (Bash's program, then its subcommand). */
 export type ToolRow = {
@@ -926,17 +935,23 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
       </Box>
     )
   }
-  const tone = s.frac === null ? undefined : toneOf(s.frac, s.warn_at)
-  const badge = s.frac === null || tone === undefined ? undefined
+  // Under percent the window leads and dollars move below; with no window reading, dollars lead
+  const [lead, ...otherWindows] = s.unit === 'percent' ? s.windows ?? [] : []
+  const apiRates = s.plan ? ' at API rates' : ''
+  const frac = lead ? lead.frac : s.frac
+  const worst = lead ? Math.max(...(s.windows ?? []).map(w => w.frac)) : frac
+  const tone = worst === null ? undefined : toneOf(worst, s.warn_at)
+  const badge = worst === null || tone === undefined ? undefined
     : <Text size="footnote" weight="semibold" color={tone}>
-        {tone === 'error' ? `Over · ${pct(s.frac)}` : tone === 'warning' ? `Warning · ${pct(s.frac)}` : `${pct(s.frac)} used`}
+        {tone === 'error' ? `Over · ${pct(worst)}` : tone === 'warning' ? `Warning · ${pct(worst)}` : `${pct(worst)} used`}
       </Text>
   const mode = `${s.hard_stop ? 'hard stop' : 'warn only'}, warns at ${s.warn_at}%`
+  const resets = (w: PlanWindow) => (w.resets ? ` · resets ${w.resets}` : '')
   const under = [
-    s.limit ?? '',
+    lead ? `${usd(s.cost)}${apiRates}` : s.limit ?? '',
     `${int(s.tokens)} tokens`,
-    s.frac !== null ? mode : !s.limits_on ? 'limits off'
-      : s.unit === 'percent' ? 'no 5-hour limit set or no reading yet' : 'no session limit set',
+    frac !== null ? mode : !s.limits_on ? 'limits off'
+      : s.unit === 'percent' ? 'no window limit set or no reading yet' : 'no session limit set',
   ].filter(x => x !== '').join(' · ')
   const rates = r.rates ?? []
   const series = (key: string) => (SERIES[key] ? key : 'input')
@@ -956,11 +971,22 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
     <Box flexDirection="column" gap={1}>
       <Box key="hero" flexDirection="column" gap="xs">
         <Box justifyContent="space-between" alignItems="center">
-          {label($, e, 'session spend')}
+          {label($, e, lead ? 'plan usage' : 'session spend')}
           {badge}
         </Box>
-        <Text size="title" weight="bold" tabular>{usd(s.cost)}</Text>
-        {s.frac !== null && tone !== undefined && bar($, e, [{ series: tone, frac: s.frac }], `${pct(s.frac)} of the ${s.unit === 'percent' ? '5-hour window' : 'session'} limit`, 8)}
+        <Box alignItems="center" gap={1}>
+          <Text size="title" weight="bold" tabular>{lead ? percent(lead.used) : usd(s.cost)}</Text>
+          {lead
+            ? <Text size="footnote" dimColor>{`of ${WINDOW_NAME[lead.scope]} · limit ${percent(lead.limit)}${resets(lead)}`}</Text>
+            : s.plan && <Text size="footnote" dimColor>at API rates</Text>}
+        </Box>
+        {frac !== null && bar($, e, [{ series: toneOf(frac, s.warn_at), frac }],
+          `${pct(frac)} of the ${lead ? WINDOW_NAME[lead.scope] : 'session'} limit`, 8)}
+        {otherWindows.map(w => (
+          <Text key={`window-${w.scope}`} size="footnote" dimColor>
+            {`${WINDOW_SHORT[w.scope]} ${percent(w.used)}, limit ${percent(w.limit)}${resets(w)}`}
+          </Text>
+        ))}
         <Text size="footnote" dimColor>{under}</Text>
       </Box>
       <Box key="details" flexDirection="column" gap="xs">
@@ -986,7 +1012,7 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
               {rates.map(x => row(x.key,
                 <Text size="footnote" mono><Text color={SERIES[series(x.key)]![0]}>● </Text>{x.label}</Text>,
                 int(x.tokens), usd(x.cost, 4), pct(x.share)))}
-              {row('total', <Text size="footnote" mono bold>{'  total'}</Text>,
+              {row('total', <Text size="footnote" mono bold>{`  total${s.plan ? ' at API rates' : ''}`}</Text>,
                 int(r.total?.tokens ?? 0), usd(r.total?.cost ?? s.cost, 4), '', { bold: true })}
               {(r.unmatched ?? 0) > 0 && (
                 <Text size="footnote" dimColor>{int(r.unmatched ?? 0)} output tok have no transcript line. Any thinking is counted in output.</Text>
