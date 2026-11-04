@@ -216,6 +216,11 @@ def pane_check(store, prices):
         errs.append(f"pane report: the 5-hour window against its limit is wrong: {s}")
     if kt.pane_report(store, "fx", prices, {**plan, "limit_unit": "usd"}, windows=windows)["session"]["unit"] != "usd":
         errs.append("pane report: limit_unit usd should win over the usage windows")
+    # Percent pinned on an account with no usage windows (Enterprise, API key) checks the USD limits
+    unit, rows = kt.limit_rows({**plan, "limit_unit": "percent", "daily_limit_usd": 50},
+                               {"session": 9, "today": 120}, {})
+    if unit != "usd" or [(r["scope"], r["frac"] >= 1) for r in rows] != [("session", True), ("today", True)]:
+        errs.append(f"limit_rows: percent with no usage windows should check the USD limits: {unit} {rows}")
     unit, rows = kt.limit_rows(plan, {"session": 0, "today": 0}, windows)
     if [(r["scope"], r["frac"]) for r in rows] != [("five_hour", 0.5), ("seven_day", 0.0)]:
         errs.append(f"limit_rows: a window past its reset should count 0%: {rows}")

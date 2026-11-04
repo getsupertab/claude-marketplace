@@ -339,11 +339,10 @@ export const UNITS = ['auto', 'usd', 'percent'] as const
 const WINDOWS = ['five_hour', 'seven_day']
 
 /** The unit in effect: the one chosen, else (auto) percent where the plan reports a usage
- *  window, the same rule as limit_unit() in tokentab.py. */
+ *  window; percent with no window counts USD. The same rule as limit_unit() in tokentab.py. */
 export function unitOf(budget: Json | undefined, windows: { kind: string }[]): Unit {
-  const chosen = budget?.limit_unit
-  if (chosen === 'usd' || chosen === 'percent') return chosen
-  return windows.some(w => WINDOWS.includes(w.kind)) ? 'percent' : 'usd'
+  if (budget?.limit_unit === 'usd') return 'usd'
+  return windows.some(window => WINDOWS.includes(window.kind)) ? 'percent' : 'usd'
 }
 
 /** A row as the unit in effect shows it: a limit's percent twin under percent. */
@@ -351,10 +350,11 @@ export function inUnit(s: Setting, unit: Unit): Setting {
   return unit === 'percent' && s.percent ? { ...s, key: s.percent.key, label: s.percent.label, unit: '%' } : s
 }
 
-/** The unit button's label: what is chosen, and under auto what it found. */
+/** The unit button's label: what is chosen, and under auto, or percent with no window, what it found. */
 export function unitLabel(chosen: unknown, unit: Unit): string {
-  const name = (u: Unit) => (u === 'usd' ? '$ USD' : '% of plan')
-  return chosen === 'usd' || chosen === 'percent' ? name(chosen) : `auto: ${unit === 'usd' ? '$' : '%'}`
+  if (chosen === 'usd') return '$ USD'
+  if (chosen === 'percent') return unit === 'percent' ? '% of plan' : '% of plan (no usage windows: checking $)'
+  return `auto: ${unit === 'usd' ? '$' : '%'}`
 }
 
 /** The user's budget.json with the keys a newer shipped file has added, in the shipped
