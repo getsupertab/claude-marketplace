@@ -427,6 +427,34 @@ test('an interactive session opens the pane and draws the Spend tab', async ($, 
   expect(ui.runs.length).toBe(burst + 1)
 })
 
+test('Spend on a percent budget leads with the window; dollars below, at API rates', async ($, on) => {
+  mock.env(on, { HOME: '/home/t' })
+  const clock = mock.clock(on, { now: T0 })
+  const windows = [{ scope: 'five_hour', used: 8, limit: 80, frac: 0.1, resets: '16:00' },
+                   { scope: 'seven_day', used: 21, limit: 90, frac: 0.2333, resets: 'Thu 09:00' }] as const
+  const report: { value: Report } = { value: { ...REPORT, session: { ...REPORT.session!, unit: 'percent', plan: true, windows: [...windows],
+    limit: '5-hour window 8% used, limit 80%', frac: 0.1, hard_stop: true } } }
+  world(on, FILES, { is: true }, report)
+  await $.session.start({ cwd: '/w', surface: 'desktop', isInteractive: true })
+  await clock.settle()
+  await $.ui.render({ surface: 'desktop', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
+  const tree = await $.ui.render({ surface: 'desktop', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
+  const t = texts(tree)
+  expect(t.some(x => x.text === 'PLAN USAGE')).toBe(true)
+  expect(t.find(x => x.text === '8%')?.props.size).toBe('title')
+  for (const line of ['of 5-hour window · limit 80% · resets 16:00', 'week 21%, limit 90% · resets Thu 09:00',
+    '$3.61 at API rates · 532,533 tokens · hard stop, warns at 70%', '23% used']) expect(t.some(x => x.text === line)).toBe(true)
+  expect(elements(tree, 'Svg').filter(s => s.alt !== 'separator')[0]!.alt).toBe('10% of the 5-hour window limit')
+
+  // a USD budget on a subscription: dollars lead, labelled as API rates
+  report.value = { ...REPORT, session: { ...REPORT.session!, plan: true, windows: [] } }
+  await $.telemetry.log(request({}))
+  await clock.advance(1000)
+  const usdTree = texts(await $.ui.render({ surface: 'desktop', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS }))
+  expect(usdTree.some(x => x.text === '$3.61')).toBe(true)
+  expect(usdTree.some(x => x.text === 'at API rates')).toBe(true)
+})
+
 test('Spend without a limit has no bar and no badge; before the first call it says so', async ($, on) => {
   mock.env(on, { HOME: '/home/t' })
   const clock = mock.clock(on, { now: T0 })

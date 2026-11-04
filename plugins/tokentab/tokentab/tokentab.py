@@ -779,6 +779,8 @@ LIMITS = {"usd": (("session", "session_limit_usd", "session"), ("today", "daily_
           "percent": (("five_hour", "five_hour_limit_percent", "5 hours"),
                       ("seven_day", "weekly_limit_percent", "week"))}
 
+WINDOW_NAMES = {"five_hour": "5-hour window", "seven_day": "weekly window"}
+
 def _read_json(path):
     try:
         with open(path, encoding="utf-8") as fh:
@@ -824,8 +826,19 @@ def window_used(w, now=None):
         pass
     return float(w.get("percentUsed") or 0)
 
+def reset_text(iso, now=None):
+    """When a window resets, local time: `16:00` today, else `Thu 09:00`; None once past."""
+    try:
+        at = datetime.fromisoformat(str(iso).replace("Z", "+00:00")).astimezone()
+    except ValueError:
+        return None
+    now = datetime.fromtimestamp(now or time.time()).astimezone()
+    if at <= now:
+        return None
+    return at.strftime("%H:%M" if at.date() == now.date() else "%a %H:%M")
+
 def limit_rows(budget, spent, windows):
-    """(unit, rows): each limit set in the unit in effect, {scope, name, frac, parts, reset}.
+    """(unit, rows): each limit set in the unit in effect, {scope, name, frac, used, limit, parts, reset}.
     spent is {"session": usd, "today": usd}; a percent limit with no reading yet is left out."""
     unit = limit_unit(budget, windows)
     rows = []
@@ -842,7 +855,9 @@ def limit_rows(budget, spent, windows):
             detail = f"{used:g}% used, limit {lim:g}%"
         else:
             continue
-        rows.append({"scope": scope, "name": name, "frac": used / lim, "parts": [detail], "reset": reset})
+        resets = reset_text(reset) if reset else None
+        rows.append({"scope": scope, "name": name, "frac": used / lim, "used": used, "limit": lim,
+                     "parts": [detail] + ([f"resets {resets}"] if resets else []), "reset": reset, "resets": resets})
     return unit, rows
 
 
@@ -904,6 +919,9 @@ def report(store, sid, prices, budget, show_all, led=None):
     R["by_source"] = [(nm, calls, c, (c / b.cost) if b.cost else 0)
                       for nm, (calls, c) in sorted(b.by_source.items(), key=lambda kv: -kv[1][1])]
     R["window"] = {"5m": src.window_cost(300), "1h": src.window_cost(3600)}
+    windows = read_windows(sid)
+    # A subscription reports plan windows; its dollars are API-rate equivalents, not a bill
+    R["plan"] = bool(windows)
 
     dc = src.day_total()[0]               # today, every session
 
@@ -911,7 +929,7 @@ def report(store, sid, prices, budget, show_all, led=None):
     if budget:
         cold = budget.get("cold_resume") or {}
         on = budget.get("budgets_on") is True
-        unit, lines = limit_rows(budget, {"session": b.cost, "today": dc}, read_windows(sid))
+        unit, lines = limit_rows(budget, {"session": b.cost, "today": dc}, windows)
         lines = lines if on else []
         ctx = None
         if tb and tb.ctx:
@@ -961,7 +979,7 @@ def render(store, sid, prices, budget, show_all, led=None):
     t = R["total"]
     L.append(f"    {DIM}{'-'*44}{RESET}")
     L.append(f"    {BOLD}{'total':<16}{num(t['tokens']):>14}{money(t['cost']):>12}{RESET}"
-             f"   {DIM}{t['msgs']} msgs{RESET}")
+             f"   {DIM}{t['msgs']} msgs{' · at API rates' if R['plan'] else ''}{RESET}")
     q = R["requests"]
     if q:
         L.append("")
@@ -1078,13 +1096,16 @@ def pane_report(store, sid, prices, budget, led=None, windows=None):
     on = budget.get("budgets_on") is True
     windows = read_windows(sid) if windows is None else windows
     unit, rows = limit_rows(budget, {"session": b.cost, "today": out["today"]}, windows)
-    # The hero's bar: this session in USD, the 5-hour window in percent
-    row = next((r for r in rows if r["scope"] in ("session", "five_hour")), None) if on else None
+    # The hero's bar: this session in USD; under percent the first window with a limit and a reading
+    row = next((r for r in rows if r["scope"] in ("session", "five_hour", "seven_day")), None) if on else None
+    plan_windows = [{"scope": r["scope"], "used": r["used"], "limit": r["limit"], "frac": r["frac"], "resets": r["resets"]}
+                    for r in rows if r["scope"] in windows] if on and unit == "percent" else []
     out["session"] = {
         "title": R["session"]["title"], "cost": b.cost, "tokens": b.wtok, "msgs": b.msgs,
         "minutes": round((b.last - b.first).total_seconds() / 60) if b.first and b.last else 0,
-        "limits_on": on, "unit": unit,
-        "limit": None if not row else row["parts"][0] if unit == "usd" else f"5-hour window {row['parts'][0]}",
+        "limits_on": on, "unit": unit, "plan": bool(windows), "windows": plan_windows,
+        "limit": None if not row else row["parts"][0] if unit == "usd"
+                 else f"{WINDOW_NAMES[row['scope']]} {row['parts'][0]}",
         "frac": row["frac"] if row else None,
         "warn_at": budget.get("warn_at_percent", 70), "hard_stop": bool(budget.get("hard_stop")),
     }
@@ -1114,9 +1135,11 @@ def status_line(store, sid, prices, budget, led=None):
     else:
         sess, today = 0.0, source(store, led, sid)[1].day_total()[0]
     windows = read_windows(sid)
-    plan = "".join(f" · {name} {window_used(windows[scope]):g}%" for scope, _, name in LIMITS["percent"]
-                   if scope in windows) if limit_unit(budget, windows) == "percent" else ""
-    return f"session {money(sess)} · today {money(today)}{plan}"      # the engine draws the plugin name before the line
+    dollars = f"session {money(sess)} · today {money(today)}{' at API rates' if windows else ''}"
+    plan = [f"{name} {window_used(windows[scope]):g}%" for scope, _, name in LIMITS["percent"] if scope in windows]
+    if plan and limit_unit(budget, windows) == "percent":
+        return " · ".join(plan + [dollars])                           # the budget's unit leads
+    return dollars                                                    # the engine draws the plugin name before the line
 
 
 def main():

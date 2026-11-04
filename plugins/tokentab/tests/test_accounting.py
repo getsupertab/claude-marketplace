@@ -215,6 +215,12 @@ def pane_check(store, prices):
     s = kt.pane_report(store, "fx", prices, plan, windows=windows)["session"]
     if s["unit"] != "percent" or abs(s["frac"] - 0.5) > 1e-9 or s["limit"] != "5-hour window 40% used, limit 80%":
         errs.append(f"pane report: the 5-hour window against its limit is wrong: {s}")
+    if not s["plan"] or [w["scope"] for w in s["windows"]] != ["five_hour", "seven_day"] or s["windows"][1]["used"] != 0:
+        errs.append(f"pane report: both windows should be listed, the weekly one reset to 0%: {s}")
+    if kt.pane_report(store, "fx", prices, budget, windows={})["session"]["plan"]:
+        errs.append("pane report: no plan windows means no subscription label")
+    if kt.reset_text("2000-01-01T00:00:00Z") is not None or not kt.reset_text("2999-01-01T00:00:00Z"):
+        errs.append("reset_text: a past reset should be None, a future one a time")
     if kt.pane_report(store, "fx", prices, {**plan, "limit_unit": "usd"}, windows=windows)["session"]["unit"] != "usd":
         errs.append("pane report: limit_unit usd should win over the usage windows")
     # Percent pinned on an account with no usage windows (Enterprise, API key) checks the USD limits
