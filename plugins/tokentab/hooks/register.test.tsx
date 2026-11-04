@@ -1,7 +1,7 @@
 import { test, expect, mock } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On, RenderElement, RenderNode } from 'claude-code'
-import { at, barCells, barSvg, dataDir, inUnit, int, liveLines, pct, SECTIONS, SERIES, shown, stripAnsi, toneOf, unitLabel, unitOf, usd, withNewKeys } from './register'
+import { at, barCells, barSvg, dataDir, inUnit, int, liveLines, pct, SECTIONS, SERIES, shareCard, shareCardSvg, shareLinks, sharePageHtml, shareText, shown, stripAnsi, toneOf, unitLabel, unitOf, usd, withNewKeys, wrapWords } from './register'
 import type { Report } from './register'
 
 // The world beneath the plugin: `$.fs` reaches nothing under `claude plugin test`, and
@@ -270,6 +270,25 @@ test('records that are not api_request, and a failure in the module, leave the r
   expect([...fs.keys()].filter(k => k.includes('/ledger/')).length).toBe(0)
 })
 
+test('the share card: the session figures, its title behind the switch, escaped in the Svg', async () => {
+  const r = {
+    sid: 'abc', prices_verified: true, today: 0, month: 0, overhead: 0,
+    session: { title: 'Fix <tabs> & bars', cost: 0.73, tokens: 148210, msgs: 12, minutes: 42, limits_on: false, unit: 'usd', limit: null, frac: null, warn_at: 70, hard_stop: false },
+    models: [{ name: 'claude-opus-5-5', msgs: 12, cost: 0.73, share: 1 }],
+    tools: [{ name: 'Bash', calls: 18, cost: 0, ask: 0, ctx: 0, read: 0, ctx_tokens: 0 }],
+  } as Report
+  const card = shareCard(r, new Date('2026-10-29T12:00:00Z'), true)!
+  expect(shareText(card)).toBe('This task cost me $0.73 with Claude.\nFix <tabs> & bars\n'
+    + 'time: 42 min · messages: 12 · tool calls: 18 · tokens: 148,210 · model: claude-opus-5-5\nTracked with TokenTab · supertab.co')
+  expect(shareCard(r, new Date(), false)!.description).toBeUndefined()
+  expect(shareCardSvg(card)).toContain('Fix &lt;tabs&gt; &amp; bars')
+  expect(shareLinks('a b').x).toBe('https://x.com/intent/post?text=a%20b')
+  expect(wrapWords('one two three four', 9, 2)).toEqual(['one two', 'three…'])
+  const page = sharePageHtml(card, shareCard(r, new Date('2026-10-29T12:00:00Z'), false)!, 'a </script> title')
+  expect(page).toContain('a &lt;/script&gt; title')
+  expect(page.match(/<\/script>/g)).toHaveLength(1)
+})
+
 test('the figures as the design writes them, and the bars in Svg and in cells', async () => {
   expect([usd(3.613), usd(3.613, 4), usd(1234.5), int(5561099)]).toEqual(['$3.61', '$3.6130', '$1,234.50', '5,561,099'])
   expect(pct(1.8065)).toBe('181%')
@@ -340,7 +359,7 @@ test('an interactive session opens the pane and draws the Spend tab', async ($, 
   const folded = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   // the tab row: Spend is the primary one, then Budget and the browser button; then the details toggle
   expect(elements(folded, 'Button').map(b => [b.key, b.variant, b.hotkey])).toEqual([
-    ['tab-spend', 'primary', 's'], ['tab-budget', 'secondary', 'b'], ['open-browser', undefined, 'o'],
+    ['tab-spend', 'primary', 's'], ['tab-budget', 'secondary', 'b'], ['open-browser', undefined, 'o'], ['share', undefined, 'h'],
     ['details-toggle', undefined, 'd'], ['sessions-toggle', undefined, 'a'],
   ])
   // the breakdown starts folded: the toggle shows, the rate table and the tools do not

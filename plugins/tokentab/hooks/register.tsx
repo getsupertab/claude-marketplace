@@ -195,7 +195,7 @@ export type Report = {
   month: number
   overhead: number
   session: null | {
-    title: string; cost: number; tokens: number; msgs: number
+    title: string; cost: number; tokens: number; msgs: number; minutes?: number
     limits_on: boolean; unit: Unit
     /** The hero's limit as text: `$0.82 of $1.00`, `5-hour window 42% used, limit 80%`. */
     limit: string | null; frac: number | null
@@ -992,7 +992,11 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
           {label($, e, 'session spend')}
           {badge}
         </Box>
-        <Text size="title" weight="bold" tabular>{usd(s.cost)}</Text>
+        <Box justifyContent="space-between" alignItems="center">
+          <Text size="title" weight="bold" tabular>{usd(s.cost)}</Text>
+          <Button key="share" label="↑ Share" hotkey="h"
+            onPress={() => { void openSharePage($, r) }} />
+        </Box>
         {s.frac !== null && tone !== undefined && bar($, e, [{ series: tone, frac: s.frac }], `${pct(s.frac)} of the ${s.unit === 'percent' ? '5-hour window' : 'session'} limit`, 8)}
         <Text size="footnote" dimColor>{under}</Text>
       </Box>
@@ -1184,4 +1188,248 @@ function budgetTab($: EngineInterface, e: RenderEvent): RenderChildren {
       ])}
     </Box>
   )
+}
+
+// ---------- the share page ----------
+
+/** What the share card shows: the session's figures, its title only while the switch is on. */
+export type ShareCard = {
+  date: string; cost: number; description?: string
+  minutes: number; msgs: number; calls: number; tokens: number; model?: string
+}
+
+export function shareCard(r: Report, now: Date, withDescription: boolean): ShareCard | undefined {
+  const s = r.session
+  if (s === null) return undefined
+  return {
+    date: now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+    cost: s.cost,
+    description: withDescription && s.title ? s.title : undefined,
+    minutes: s.minutes ?? 0,
+    msgs: s.msgs,
+    calls: r.tools.reduce((n, t) => n + t.calls, 0),
+    tokens: s.tokens,
+    model: r.models?.[0]?.name,
+  }
+}
+
+const duration = (minutes: number) => minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} h ${minutes % 60} min`
+
+const shareRows = (card: ShareCard): [string, string][] => [
+  ['time', duration(card.minutes)],
+  ['messages', int(card.msgs)],
+  ['tool calls', int(card.calls)],
+  ['tokens', int(card.tokens)],
+  ...(card.model ? [['model', card.model] as [string, string]] : []),
+]
+
+/** The card as plain text, what "Copy as text" and the post links carry. */
+export function shareText(card: ShareCard): string {
+  return [
+    `This task cost me ${usd(card.cost)} with Claude.`,
+    ...(card.description ? [card.description] : []),
+    shareRows(card).map(([name, value]) => `${name}: ${value}`).join(' · '),
+    'Tracked with TokenTab · supertab.co',
+  ].join('\n')
+}
+
+const xml = (text: string) => text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+
+/** Words into lines of at most `width` characters, at most `max` lines, the last cut with an ellipsis. */
+export function wrapWords(text: string, width: number, max: number): string[] {
+  const lines: string[] = []
+  for (const word of text.split(/\s+/).filter(Boolean)) {
+    const last = lines[lines.length - 1]
+    if (last !== undefined && last.length + 1 + word.length <= width) lines[lines.length - 1] = `${last} ${word}`
+    else lines.push(word)
+  }
+  if (lines.length <= max) return lines
+  const kept = lines.slice(0, max)
+  kept[max - 1] = `${kept[max - 1]!.slice(0, width - 1)}…`
+  return kept
+}
+
+/** Figma's "share-card (image)", 320 wide: logo and date, the cost, the description, the
+ *  figures, the footer. Also the file "Save image" writes, so it carries its own fonts and colours. */
+export function shareCardSvg(card: ShareCard): string {
+  const W = 320, PAD = 19
+  const sans = 'font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Inter,sans-serif"'
+  const mono = 'font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace"'
+  const parts: string[] = []
+  let y = 19
+  parts.push(`<rect x="${PAD}" y="${y}" width="20" height="20" rx="5" fill="#1a1a1a"/>`,
+    `<text x="${PAD + 10}" y="${y + 14.5}" text-anchor="middle" ${sans} font-size="12" font-weight="700" fill="#fff">T</text>`,
+    `<text x="${PAD + 28}" y="${y + 14.5}" ${sans} font-size="13" font-weight="600" fill="#1a1a1a">TokenTab</text>`,
+    `<text x="${W - PAD}" y="${y + 14}" text-anchor="end" ${sans} font-size="11" fill="#8a8a85">${xml(card.date)}</text>`)
+  y = 51
+  parts.push(`<text x="${PAD}" y="${y + 13}" ${sans} font-size="12" fill="#6b6b66">This task cost me</text>`,
+    `<text x="${PAD}" y="${y + 60}" ${sans} font-size="44" font-weight="700" letter-spacing="-1" fill="#1a1a1a">${xml(usd(card.cost))}</text>`)
+  y = 135
+  if (card.description) {
+    for (const line of wrapWords(card.description, 40, 3)) {
+      parts.push(`<text x="${PAD}" y="${y + 14}" ${sans} font-size="14" font-weight="500" fill="#1a1a1a">${xml(line)}</text>`)
+      y += 19
+    }
+    y += 12
+  }
+  parts.push(`<rect x="${PAD}" y="${y}" width="${W - 2 * PAD}" height="1" fill="#e6e5df"/>`)
+  y += 13
+  for (const [name, value] of shareRows(card)) {
+    parts.push(`<text x="${PAD}" y="${y + 13}" ${sans} font-size="12" fill="#6b6b66">${xml(name)}</text>`,
+      `<text x="${W - PAD}" y="${y + 13}" text-anchor="end" ${mono} font-size="12" fill="#1a1a1a">${xml(value)}</text>`)
+    y += 23
+  }
+  y += 4
+  parts.push(`<rect x="${PAD}" y="${y}" width="${W - 2 * PAD}" height="1" fill="#e6e5df"/>`,
+    `<text x="${PAD}" y="${y + 24}" ${sans} font-size="10" fill="#8a8a85">Tracked with TokenTab · supertab.co</text>`)
+  const H = y + 40
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">`
+    + `<defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#f1effa"/></linearGradient></defs>`
+    + `<rect x="0.5" y="0.5" width="${W - 1}" height="${H - 1}" rx="12" fill="url(#bg)" stroke="#e6e5df"/>`
+    + parts.join('') + '</svg>'
+}
+
+/** Post links: X takes the text; LinkedIn's documented share link takes only a URL, so the
+ *  feed's `text` parameter (undocumented) carries it. Neither can attach the image. */
+export const shareLinks = (text: string) => ({
+  x: `https://x.com/intent/post?text=${encodeURIComponent(text)}`,
+  linkedin: `https://www.linkedin.com/feed/?shareActive=true&text=${encodeURIComponent(text)}`,
+})
+
+/** The share page: the card with and without its description, and the ways out the pane
+ *  lacks, done by the browser: the image to the clipboard and as a PNG, through a canvas. */
+export function sharePageHtml(withDescription: ShareCard, without: ShareCard, title: string): string {
+  const variants = [withDescription, without].map(card => {
+    const text = shareText(card)
+    return { svg: shareCardSvg(card), text, links: shareLinks(text) }
+  })
+  // `<` escaped so a title can never close the script
+  const data = JSON.stringify({ variants, file: `tokentab-${withDescription.date.replace(/[^0-9A-Za-z]+/g, '-')}.png` }).replace(/</g, '\\u003c')
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Share · TokenTab</title>
+<style>
+:root{--bg:#f4f3ee;--panel:#fff;--stage:#f1f0ea;--text:#1a1a1a;--dim:#6b6b66;--line:#e6e5df;--btn:#f1f0ea;--btn-hover:#e8e7e0;--primary:#1a1a1a;--on-primary:#fff}
+@media(prefers-color-scheme:dark){:root{--bg:#141413;--panel:#1f1f1d;--stage:#2a2a27;--text:#f2f1ec;--dim:#a3a29b;--line:#34342f;--btn:#2a2a27;--btn-hover:#34342f;--primary:#f2f1ec;--on-primary:#1a1a1a}}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--bg);color:var(--text);font:14px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif;padding:16px}
+.modal{background:var(--panel);border-radius:14px;box-shadow:0 20px 60px rgba(0,0,0,.18);width:min(680px,100%);padding:18px 20px 20px}
+h1{font-size:17px;margin:0}.sub{color:var(--dim);font-size:12px;margin:2px 0 16px}
+.body{display:flex;gap:20px;flex-wrap:wrap}
+.stage{background:var(--stage);border-radius:10px;padding:20px;flex:1 1 300px;display:grid;place-items:center}
+.stage svg{max-width:100%;height:auto;filter:drop-shadow(0 6px 16px rgba(0,0,0,.08))}
+.actions{flex:1 1 220px;display:flex;flex-direction:column;gap:6px}
+.toggle{display:flex;justify-content:space-between;align-items:center;padding:8px 0 12px;border-bottom:1px solid var(--line);margin-bottom:8px;cursor:pointer}
+.toggle input{width:30px;height:17px;accent-color:var(--primary)}
+button[hidden]{display:none}
+button,a.btn{all:unset;box-sizing:border-box;display:flex;gap:10px;align-items:center;padding:9px 14px;border-radius:8px;background:var(--btn);cursor:pointer;color:var(--text)}
+button:hover,a.btn:hover{background:var(--btn-hover)}
+button:focus-visible,a.btn:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+button.primary{background:var(--primary);color:var(--on-primary)}
+.icon{width:16px;text-align:center}
+.status{color:var(--dim);font-size:12px;min-height:16px;margin-top:4px}
+</style></head><body>
+<main class="modal">
+<h1>Share this session</h1><div class="sub">${xml(title)} · ${xml(withDescription.date)}</div>
+<div class="body">
+<div class="stage" id="card"></div>
+<div class="actions">
+<label class="toggle">Show task description <input type="checkbox" id="desc" checked></label>
+<button class="primary" id="copy-image"><span class="icon">⧉</span>Copy image</button>
+<button id="download"><span class="icon">↓</span>Download PNG</button>
+<a class="btn" id="x" target="_blank" rel="noopener"><span class="icon">𝕏</span>Share on X</a>
+<a class="btn" id="linkedin" target="_blank" rel="noopener"><span class="icon">in</span>Share on LinkedIn</a>
+<button id="native" hidden><span class="icon">⇪</span>Share…</button>
+<button id="copy-text"><span class="icon">¶</span>Copy as text</button>
+<div class="status" id="status" role="status"></div>
+</div></div></main>
+<script>
+const DATA = ${data};
+const $ = id => document.getElementById(id);
+const current = () => DATA.variants[$('desc').checked ? 0 : 1];
+const say = text => { $('status').textContent = text; };
+function draw() {
+  const v = current();
+  $('card').innerHTML = v.svg;
+  $('x').href = v.links.x;
+  $('linkedin').href = v.links.linkedin;
+}
+function png() {
+  const svg = current().svg;
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = 3, canvas = document.createElement('canvas');
+      canvas.width = img.width * scale; canvas.height = img.height * scale;
+      const ctx = canvas.getContext('2d'); ctx.scale(scale, scale); ctx.drawImage(img, 0, 0);
+      canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('no image')), 'image/png');
+    };
+    img.onerror = () => reject(new Error('the card did not render'));
+    img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+  });
+}
+$('desc').addEventListener('change', draw);
+// A promise in the ClipboardItem keeps Safari's user gesture alive while the PNG renders
+const copyImage = () => navigator.clipboard.write([new ClipboardItem({ 'image/png': png() })]);
+$('copy-image').addEventListener('click', async () => {
+  try { await copyImage(); say('Image copied.'); }
+  catch (err) { say('Not copied: ' + err.message + '. Use Download PNG instead.'); }
+});
+// Post links take only text, so the image goes on the clipboard first, to paste into the post
+for (const [id, name] of [['x', 'X'], ['linkedin', 'LinkedIn']]) {
+  $(id).addEventListener('click', async event => {
+    event.preventDefault();
+    const href = $(id).href;
+    let copied = true;
+    try { await copyImage(); } catch { copied = false; }
+    const tab = window.open(href, '_blank', 'noopener');
+    say((copied ? 'Image copied: paste it into the post with ⌘V / Ctrl+V.' : 'The image was not copied; use Download PNG and attach it.')
+      + (tab ? '' : ' Your browser blocked the new tab; click again.'));
+  });
+}
+// Rendered ahead: Safari refuses a share that waits on the render after the click
+let file;
+const prepare = () => { file = undefined; return png().then(blob => { file = new File([blob], DATA.file, { type: 'image/png' }); }, () => { file = undefined; }); };
+if (navigator.canShare && navigator.canShare({ files: [new File([''], DATA.file, { type: 'image/png' })] })) {
+  $('native').hidden = false;
+  $('desc').addEventListener('change', prepare);
+  prepare();
+  $('native').addEventListener('click', async () => {
+    if (!file) { say('Still preparing the image; try again.'); return; }
+    try { await navigator.share({ files: [file], text: current().text }); }
+    catch (err) { if (err.name !== 'AbortError') say('Not shared: ' + err.message); }
+  });
+}
+$('download').addEventListener('click', async () => {
+  try {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(await png()); a.download = DATA.file; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    say('PNG downloaded.');
+  } catch (err) { say('Not downloaded: ' + err.message); }
+});
+$('copy-text').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText(current().text); say('Text copied.'); }
+  catch (err) { say('Not copied: ' + err.message); }
+});
+draw();
+</script></body></html>
+`
+}
+
+/** "Open share page": the page written to the data folder and opened in the default browser. */
+async function openSharePage($: EngineInterface, r: Report): Promise<void> {
+  let written: string | undefined
+  try {
+    const now = new Date()
+    const path = `${await home($)}/share/${(await sid($)).slice(0, 8)}.html`
+    await $.fs.write(path, sharePageHtml(shareCard(r, now, true)!, shareCard(r, now, false)!, r.session?.title ?? r.sid.slice(0, 8)))
+    written = path
+    const { argv, checkExit } = await opener($, path)
+    const opened = await $.process.run(argv, { timeoutMs: HELPER_TIMEOUT_MS })
+    if (checkExit && opened.exitCode !== 0) throw new Error(opened.stderr.trim() || `${argv[0]} exited ${opened.exitCode}`)
+    $.ui.toast(`TokenTab: share page opened (${path})`)
+  } catch (err) {
+    $.ui.toast(`TokenTab: could not open the share page${written ? ` (${written})` : ''}: ${err instanceof Error ? err.message : String(err)}`)
+  }
 }
