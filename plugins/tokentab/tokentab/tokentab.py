@@ -34,8 +34,12 @@ def data_dir():
 CFG  = data_dir()  # plugin: data in the plugin's data folder, shipped files next to this script
 PRICES_PATH = os.path.join(HERE, "prices.json")
 BUDGET_PATH = os.path.join(CFG, "budget.json")
-# The plan's usage windows as the hooks module last read them (session.measure); account-wide
+# The plan's usage windows as the hooks module read them (session.measure): one file per
+# session, and the last reading of any, stamped with its login, for a session yet to read one
+WINDOWS_DIR = os.path.join(CFG, "state", "windows")
 RATE_LIMITS_PATH = os.path.join(CFG, "state", "rate_limits.json")
+# Claude Code's global config, where the login is kept (configFile in hooks/register.tsx)
+GLOBAL_CONFIG = os.path.join(os.environ.get("CLAUDE_CONFIG_DIR") or _HOME, ".claude.json")
 
 def utf8_stdio():
     """The hooks module and Claude Code speak UTF-8 on the pipes; Windows would use the ANSI code page."""
@@ -732,13 +736,31 @@ LIMITS = {"usd": (("session", "session_limit_usd", "session"), ("today", "daily_
           "percent": (("five_hour", "five_hour_limit_percent", "5 hours"),
                       ("seven_day", "weekly_limit_percent", "week"))}
 
-def read_windows(path=None):
-    """{kind: window} of the 5-hour and weekly windows; {} off a subscription or before a reading."""
+def _read_json(path):
     try:
-        with open(path or RATE_LIMITS_PATH, encoding="utf-8") as fh:
-            ws = json.load(fh).get("windows") or []
-    except (OSError, ValueError, AttributeError):
-        return {}
+        with open(path, encoding="utf-8") as fh:
+            doc = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    return doc if isinstance(doc, dict) else None
+
+def login_account(path=None):
+    """"<account>/<organization>" of the login in the global config; None without one."""
+    a = (_read_json(path or GLOBAL_CONFIG) or {}).get("oauthAccount")
+    if not isinstance(a, dict) or not (a.get("accountUuid") or a.get("organizationUuid")):
+        return None
+    return f"{a.get('accountUuid') or ''}/{a.get('organizationUuid') or ''}"
+
+def read_windows(sid=None):
+    """{kind: window} of the session's 5-hour and weekly windows; {} off a subscription or with
+    no reading. Before the session's first, the last one written, only if it was this login's."""
+    doc = _read_json(os.path.join(WINDOWS_DIR, sid + ".json")) if sid else None
+    if doc is None:
+        doc = _read_json(RATE_LIMITS_PATH)
+        account = login_account()
+        if doc is None or account is None or doc.get("account") != account:
+            return {}
+    ws = doc.get("windows") or []
     return {w["kind"]: w for w in ws if isinstance(w, dict) and w.get("kind") in ("five_hour", "seven_day")}
 
 def limit_unit(budget, windows):
@@ -845,7 +867,7 @@ def report(store, sid, prices, budget, show_all, led=None):
     if budget:
         cold = budget.get("cold_resume") or {}
         on = budget.get("budgets_on") is True
-        unit, lines = limit_rows(budget, {"session": b.cost, "today": dc}, read_windows())
+        unit, lines = limit_rows(budget, {"session": b.cost, "today": dc}, read_windows(sid))
         lines = lines if on else []
         ctx = None
         if tb and tb.ctx:
@@ -1010,7 +1032,7 @@ def pane_report(store, sid, prices, budget, led=None, windows=None):
     if not b:
         return out
     on = budget.get("budgets_on") is True
-    windows = read_windows() if windows is None else windows
+    windows = read_windows(sid) if windows is None else windows
     unit, rows = limit_rows(budget, {"session": b.cost, "today": out["today"]}, windows)
     # The hero's bar: this session in USD, the 5-hour window in percent
     row = next((r for r in rows if r["scope"] in ("session", "five_hour")), None) if on else None
@@ -1046,7 +1068,7 @@ def status_line(store, sid, prices, budget, led=None):
         sess, today = R["total"]["cost"], R["totals"]["today"]
     else:
         sess, today = 0.0, source(store, led, sid)[1].day_total()[0]
-    windows = read_windows()
+    windows = read_windows(sid)
     plan = "".join(f" · {name} {window_used(windows[scope]):g}%" for scope, _, name in LIMITS["percent"]
                    if scope in windows) if limit_unit(budget, windows) == "percent" else ""
     return f"session {money(sess)} · today {money(today)}{plan}"      # the engine draws the plugin name before the line

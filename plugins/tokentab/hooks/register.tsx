@@ -60,6 +60,21 @@ export function dataDir(config: string | undefined, profile: string | undefined,
   return `${root}/plugins/data/tokentab-supertab`
 }
 
+/** Claude Code's global config, where the login is kept (GLOBAL_CONFIG in tokentab.py). */
+export function configFile(config: string | undefined, profile: string | undefined, home: string | undefined): string {
+  const trim = (path: string | undefined) => path?.replace(/[\\/]+$/, '')
+  const root = trim(config) || trim(profile) || trim(home)
+  if (!root) throw new Error('USERPROFILE and HOME are unset')
+  return `${root}/.claude.json`
+}
+
+/** `<account>/<organization>` of a login record (login_account in tokentab.py); null without one. */
+export function accountOf(config: unknown): string | null {
+  const a = (config as Json | null)?.oauthAccount as Json | undefined
+  const account = str(a?.accountUuid), org = str(a?.organizationUuid)
+  return account || org ? `${account ?? ''}/${org ?? ''}` : null
+}
+
 /** `YYYY-MM-DD` of an instant, the module environment's local date. */
 export function dayOf(ms: number): string {
   const d = new Date(ms)
@@ -466,11 +481,25 @@ async function pageIsOpen($: EngineInterface): Promise<boolean> {
   return pageOpenedAt !== undefined && (await $.clock.now()) - pageOpenedAt < PAGE_MS
 }
 
-async function readWindows($: EngineInterface): Promise<{ kind: string }[]> {
+async function loginAccount($: EngineInterface): Promise<string | null> {
   try {
-    const w = (JSON.parse(await $.fs.read(`${await home($)}/state/rate_limits.json`)) as Json).windows
-    return Array.isArray(w) ? w as { kind: string }[] : []
-  } catch { return [] }
+    const path = configFile(await $.env.get('CLAUDE_CONFIG_DIR'), await $.env.get('USERPROFILE'), await $.env.get('HOME'))
+    return accountOf(JSON.parse(await $.fs.read(path)))
+  } catch { return null }
+}
+
+/** This session's usage windows; before its first reading, the last one written, only if it was this login's. */
+async function readWindows($: EngineInterface): Promise<{ kind: string }[]> {
+  const data = await home($)
+  let doc: Json
+  try {
+    doc = JSON.parse(await $.fs.read(`${data}/state/windows/${await sid($)}.json`)) as Json
+  } catch {
+    try { doc = JSON.parse(await $.fs.read(`${data}/state/rate_limits.json`)) as Json } catch { return [] }
+    const account = await loginAccount($)
+    if (account === null || doc.account !== account) return []
+  }
+  return Array.isArray(doc.windows) ? doc.windows as { kind: string }[] : []
 }
 
 async function readBudget($: EngineInterface): Promise<void> {
@@ -763,16 +792,19 @@ export const register: Register = (on, pluginOptions) => {
   }).catch(($, e, next) => next(e))
 
   // The plan's usage windows (5-hour, weekly; none off a subscription) for the guard and the
-  // report, which run outside the engine. Account-wide, so one file; written when a
-  // window moved and on this load's first measurement, which also records "none".
+  // report, which run outside the engine: the session's own, and the last of any, stamped with
+  // the login, for a session yet to measure. Written when a window moved and on this load's
+  // first measurement, which also records "none".
   on('session.measure', async ($, e, next) => {
     const r = await next(e)
     if (!measured || e.changed.includes('rateLimits')) {
       measured = true
       try {
         const windows = e.rateLimits.map(w => ({ kind: w.kind, percentUsed: w.percentUsed, resetsAt: w.resetsAt ?? null }))
-        await $.fs.write(`${await home($)}/state/rate_limits.json`,
-          JSON.stringify({ at: new Date(await $.clock.now()).toISOString(), windows }) + '\n')
+        const data = await home($), at = new Date(await $.clock.now()).toISOString()
+        await $.fs.write(`${data}/state/windows/${await sid($)}.json`, JSON.stringify({ at, windows }) + '\n')
+        await $.fs.write(`${data}/state/rate_limits.json`,
+          JSON.stringify({ at, account: await loginAccount($), windows }) + '\n')
       } catch { /* the limits stay in the unit last read */ }
     }
     return r
