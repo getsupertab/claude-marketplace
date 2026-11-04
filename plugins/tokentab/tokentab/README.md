@@ -149,7 +149,8 @@ warnings, the cold-resume check and the new-session check work either way.
 
 `limit_unit` says which pair is checked: `usd` (session, today), `percent` (of the plan's
 usage windows, Pro and Max) or `auto` (the default): percent where Claude Code reports
-usage windows, else USD. The hooks module saves the latest reading in
+usage windows, else USD. `percent` on an account that reports no usage windows
+(Enterprise, API key) checks the USD limits instead, and the Budget tab says so. The hooks module saves the latest reading in
 `state/rate_limits.json`, shared by every session of the account.
 
 `warn_at_percent` (default 70) starts warnings, once per 10% band. `hard_stop: true`

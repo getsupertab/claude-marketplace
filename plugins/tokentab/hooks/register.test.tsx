@@ -696,9 +696,12 @@ test('the limit unit: chosen, else percent where the plan reports a usage window
   expect(unitOf({ limit_unit: 'auto' }, five)).toBe('percent')
   expect(unitOf({ limit_unit: 'auto' }, [{ kind: 'spend_limit' }])).toBe('usd')
   expect(unitOf({ limit_unit: 'usd' }, five)).toBe('usd')
-  expect(unitOf({ limit_unit: 'percent' }, [])).toBe('percent')
-  expect([unitLabel('auto', 'percent'), unitLabel(undefined, 'usd'), unitLabel('usd', 'usd'), unitLabel('percent', 'percent')])
-    .toEqual(['auto: %', 'auto: $', '$ USD', '% of plan'])
+  expect(unitOf({ limit_unit: 'percent' }, five)).toBe('percent')
+  // percent pinned on an account with no usage windows counts USD rather than nothing
+  expect(unitOf({ limit_unit: 'percent' }, [])).toBe('usd')
+  expect([unitLabel('auto', 'percent'), unitLabel(undefined, 'usd'), unitLabel('usd', 'usd'), unitLabel('percent', 'percent'),
+    unitLabel('percent', 'usd')])
+    .toEqual(['auto: %', 'auto: $', '$ USD', '% of plan', '% of plan (no usage windows: checking $)'])
   const session = SECTIONS[0]!.rows.find(r => r.key === 'session_limit_usd')!
   expect(inUnit(session, 'usd')).toBe(session)
   expect(inUnit(session, 'percent')).toMatchObject({ key: 'five_hour_limit_percent', label: '5-hour window', unit: '%' })
