@@ -174,6 +174,30 @@ const HELPER_TIMEOUT_MS = 20_000
 const PAGE_MS = 30 * 60_000
 
 const ANSI = /\x1b\[([0-9;]*)m/g
+// tokentab/guard.py's cold-resume message opens with this.
+const typed = (kind: string) => kind === 'composer' || kind === 'bridge' || kind === 'sdk'
+export const CONTINUE = 'Continue'
+export const DONT_SEND = "Don't send"
+export const NOT_SENT = 'TokenTab: not sent. The prompt cache had expired; a new session starts cheaper.'
+
+// Asked before the guard runs, so a Continue goes through with no block shown. Undefined
+// leaves it to the guard: a warm cache, or no dialog (dismissed, a -p run), where it blocks.
+async function coldVerdict($: EngineInterface): Promise<'send' | 'hold' | undefined> {
+  let cold: string | undefined
+  const id = await sid($)
+  try {
+    cold = (JSON.parse(await python($, 'guard.py', ['--cold-check', id])) as { cold?: string }).cold
+  } catch { return undefined }
+  if (!cold) return undefined
+  let answer: string
+  try {
+    answer = await $.ui.ask(`${cold[0]!.toUpperCase()}${cold.slice(1)} Send your prompt anyway?`, { options: [CONTINUE, DONT_SEND], header: 'Cold cache' })
+  } catch { return undefined }
+  if (answer !== CONTINUE) return 'hold'
+  try { await python($, 'guard.py', ['--cold-confirm', id]) } catch { /* the guard then blocks once */ }
+  return 'send'
+}
+
 export const stripAnsi = (s: string): string => s.replace(ANSI, '')
 
 /** `tokentab.py --once` as plain lines for Claude's context: the `ctrl-c to quit` line
@@ -782,10 +806,11 @@ export const register: Register = (on, pluginOptions) => {
   on('prompt.submit', async ($, e, next) => {
     // `sdk`: a prompt typed in the Desktop app, an SDK host; `waiting` is only ever set
     // once a surface is there, so a `-p` run's prompt never opens anything.
-    if (waiting && (e.origin.kind === 'composer' || e.origin.kind === 'bridge' || e.origin.kind === 'sdk')) {
+    if (waiting && typed(e.origin.kind)) {
       waiting = false
       if (!(await isPlaced($)) && (await openPane($)).isPlaced) void refresh($)
     }
+    if (typed(e.origin.kind) && (await coldVerdict($)) === 'hold') return { drop: NOT_SENT }
     return next(e)
   }).catch(($, e, next) => next(e))
 

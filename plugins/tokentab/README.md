@@ -94,8 +94,8 @@ The limits are off, but these checks run from the start. Each one is set in
 
 - **Expired cache.** When a long session (100k tokens of context or more) has sat idle
   long enough for its prompt cache to expire, TokenTab holds back your next prompt once
-  and tells you what re-sending it will cost. Send it again within two minutes and it
-  goes through. Nothing has been sent at that point, so holding it back costs nothing.
+  and asks before sending, with what it will cost: **Continue** sends the prompt as
+  typed. Where no dialog can open, it blocks once; sending again within two minutes goes through. Nothing has been sent at that point, so holding it back costs nothing.
   Turn it off by removing `cold_resume`.
 - **Helpers can't start helpers.** A helper agent that tries to start or message another
   agent is stopped. Set `helpers_may_delegate` to `true` to allow it.

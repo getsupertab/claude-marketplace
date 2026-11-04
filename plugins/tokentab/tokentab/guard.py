@@ -287,6 +287,41 @@ def last_call(transcript, sid):
                 found[0] = start
     return tuple(found)
 
+def cold_resume(cold, prices, last):
+    """The cold-cache sentence when the cache has expired on a large context, else None."""
+    if not cold or not last:
+        return None
+    started, ctx, model, ttl = last
+    idle = time.time() - started
+    limit = 60.0 * float(cold.get("idle_minutes_" + ttl, 55 if ttl == "1h" else 4))
+    if idle < limit or ctx < int(cold.get("min_context_tokens", 100000)):
+        return None
+    wr = rate(prices, model, "cache_write_" + ttl)
+    fresh = int(cold.get("fresh_session_tokens", 75000))
+    return (f"this session's prompt cache has expired (idle {ago(idle)}, {ttl} cache). "
+            f"Sending now re-writes {ctx:,} tokens, about ${ctx * wr / 1e6:,.2f}. "
+            f"A new session starts at about ${fresh * wr / 1e6:,.2f}.")
+
+def cold_cli(args):
+    """--cold-check <sid>: the cold-cache sentence as JSON, nothing written.
+    --cold-confirm <sid>: the person said go ahead; the guard lets the next prompt through."""
+    mode, sid = args[0], args[1]
+    spath = os.path.join(STATE, sid + ".json")
+    if mode == "--cold-confirm":
+        st = load(spath, {})
+        st["cold_block_at"] = time.time()
+        os.makedirs(STATE, exist_ok=True)
+        with open(spath, "w", encoding="utf-8") as fh:
+            json.dump(st, fh)
+        print("{}")
+        return 0
+    b = load(os.path.join(CFG, "budget.json"), None) or {}
+    tp = glob.glob(os.path.join(ROOT, "*", f"{sid}.jsonl"))
+    c = cold_resume(b.get("cold_resume") or {}, load(os.path.join(HERE, "prices.json"), {}),
+                    last_call(tp[0], sid) if tp else None)
+    print(json.dumps({"cold": c} if c else {}))
+    return 0
+
 def ago(seconds):
     m = int(seconds // 60)
     return f"{m // 60}h {m % 60:02d}m" if m >= 60 else f"{m}m"
@@ -474,31 +509,23 @@ def main():
     # confirm window goes ahead. This blocks even in warn-only mode: a warning
     # that arrives with the prompt arrives after the money is spent.
     cold = b.get("cold_resume") or {}
-    if event == "UserPromptSubmit" and cold and last:
-        started, ctx, model, ttl = last
-        idle = time.time() - started
-        limit = 60.0 * float(cold.get("idle_minutes_" + ttl, 55 if ttl == "1h" else 4))
-        if idle >= limit and ctx >= int(cold.get("min_context_tokens", 100000)):
-            blocked = st.get("cold_block_at")
-            if blocked and time.time() - float(blocked) <= float(cold.get("confirm_seconds", 120)):
-                st.pop("cold_block_at", None)            # confirmed: let it through
-            else:
-                wr = rate(prices, model, "cache_write_" + ttl)
-                fresh = int(cold.get("fresh_session_tokens", 75000))
-                st["cold_block_at"] = time.time()
-                try:
-                    with open(spath, "w", encoding="utf-8") as fh:
-                        json.dump(st, fh)
-                except Exception:
-                    pass
-                msg = (f"TokenTab: this session's prompt cache has expired (idle {ago(idle)}, "
-                       f"{ttl} cache). Sending now re-writes {ctx:,} tokens, about "
-                       f"${ctx * wr / 1e6:,.2f}. A new session starts at about ${fresh * wr / 1e6:,.2f}. "
-                       f"Nothing was sent. Send the prompt again within "
-                       f"{int(cold.get('confirm_seconds', 120))}s to go ahead anyway. "
-                       f"(/compact does not help here: it reads the whole context once too.)")
-                print(json.dumps({"decision": "block", "reason": msg, "systemMessage": msg}))
-                return 0
+    c = cold_resume(cold, prices, last) if event == "UserPromptSubmit" else None
+    if c:
+        blocked = st.get("cold_block_at")
+        if blocked and time.time() - float(blocked) <= float(cold.get("confirm_seconds", 120)):
+            st.pop("cold_block_at", None)            # confirmed: let it through
+        else:
+            st["cold_block_at"] = time.time()
+            try:
+                with open(spath, "w", encoding="utf-8") as fh:
+                    json.dump(st, fh)
+            except Exception:
+                pass
+            msg = (f"TokenTab: {c} Nothing was sent. Send the prompt again within "
+                   f"{int(cold.get('confirm_seconds', 120))}s to go ahead anyway. "
+                   f"(/compact does not help here: it reads the whole context once too.)")
+            print(json.dumps({"decision": "block", "reason": msg, "systemMessage": msg}))
+            return 0
 
     # Context size. Every call re-reads all of it, so this is the running cost
     # per call. Warn once per threshold; a compact drops below and re-arms it.
@@ -611,4 +638,6 @@ if __name__ == "__main__":
     utf8_stdio()
     if sys.argv[1:] == ["--rebuild"]:
         sys.exit(rebuild())
+    if len(sys.argv) == 3 and sys.argv[1] in ("--cold-check", "--cold-confirm"):
+        sys.exit(cold_cli(sys.argv[1:]))
     sys.exit(main())

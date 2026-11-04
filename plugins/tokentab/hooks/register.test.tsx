@@ -866,3 +866,66 @@ test('with no Python 3 at all, the error says what was tried', async ($, on) => 
   const r = await $.command.run({ command: 'tokentab:status', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 200 } })
   expect(r.text?.split('\n')[0]).toBe('TokenTab: no Python 3 found (tried python3, python, py -3)')
 })
+
+const COLD = "this session's prompt cache has expired (idle 1h 10m, 1h cache). Sending now re-writes 180,000 tokens, about $3.38. A new session starts at about $1.41."
+
+// The guard's check-only and confirm calls, the dialog, and what reaches the guard beneath.
+function coldWorld(on: On, cold: string | undefined, answer: string | undefined) {
+  const seen = { asked: [] as string[], sent: [] as string[], confirms: 0 }
+  on('session.id', () => ({ value: SID }))
+  on('process.run', ($, e) => {
+    const argv = [...e.argv]
+    const out = (stdout: string) => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
+    if (argv.includes('-c')) return out('3\n')
+    if (argv.includes('--cold-confirm')) { seen.confirms++; return out('{}') }
+    return out(JSON.stringify(cold ? { cold } : {}))
+  })
+  on('prompt.submit', ($, e) => { seen.sent.push(e.text); return { text: e.text } })
+  on('tool.call', ($, e) => {
+    if (e.tool !== 'AskUserQuestion') return { deny: 'no tool here' }
+    const q = (e as unknown as { questions: { question: string }[] }).questions[0]!.question
+    seen.asked.push(q)
+    if (answer === undefined) return { deny: 'dismissed' }
+    return { result: { questions: [], answers: { [q]: answer } } }
+  })
+  return seen
+}
+
+test('a cold cache asks before the guard; Continue confirms it and sends the prompt on', async ($, on) => {
+  const seen = coldWorld(on, COLD, 'Continue')
+  const r = await $.prompt.submit({ text: 'go on with the refactor', wait: false, origin: { kind: 'sdk' } })
+  expect(seen.asked).toEqual(["This session's prompt cache has expired (idle 1h 10m, 1h cache). Sending now re-writes 180,000 tokens, about $3.38. A new session starts at about $1.41. Send your prompt anyway?"])
+  expect(seen.confirms).toBe(1)
+  expect(seen.sent).toEqual(['go on with the refactor'])
+  expect(r).toEqual({ text: 'go on with the refactor' })
+})
+
+test("Don't send holds the prompt back with a short note", async ($, on) => {
+  const seen = coldWorld(on, COLD, "Don't send")
+  const r = await $.prompt.submit({ text: 'x', wait: false, origin: { kind: 'composer' } })
+  expect(r).toEqual({ drop: 'TokenTab: not sent. The prompt cache had expired; a new session starts cheaper.' })
+  expect(seen.sent).toEqual([])
+  expect(seen.confirms).toBe(0)
+})
+
+test('a dismissed dialog leaves the prompt to the guard, unconfirmed', async ($, on) => {
+  const seen = coldWorld(on, COLD, undefined)
+  await $.prompt.submit({ text: 'x', wait: false, origin: { kind: 'composer' } })
+  expect(seen.asked.length).toBe(1)
+  expect(seen.confirms).toBe(0)
+  expect(seen.sent).toEqual(['x'])
+})
+
+test('a warm cache, or a prompt nobody typed, asks nothing', async ($, on) => {
+  const seen = coldWorld(on, undefined, 'Continue')
+  await $.prompt.submit({ text: 'warm', wait: false, origin: { kind: 'composer' } })
+  expect(seen.asked).toEqual([])
+  expect(seen.sent).toEqual(['warm'])
+})
+
+test('a prompt from a schedule is never asked about', async ($, on) => {
+  const seen = coldWorld(on, COLD, 'Continue')
+  await $.prompt.submit({ text: 'tick', wait: false, origin: { kind: 'scheduled-trigger' } })
+  expect(seen.asked).toEqual([])
+  expect(seen.sent).toEqual(['tick'])
+})

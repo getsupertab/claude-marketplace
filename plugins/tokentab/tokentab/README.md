@@ -104,8 +104,9 @@ The prompt cache lasts an hour (or 5 minutes) from the start of the last request
 used it. Once it expires, the next call rewrites the whole context at the cache-write
 rate. TokenTab checks your prompt before anything is sent, so in a session with 100k
 tokens of context or more it holds that prompt back once, even with budgets off, and
-shows what it will cost against what a new session would. Send it again within two
-minutes to go ahead. `/compact` doesn't avoid the cost: compacting reads the whole
+asks first, showing what it will cost against what a new session would; **Continue**
+sends the prompt as typed. Where no dialog can open, the prompt is held back once:
+send it again within two minutes to go ahead. `/compact` doesn't avoid the cost: compacting reads the whole
 context once too.
 
 ### New session check
