@@ -433,14 +433,24 @@ class Store:
         self.prompts = {}          # session_id -> epochs of the user's prompts
         self.think = {}            # requestId -> thinking tokens (telemetry lacks them; see LedgerStore.reconcile)
         self.titles = {}           # session_id -> (rank, title): the user's own title (2) beats the generated one (1)
+        self.cwd_of = {}           # session_id -> working directory its transcript names
+        self.proj_cwd = {}         # project slug -> a working directory seen in it
+        self.present = set()       # session ids with a transcript on disk at the last scan
+        self.released = {}         # session_id -> project slug of a Desktop session deleted there
 
     def scan(self):
         if not os.path.isdir(ROOT):
             return
+        present, released = set(), {}
         for proj in os.listdir(ROOT):
             pdir = os.path.join(ROOT, proj)
             if not os.path.isdir(pdir):
                 continue
+            for name in os.listdir(pdir):
+                if name.endswith(".jsonl"):
+                    present.add(name[:-len(".jsonl")])
+                elif name.endswith(".desktop-released.json"):
+                    released[name[:-len(".desktop-released.json")]] = proj
             # Helpers' transcripts sit under <session>/subagents and carry the
             # parent's sessionId, so they land in the parent's bucket.
             for name in os.listdir(pdir) + [os.path.relpath(x, pdir) for x in
@@ -473,10 +483,27 @@ class Store:
                     self.offsets[path] = off + len(chunk[:cut+1].encode("utf-8", "replace"))
                     chunk = chunk[:cut+1]
                 self._consume(chunk, proj)
+        self.present, self.released = present, released
 
     def title(self, sid):
         """The session's title as Claude Code shows it, or None."""
         return self.titles.get(sid, (0, None))[1]
+
+    def deleted(self, sid):
+        """True when the session's transcript is gone (e.g. deleted in Claude Desktop)."""
+        return os.path.isdir(ROOT) and sid not in self.present
+
+    def project(self, sid):
+        """The folder the session ran in, by name, or None."""
+        proj = self.proj_of.get(sid) or self.released.get(sid)
+        cwd = self.cwd_of.get(sid) or self.proj_cwd.get(proj)
+        if cwd:
+            return os.path.basename(cwd.rstrip("/\\")) or cwd
+        if not proj:
+            return None
+        # The slug is the path with every other character as "-", so only the home part can go.
+        home = re.sub(r"[^A-Za-z0-9]", "-", _HOME)
+        return (proj[len(home):].lstrip("-") or proj) if proj.startswith(home) else proj
 
     def _consume(self, chunk, proj):
         for line in chunk.splitlines():
@@ -498,7 +525,12 @@ class Store:
                 if o.get("type") == "user":
                     self._prompt(o)
                 if o.get("type") in ("user", "attachment", "system"):
-                    self.sessions.setdefault(o.get("sessionId") or "unknown", Bucket()).note(o)
+                    sid = o.get("sessionId") or "unknown"
+                    self.sessions.setdefault(sid, Bucket()).note(o)
+                    self.proj_of.setdefault(sid, proj)
+                    if o.get("cwd"):
+                        self.cwd_of.setdefault(sid, o["cwd"])
+                        self.proj_cwd.setdefault(proj, o["cwd"])
                 continue
             if '"usage"' not in line:
                 continue
@@ -699,8 +731,19 @@ def month_sessions(store, src):
              if (c := sum(dc for ts, dc in b.calls
                           if (d := datetime.fromtimestamp(ts)).year == now.year and d.month == now.month)) > 0}
     total = sum(spent.values())
-    return [{"sid": sid, "name": store.title(sid) or sid[:8], "cost": c, "share": c / total if total else 0}
-            for sid, c in sorted(spent.items(), key=lambda kv: -kv[1])]
+    return [session_row(store, sid, c, total) for sid, c in sorted(spent.items(), key=lambda kv: -kv[1])]
+
+
+def session_row(store, sid, cost, total):
+    """One row of the sessions list: its title, else its project, else its id; `detail` is the
+    dimmed rest: the short id when untitled, so two sessions in one project stay apart, and
+    whether the transcript is gone."""
+    title = store.title(sid)
+    name = title or store.project(sid) or sid[:8]
+    detail = [] if title or name == sid[:8] else [sid[:8]]
+    if store.deleted(sid):
+        detail.append("deleted")
+    return {"sid": sid, "name": name, "detail": " · ".join(detail), "cost": cost, "share": cost / total if total else 0}
 
 
 def parse_ts(s):

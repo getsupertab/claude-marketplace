@@ -104,7 +104,7 @@ const STATUS = 'session $2.0228 · today $7.9406'
 const REPORT: Report = {
   sid: 'a0b1c2d3-session', prices_verified: true, today: 5.94, month: 28.38, overhead: 0.0039,
   sessions: [
-    { sid: 'f9e8d7c6-other', name: 'Ledger rewrite', cost: 24.767, share: 0.8727 },
+    { sid: 'f9e8d7c6-other', name: 'Ledger rewrite', detail: 'deleted', cost: 24.767, share: 0.8727 },
     { sid: 'a0b1c2d3-session', name: 'Token type sidebar', cost: 3.613, share: 0.1273 },
   ],
   session: { title: 'Token type sidebar', cost: 3.613, tokens: 532533, msgs: 47, limits_on: true, unit: 'usd', limit: '$3.61 of $2.00', frac: 1.8065, warn_at: 70, hard_stop: false },
@@ -372,6 +372,7 @@ test('an interactive session opens the pane and draws the Spend tab', async ($, 
   // this month's sessions as a table, this one in bold
   for (const s of ['  Name', 'Cost', '% of costs', 'Ledger rewrite', '$24.77', '87%', '13%']) expect(find(s)).toBeDefined()
   expect(t.some(x => x.text === 'Token type sidebar' && x.props.bold === true)).toBe(true)
+  expect(t.some(x => x.text === ' · deleted' && x.props.dimColor === true)).toBe(true)
   // the terminal has no Svg: the bars are block characters, the session's in the error tone
   expect(sources(tree, 'Svg')).toEqual([])
   expect(t.find(x => x.props.color === SERIES.error![0])?.text).toMatch(/^█+$/)
