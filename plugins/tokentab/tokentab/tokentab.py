@@ -34,8 +34,12 @@ def data_dir():
 CFG  = data_dir()  # plugin: data in the plugin's data folder, shipped files next to this script
 PRICES_PATH = os.path.join(HERE, "prices.json")
 BUDGET_PATH = os.path.join(CFG, "budget.json")
-# The plan's usage windows as the hooks module last read them (session.measure); account-wide
+# The plan's usage windows as the hooks module read them (session.measure): one file per
+# session, and the last reading of any, stamped with its login, for a session yet to read one
+WINDOWS_DIR = os.path.join(CFG, "state", "windows")
 RATE_LIMITS_PATH = os.path.join(CFG, "state", "rate_limits.json")
+# Claude Code's global config, where the login is kept (configFile in hooks/register.tsx)
+GLOBAL_CONFIG = os.path.join(os.environ.get("CLAUDE_CONFIG_DIR") or _HOME, ".claude.json")
 
 def utf8_stdio():
     """The hooks module and Claude Code speak UTF-8 on the pipes; Windows would use the ANSI code page."""
@@ -429,14 +433,24 @@ class Store:
         self.prompts = {}          # session_id -> epochs of the user's prompts
         self.think = {}            # requestId -> thinking tokens (telemetry lacks them; see LedgerStore.reconcile)
         self.titles = {}           # session_id -> (rank, title): the user's own title (2) beats the generated one (1)
+        self.cwd_of = {}           # session_id -> working directory its transcript names
+        self.proj_cwd = {}         # project slug -> a working directory seen in it
+        self.present = set()       # session ids with a transcript on disk at the last scan
+        self.released = {}         # session_id -> project slug of a Desktop session deleted there
 
     def scan(self):
         if not os.path.isdir(ROOT):
             return
+        present, released = set(), {}
         for proj in os.listdir(ROOT):
             pdir = os.path.join(ROOT, proj)
             if not os.path.isdir(pdir):
                 continue
+            for name in os.listdir(pdir):
+                if name.endswith(".jsonl"):
+                    present.add(name[:-len(".jsonl")])
+                elif name.endswith(".desktop-released.json"):
+                    released[name[:-len(".desktop-released.json")]] = proj
             # Helpers' transcripts sit under <session>/subagents and carry the
             # parent's sessionId, so they land in the parent's bucket.
             for name in os.listdir(pdir) + [os.path.relpath(x, pdir) for x in
@@ -469,10 +483,27 @@ class Store:
                     self.offsets[path] = off + len(chunk[:cut+1].encode("utf-8", "replace"))
                     chunk = chunk[:cut+1]
                 self._consume(chunk, proj)
+        self.present, self.released = present, released
 
     def title(self, sid):
         """The session's title as Claude Code shows it, or None."""
         return self.titles.get(sid, (0, None))[1]
+
+    def deleted(self, sid):
+        """True when the session's transcript is gone (e.g. deleted in Claude Desktop)."""
+        return os.path.isdir(ROOT) and sid not in self.present
+
+    def project(self, sid):
+        """The folder the session ran in, by name, or None."""
+        proj = self.proj_of.get(sid) or self.released.get(sid)
+        cwd = self.cwd_of.get(sid) or self.proj_cwd.get(proj)
+        if cwd:
+            return os.path.basename(cwd.rstrip("/\\")) or cwd
+        if not proj:
+            return None
+        # The slug is the path with every other character as "-", so only the home part can go.
+        home = re.sub(r"[^A-Za-z0-9]", "-", _HOME)
+        return (proj[len(home):].lstrip("-") or proj) if proj.startswith(home) else proj
 
     def _consume(self, chunk, proj):
         for line in chunk.splitlines():
@@ -494,7 +525,12 @@ class Store:
                 if o.get("type") == "user":
                     self._prompt(o)
                 if o.get("type") in ("user", "attachment", "system"):
-                    self.sessions.setdefault(o.get("sessionId") or "unknown", Bucket()).note(o)
+                    sid = o.get("sessionId") or "unknown"
+                    self.sessions.setdefault(sid, Bucket()).note(o)
+                    self.proj_of.setdefault(sid, proj)
+                    if o.get("cwd"):
+                        self.cwd_of.setdefault(sid, o["cwd"])
+                        self.proj_cwd.setdefault(proj, o["cwd"])
                 continue
             if '"usage"' not in line:
                 continue
@@ -695,8 +731,19 @@ def month_sessions(store, src):
              if (c := sum(dc for ts, dc in b.calls
                           if (d := datetime.fromtimestamp(ts)).year == now.year and d.month == now.month)) > 0}
     total = sum(spent.values())
-    return [{"sid": sid, "name": store.title(sid) or sid[:8], "cost": c, "share": c / total if total else 0}
-            for sid, c in sorted(spent.items(), key=lambda kv: -kv[1])]
+    return [session_row(store, sid, c, total) for sid, c in sorted(spent.items(), key=lambda kv: -kv[1])]
+
+
+def session_row(store, sid, cost, total):
+    """One row of the sessions list: its title, else its project, else its id; `detail` is the
+    dimmed rest: the short id when untitled, so two sessions in one project stay apart, and
+    whether the transcript is gone."""
+    title = store.title(sid)
+    name = title or store.project(sid) or sid[:8]
+    detail = [] if title or name == sid[:8] else [sid[:8]]
+    if store.deleted(sid):
+        detail.append("deleted")
+    return {"sid": sid, "name": name, "detail": " · ".join(detail), "cost": cost, "share": cost / total if total else 0}
 
 
 def parse_ts(s):
@@ -734,19 +781,38 @@ LIMITS = {"usd": (("session", "session_limit_usd", "session"), ("today", "daily_
 
 WINDOW_NAMES = {"five_hour": "5-hour window", "seven_day": "weekly window"}
 
-def read_windows(path=None):
-    """{kind: window} of the 5-hour and weekly windows; {} off a subscription or before a reading."""
+def _read_json(path):
     try:
-        with open(path or RATE_LIMITS_PATH, encoding="utf-8") as fh:
-            ws = json.load(fh).get("windows") or []
-    except (OSError, ValueError, AttributeError):
-        return {}
+        with open(path, encoding="utf-8") as fh:
+            doc = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    return doc if isinstance(doc, dict) else None
+
+def login_account(path=None):
+    """"<account>/<organization>" of the login in the global config; None without one."""
+    a = (_read_json(path or GLOBAL_CONFIG) or {}).get("oauthAccount")
+    if not isinstance(a, dict) or not (a.get("accountUuid") or a.get("organizationUuid")):
+        return None
+    return f"{a.get('accountUuid') or ''}/{a.get('organizationUuid') or ''}"
+
+def read_windows(sid=None):
+    """{kind: window} of the session's 5-hour and weekly windows; {} off a subscription or with
+    no reading. Before the session's first, the last one written, only if it was this login's."""
+    doc = _read_json(os.path.join(WINDOWS_DIR, sid + ".json")) if sid else None
+    if doc is None:
+        doc = _read_json(RATE_LIMITS_PATH)
+        account = login_account()
+        if doc is None or account is None or doc.get("account") != account:
+            return {}
+    ws = doc.get("windows") or []
     return {w["kind"]: w for w in ws if isinstance(w, dict) and w.get("kind") in ("five_hour", "seven_day")}
 
 def limit_unit(budget, windows):
-    """"usd" or "percent": the one chosen, else (auto) percent where the plan reports usage windows."""
+    """"usd" or "percent": the one chosen, else (auto) percent where the plan reports usage windows.
+    Percent with no window reading counts USD, so a pinned unit never leaves nothing checked."""
     unit = budget.get("limit_unit", "auto")
-    if unit in LIMITS:
+    if unit == "usd":
         return unit
     return "percent" if windows else "usd"
 
@@ -853,7 +919,7 @@ def report(store, sid, prices, budget, show_all, led=None):
     R["by_source"] = [(nm, calls, c, (c / b.cost) if b.cost else 0)
                       for nm, (calls, c) in sorted(b.by_source.items(), key=lambda kv: -kv[1][1])]
     R["window"] = {"5m": src.window_cost(300), "1h": src.window_cost(3600)}
-    windows = read_windows()
+    windows = read_windows(sid)
     # A subscription reports plan windows; its dollars are API-rate equivalents, not a bill
     R["plan"] = bool(windows)
 
@@ -1028,7 +1094,7 @@ def pane_report(store, sid, prices, budget, led=None, windows=None):
     if not b:
         return out
     on = budget.get("budgets_on") is True
-    windows = read_windows() if windows is None else windows
+    windows = read_windows(sid) if windows is None else windows
     unit, rows = limit_rows(budget, {"session": b.cost, "today": out["today"]}, windows)
     # The hero's bar: this session in USD; under percent the first window with a limit and a reading
     row = next((r for r in rows if r["scope"] in ("session", "five_hour", "seven_day")), None) if on else None
@@ -1036,6 +1102,7 @@ def pane_report(store, sid, prices, budget, led=None, windows=None):
                     for r in rows if r["scope"] in windows] if on and unit == "percent" else []
     out["session"] = {
         "title": R["session"]["title"], "cost": b.cost, "tokens": b.wtok, "msgs": b.msgs,
+        "minutes": round((b.last - b.first).total_seconds() / 60) if b.first and b.last else 0,
         "limits_on": on, "unit": unit, "plan": bool(windows), "windows": plan_windows,
         "limit": None if not row else row["parts"][0] if unit == "usd"
                  else f"{WINDOW_NAMES[row['scope']]} {row['parts'][0]}",
@@ -1067,7 +1134,7 @@ def status_line(store, sid, prices, budget, led=None):
         sess, today = R["total"]["cost"], R["totals"]["today"]
     else:
         sess, today = 0.0, source(store, led, sid)[1].day_total()[0]
-    windows = read_windows()
+    windows = read_windows(sid)
     dollars = f"session {money(sess)} · today {money(today)}{' at API rates' if windows else ''}"
     plan = [f"{name} {window_used(windows[scope]):g}%" for scope, _, name in LIMITS["percent"] if scope in windows]
     if plan and limit_unit(budget, windows) == "percent":

@@ -192,6 +192,7 @@ def main():
     errs += ledger_case(root, store, prices)
     errs += utf8_case(root, prices)
     errs += locked_page_case(root)
+    errs += names_case(prices)
     for err in errs:
         print("  " + err)
     print("ALL OK" if not errs else f"{len(errs)} FAILURES")
@@ -222,6 +223,11 @@ def pane_check(store, prices):
         errs.append("reset_text: a past reset should be None, a future one a time")
     if kt.pane_report(store, "fx", prices, {**plan, "limit_unit": "usd"}, windows=windows)["session"]["unit"] != "usd":
         errs.append("pane report: limit_unit usd should win over the usage windows")
+    # Percent pinned on an account with no usage windows (Enterprise, API key) checks the USD limits
+    unit, rows = kt.limit_rows({**plan, "limit_unit": "percent", "daily_limit_usd": 50},
+                               {"session": 9, "today": 120}, {})
+    if unit != "usd" or [(r["scope"], r["frac"] >= 1) for r in rows] != [("session", True), ("today", True)]:
+        errs.append(f"limit_rows: percent with no usage windows should check the USD limits: {unit} {rows}")
     unit, rows = kt.limit_rows(plan, {"session": 0, "today": 0}, windows)
     if [(r["scope"], r["frac"]) for r in rows] != [("five_hour", 0.5), ("seven_day", 0.0)]:
         errs.append(f"limit_rows: a window past its reset should count 0%: {rows}")
@@ -372,6 +378,38 @@ def locked_page_case(root):
         if f.read() != "new":
             errs.append("locked page: the next redraw did not write")
     print("[locked page] " + ("OK" if not errs else "FAIL"))
+    return errs
+
+
+def names_case(prices):
+    """The sessions list names an untitled session by its project, keeps the short id
+    beside it, and marks a session whose transcript is gone as deleted."""
+    errs, saved = [], kt.ROOT
+    kt.ROOT = tempfile.mkdtemp()
+    pdir = os.path.join(kt.ROOT, "-Users-x-work-sportsort-engine")
+    os.makedirs(pdir)
+    def write(sid, *lines):
+        with open(os.path.join(pdir, sid + ".jsonl"), "w", encoding="utf-8") as f:
+            for o in lines:
+                f.write(json.dumps({"sessionId": sid, **o}, separators=(",", ":")) + "\n")
+    cwd = "/Users/x/work/sportsort-engine"
+    titled, untitled, gone, unknown = ("a" * 8 + "-1", "b" * 8 + "-2", "c" * 8 + "-3", "d" * 8 + "-4")
+    write(titled, {"type": "user", "cwd": cwd, "message": {"role": "user", "content": "hi"}},
+          {"type": "custom-title", "customTitle": "PR-Audit"})
+    write(untitled, {"type": "user", "cwd": cwd, "message": {"role": "user", "content": "hi"}})
+    store = kt.Store(prices); store.scan()
+    os.remove(os.path.join(pdir, titled + ".jsonl"))
+    for sid in (titled, gone):
+        with open(os.path.join(pdir, sid + ".desktop-released.json"), "w") as f:
+            json.dump({"v": 1, "reason": "delete"}, f)
+    store.scan()
+    want = {titled: ("PR-Audit", "deleted"), untitled: ("sportsort-engine", "bbbbbbbb"),
+            gone: ("sportsort-engine", "cccccccc · deleted"), unknown: ("dddddddd", "deleted")}
+    for sid, (name, detail) in want.items():
+        row = kt.session_row(store, sid, 1.0, 4.0)
+        if (row["name"], row["detail"]) != (name, detail):
+            errs.append(f"session_row({sid}) = {row['name']!r} / {row['detail']!r}, want {name!r} / {detail!r}")
+    kt.ROOT = saved
     return errs
 
 

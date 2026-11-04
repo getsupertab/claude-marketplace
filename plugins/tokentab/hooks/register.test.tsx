@@ -1,7 +1,7 @@
 import { test, expect, mock } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On, RenderElement, RenderNode } from 'claude-code'
-import { at, barCells, barSvg, dataDir, inUnit, int, liveLines, pct, SECTIONS, SERIES, shown, stripAnsi, toneOf, unitLabel, unitOf, usd, withNewKeys } from './register'
+import { at, barCells, barSvg, dataDir, inUnit, int, liveLines, pct, SECTIONS, SERIES, shareCard, shareCardSvg, shareLinks, sharePageHtml, shareText, shown, stripAnsi, toneOf, unitLabel, unitOf, usd, withNewKeys, wrapWords } from './register'
 import type { Report } from './register'
 
 // The world beneath the plugin: `$.fs` reaches nothing under `claude plugin test`, and
@@ -104,7 +104,7 @@ const STATUS = 'session $2.0228 · today $7.9406'
 const REPORT: Report = {
   sid: 'a0b1c2d3-session', prices_verified: true, today: 5.94, month: 28.38, overhead: 0.0039,
   sessions: [
-    { sid: 'f9e8d7c6-other', name: 'Ledger rewrite', cost: 24.767, share: 0.8727 },
+    { sid: 'f9e8d7c6-other', name: 'Ledger rewrite', detail: 'deleted', cost: 24.767, share: 0.8727 },
     { sid: 'a0b1c2d3-session', name: 'Token type sidebar', cost: 3.613, share: 0.1273 },
   ],
   session: { title: 'Token type sidebar', cost: 3.613, tokens: 532533, msgs: 47, limits_on: true, unit: 'usd', limit: '$3.61 of $2.00', frac: 1.8065, warn_at: 70, hard_stop: false },
@@ -270,6 +270,25 @@ test('records that are not api_request, and a failure in the module, leave the r
   expect([...fs.keys()].filter(k => k.includes('/ledger/')).length).toBe(0)
 })
 
+test('the share card: the session figures, its title behind the switch, escaped in the Svg', async () => {
+  const r = {
+    sid: 'abc', prices_verified: true, today: 0, month: 0, overhead: 0,
+    session: { title: 'Fix <tabs> & bars', cost: 0.73, tokens: 148210, msgs: 12, minutes: 42, limits_on: false, unit: 'usd', limit: null, frac: null, warn_at: 70, hard_stop: false },
+    models: [{ name: 'claude-opus-5-5', msgs: 12, cost: 0.73, share: 1 }],
+    tools: [{ name: 'Bash', calls: 18, cost: 0, ask: 0, ctx: 0, read: 0, ctx_tokens: 0 }],
+  } as Report
+  const card = shareCard(r, new Date('2026-10-29T12:00:00Z'), true)!
+  expect(shareText(card)).toBe('This task cost me $0.73 with Claude.\nFix <tabs> & bars\n'
+    + 'time: 42 min · messages: 12 · tool calls: 18 · tokens: 148,210 · model: claude-opus-5-5\nTracked with TokenTab · supertab.co')
+  expect(shareCard(r, new Date(), false)!.description).toBeUndefined()
+  expect(shareCardSvg(card)).toContain('Fix &lt;tabs&gt; &amp; bars')
+  expect(shareLinks('a b').x).toBe('https://x.com/intent/post?text=a%20b')
+  expect(wrapWords('one two three four', 9, 2)).toEqual(['one two', 'three…'])
+  const page = sharePageHtml(card, shareCard(r, new Date('2026-10-29T12:00:00Z'), false)!, 'a </script> title')
+  expect(page).toContain('a &lt;/script&gt; title')
+  expect(page.match(/<\/script>/g)).toHaveLength(1)
+})
+
 test('the figures as the design writes them, and the bars in Svg and in cells', async () => {
   expect([usd(3.613), usd(3.613, 4), usd(1234.5), int(5561099)]).toEqual(['$3.61', '$3.6130', '$1,234.50', '5,561,099'])
   expect(pct(1.8065)).toBe('181%')
@@ -340,7 +359,7 @@ test('an interactive session opens the pane and draws the Spend tab', async ($, 
   const folded = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   // the tab row: Spend is the primary one, then Budget and the browser button; then the details toggle
   expect(elements(folded, 'Button').map(b => [b.key, b.variant, b.hotkey])).toEqual([
-    ['tab-spend', 'primary', 's'], ['tab-budget', 'secondary', 'b'], ['open-browser', undefined, 'o'],
+    ['tab-spend', 'primary', 's'], ['tab-budget', 'secondary', 'b'], ['open-browser', undefined, 'o'], ['share', undefined, 'h'],
     ['details-toggle', undefined, 'd'], ['sessions-toggle', undefined, 'a'],
   ])
   // the breakdown starts folded: the toggle shows, the rate table and the tools do not
@@ -372,6 +391,7 @@ test('an interactive session opens the pane and draws the Spend tab', async ($, 
   // this month's sessions as a table, this one in bold
   for (const s of ['  Name', 'Cost', '% of costs', 'Ledger rewrite', '$24.77', '87%', '13%']) expect(find(s)).toBeDefined()
   expect(t.some(x => x.text === 'Token type sidebar' && x.props.bold === true)).toBe(true)
+  expect(t.some(x => x.text === ' · deleted' && x.props.dimColor === true)).toBe(true)
   // the terminal has no Svg: the bars are block characters, the session's in the error tone
   expect(sources(tree, 'Svg')).toEqual([])
   expect(t.find(x => x.props.color === SERIES.error![0])?.text).toMatch(/^█+$/)
@@ -724,9 +744,12 @@ test('the limit unit: chosen, else percent where the plan reports a usage window
   expect(unitOf({ limit_unit: 'auto' }, five)).toBe('percent')
   expect(unitOf({ limit_unit: 'auto' }, [{ kind: 'spend_limit' }])).toBe('usd')
   expect(unitOf({ limit_unit: 'usd' }, five)).toBe('usd')
-  expect(unitOf({ limit_unit: 'percent' }, [])).toBe('percent')
-  expect([unitLabel('auto', 'percent'), unitLabel(undefined, 'usd'), unitLabel('usd', 'usd'), unitLabel('percent', 'percent')])
-    .toEqual(['auto: %', 'auto: $', '$ USD', '% of plan'])
+  expect(unitOf({ limit_unit: 'percent' }, five)).toBe('percent')
+  // percent pinned on an account with no usage windows counts USD rather than nothing
+  expect(unitOf({ limit_unit: 'percent' }, [])).toBe('usd')
+  expect([unitLabel('auto', 'percent'), unitLabel(undefined, 'usd'), unitLabel('usd', 'usd'), unitLabel('percent', 'percent'),
+    unitLabel('percent', 'usd')])
+    .toEqual(['auto: %', 'auto: $', '$ USD', '% of plan', '% of plan (no usage windows: checking $)'])
   const session = SECTIONS[0]!.rows.find(r => r.key === 'session_limit_usd')!
   expect(inUnit(session, 'usd')).toBe(session)
   expect(inUnit(session, 'percent')).toMatchObject({ key: 'five_hour_limit_percent', label: '5-hour window', unit: '%' })
@@ -738,14 +761,17 @@ test('the limit unit: chosen, else percent where the plan reports a usage window
 test('session.measure records the usage windows; the Budget tab then shows the percent fields', async ($, on) => {
   mock.env(on, { HOME: '/home/t' })
   const clock = mock.clock(on, { now: T0 })
-  const { fs, ui } = world(on, FILES)
+  const { fs, ui } = world(on, { ...FILES, '/home/t/.claude.json': JSON.stringify({ oauthAccount: { accountUuid: 'a1', organizationUuid: 'o1' } }) })
   on('session.measure', ($, e) => ({ changed: e.changed }))
   await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
   await clock.settle()
   const rateLimits = [{ kind: 'five_hour', percentUsed: 42, resetsAt: '2026-10-15T18:00:00Z' }, { kind: 'seven_day', percentUsed: 7 }]
   await $.session.measure({ context: { window: 200000 }, rateLimits, changed: ['context', 'rateLimits'] })
-  expect(JSON.parse(fs.get(`${DATA}/state/rate_limits.json`)!).windows).toEqual([
+  const shared = JSON.parse(fs.get(`${DATA}/state/rate_limits.json`)!)
+  expect(shared.account).toBe('a1/o1')
+  expect(shared.windows).toEqual([
     { kind: 'five_hour', percentUsed: 42, resetsAt: '2026-10-15T18:00:00Z' }, { kind: 'seven_day', percentUsed: 7, resetsAt: null }])
+  expect(JSON.parse(fs.get(`${DATA}/state/windows/${SID}.json`)!).windows).toEqual(shared.windows)
   await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   await $.ui.press(press('tab-budget'))
   const tree = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
