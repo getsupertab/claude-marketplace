@@ -26,7 +26,7 @@ false only warns). "Turn budgets on/off" means `budgets_on`.
 `limit_unit` says what the limits count: `usd` (`session_limit_usd`, `daily_limit_usd`),
 `percent` of the plan's usage windows (`five_hour_limit_percent`, `weekly_limit_percent`,
 Pro and Max), or `auto`, which takes percent where Claude Code reports usage windows and
-USD otherwise. Under `auto`, `state/rate_limits.json` beside budget.json holds the last
+USD otherwise. `percent` with no usage windows reported checks the USD limits instead. Under `auto`, `state/rate_limits.json` beside budget.json holds the last
 reading: windows listed means percent. "Limits in dollars/percent" sets `limit_unit`; a
 limit the user names without a unit ("daily limit 30") is the one of the unit in effect
 (today in USD, this week in percent). Give the file path, and mention that

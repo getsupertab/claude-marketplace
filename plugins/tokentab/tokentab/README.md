@@ -80,7 +80,7 @@ Everything is in `budget.json` in your data folder. `null` turns a limit off. `/
 | Setting | Default | What it does |
 |---|---|---|
 | `budgets_on` | `false` | Switches the limits below on or off. Their values are kept while it's off. |
-| `limit_unit` | `auto` | Which pair of limits is checked: `usd`, `percent` (of the plan's usage windows, Pro and Max) or `auto`: percent where Claude Code reports usage windows, else USD. |
+| `limit_unit` | `auto` | Which pair of limits is checked: `usd`, `percent` (of the plan's usage windows, Pro and Max) or `auto`: percent where Claude Code reports usage windows, else USD. `percent` on an account that reports no usage windows (Enterprise, API key) checks the USD limits instead, and the Budget tab says so. |
 | `session_limit_usd` | `25` | Limit for one session, in US dollars. Resets with a new session. |
 | `daily_limit_usd` | `40` | Limit across all sessions and projects, in US dollars. Resets at midnight. |
 | `five_hour_limit_percent` | `80` | Limit on the plan's 5-hour usage window. Resets with the window. |
@@ -94,8 +94,10 @@ Everything is in `budget.json` in your data folder. `null` turns a limit off. `/
 
 The last four work whether or not `budgets_on` is set.
 
-The hooks module saves the latest usage-window reading in `state/rate_limits.json`,
-shared by every session of the account. Warnings are always shown in dollars.
+Each session keeps its own usage-window reading in `state/windows/<session>.json`. The
+latest reading of any session goes to `state/rate_limits.json` with its login, and a new
+session uses it only until its first reading, and only for the same login. Warnings are
+always shown in dollars.
 
 ### Expired cache
 

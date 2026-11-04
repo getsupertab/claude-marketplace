@@ -417,7 +417,7 @@ def main():
     # Other sessions today may send telemetry even if this one does not.
     day_c, day_t = max(day_c, l_dc), max(day_t, l_dt)
 
-    _, limits = limit_rows(b, {"session": cost, "today": day_c}, read_windows()) if on else (None, [])
+    _, limits = limit_rows(b, {"session": cost, "today": day_c}, read_windows(sid)) if on else (None, [])
 
     warn_at = float(b.get("warn_at_percent", 70)) / 100.0
     hard    = bool(b.get("hard_stop", False))

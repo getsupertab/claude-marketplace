@@ -45,9 +45,12 @@ opens it at any time. It refreshes after every API call and every 30 seconds.
 
 The pane has two tabs:
 
-- **Spend** (`s`): this session's cost, with a bar against its limit. Press `d` for
-  details: cost by type (input, cache writes, cache reads, output, thinking), cost per
-  tool, and every session today and this month.
+- **Spend** (`s`): this session's cost, with a bar against its limit; on a percent
+  budget it leads with the plan's usage windows. On Pro or Max, dollars are what the
+  session would cost at API rates. Press `d` for details: cost by type (input, cache
+  writes, cache reads, output, thinking), cost per tool, and every session today and
+  this month. "Share" (`h`) shows the session as a card to copy, or as a page in the
+  browser with an image to download and links to post it on X or LinkedIn.
 - **Budget** (`b`): your limits, editable in place, and the switch that opens the pane
   at session start.
 
@@ -107,15 +110,18 @@ The limits are off, but these checks run from the start. Each one is set in
 ## Privacy
 
 Everything stays on your machine. TokenTab sends nothing over the network and calls no
-outside service.
+outside service. The share page's X and LinkedIn links open those sites with the card's
+text only when you click them.
 
 - **What it records:** for each API call, the time, model, token counts, cost, session
   id and request id. No prompts, replies or file contents.
 - **What it reads:** the cost records Claude Code produces for every API call (it reads
   them and passes them on unchanged), and the session's transcript, to count tokens for
-  the budget guard. The transcript is only read, never copied.
+  the budget guard. The transcript is only read, never copied. From `.claude.json` it reads
+only the account and organization ids, so a usage-window reading is never applied to
+another login.
 - **What it runs:** Python 3, to work out costs and draw the views; `open`, `xdg-open`
-  or `explorer.exe` when you choose "Open in browser"; and `uname`, to tell macOS from
+  or `explorer.exe` when you choose "Open in browser" or the share page; and `uname`, to tell macOS from
   Linux. Nothing else.
 - **Where it writes:** only `plugins/data/tokentab-supertab/` in your Claude config
   folder. Uninstalling leaves that folder; delete it to remove the data.
