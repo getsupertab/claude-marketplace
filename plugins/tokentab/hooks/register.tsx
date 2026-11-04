@@ -206,8 +206,8 @@ export type Report = {
   unmatched?: number
   models?: { name: string; msgs: number; cost: number; share: number }[]
   tools: ToolRow[]
-  /** This month's spend per session, costliest first. */
-  sessions?: { sid: string; name: string; cost: number; share: number }[]
+  /** This month's spend per session, costliest first; `detail` is the short id of an untitled session and "deleted" once its transcript is gone. */
+  sessions?: { sid: string; name: string; detail?: string; cost: number; share: number }[]
 }
 
 /** A tool, or a layer of its breakdown (Bash's program, then its subcommand). */
@@ -938,6 +938,7 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
                 <Box flexGrow={1} flexShrink={1} minWidth={0}>
                   <Text size="footnote" mono bold={session.sid === r.sid} wrap="truncate">
                     <Text color={SERIES[sessionSeries(rank)]![0]}>● </Text>{session.name}
+                    {session.detail ? <Text dimColor>{` · ${session.detail}`}</Text> : null}
                   </Text>
                 </Box>
                 {cell($, e, usd(session.cost), 10, { bold: session.sid === r.sid })}
