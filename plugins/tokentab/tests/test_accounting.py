@@ -461,10 +461,11 @@ def series_check(b, label, store):
 
 
 def page_case(store, prices):
-    """The status page draws the pane's report: its hero leads with the pane's figure (the
-    plan window under percent, else this session's dollars), every tool and layer of the
-    pane's tree is on the page, and the Sankey ends in the pane's three parts and balances
-    with any set of columns hidden."""
+    """The status page draws the pane's report: its first tile leads with the pane's figure
+    (the plan window under percent, else this session's dollars), a session over its limit
+    gets a banner, every tool and layer of the pane's tree is on the page with where it comes
+    from, and the Sankey ends in the pane's three parts and balances with any set of columns
+    hidden."""
     errs = []
     budget = {"budgets_on": True, "session_limit_usd": 0.0001, "warn_at_percent": 70,
               "five_hour_limit_percent": 80, "weekly_limit_percent": 50}
@@ -484,11 +485,21 @@ def page_case(store, prices):
         if missing:
             errs.append(f"page: tools of the pane's report missing from the page: {missing}")
         try:
-            minidom.parseString(f"<div>{p['hero']}{p['status']}</div>")
+            minidom.parseString(f"<div>{p['hero']}{p['chart']}{p['status']}</div>")
         except Exception as e:
             errs.append(f"page: sections are not well-formed: {e}")
+        # in dollars the session is far over its limit (budget above): a banner says so and what
+        # TokenTab does about it; under percent the window is at half its limit: no banner
+        if ('class="alert error"' in p["hero"]) != (not win) or (not win and "TokenTab only warns" not in p["hero"]):
+            errs.append(f"page: over-limit banner wrong with windows {win}")
     if '"plan usage"' in p["hero"] or "plan usage" not in p["hero"] or "at API rates" not in p["hero"]:
         errs.append("page: under percent the hero is not plan usage with dollars at API rates")
+    tags = {n: sankey.source_tag(n) for n in ("Bash", "mcp__claude_ai_Figma__use_figma", "mcp__Claude_Browser__navigate",
+                                                "mcp__40a9e9ea-a265-43ac-9423-5f01011bcd27__get_screenshot")}
+    if tags != {"Bash": "built-in", "mcp__claude_ai_Figma__use_figma": "claude ai Figma",
+                "mcp__Claude_Browser__navigate": "Claude Browser",
+                "mcp__40a9e9ea-a265-43ac-9423-5f01011bcd27__get_screenshot": "MCP"}:
+        errs.append(f"page: tool source tags: {tags}")
     sinks = {n for nodes, _ in sankey.flows(b)[0] for n in nodes[-1:]}
     if "tools" in sinks or not sinks <= {sankey.ASKING, sankey.INTO_CTX, sankey.ANSWERS_REREAD, sankey.REREADS, sankey.PROMPTS, sankey.OVERHEAD}:
         errs.append(f"page: Sankey sinks are not the pane's parts: {sinks}")
