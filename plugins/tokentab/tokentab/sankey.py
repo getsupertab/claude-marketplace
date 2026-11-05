@@ -16,8 +16,9 @@ report underneath. Renderers only; nothing here serves HTTP.
                             for the pane beside the chat (an Svg there is 128 KB at most)
 
 Flow, left to right:  session total → model → kind (context / generation / fees) → rate
-→ tool → where it went: tools, TokenTab overhead, prompts & replies, context re-reads (the
-last two are what no tool or hook accounts for). Every ribbon is built from the per-model
+→ tool → where it went, in the pane's terms: tool asks, answers into context, answers
+re-read (a tool's three parts), then what no tool or hook accounts for: context re-reads,
+prompts & replies; and TokenTab overhead. Every ribbon is built from the per-model
 bookkeeping, so hovering a model lights exactly its slices downstream and hovering a tool
 exactly the models that paid for it. Plain SVG computed here in Python. Every column but
 the session can be hidden (--hide model,kind,...); its flows are summed over it. Colours follow the system's light or dark setting.
@@ -42,7 +43,7 @@ COLUMNS = [
     ("kind", "kind", "context · generation · fees"),
     ("rate", "rate", "cache read and write, input, output, thinking"),
     ("tool", "tool", "the tool a slice went to"),
-    ("sink", "where it went", "tools · TokenTab overhead · prompts & replies · context re-reads"),
+    ("sink", "where it went", "tool asks · answers into context · answers re-read · context re-reads · prompts & replies · TokenTab overhead"),
 ]
 ROLES = ("session", "model", "kind", "rate", "tool", "sink")   # a path's nodes; non-tool paths skip "tool"
 
@@ -136,18 +137,23 @@ def node(u, v, h, color, label, value, right):
 
 
 OVERHEAD, PROMPTS, REREADS = "TokenTab overhead", "prompts & replies", "context re-reads"
-# the sinks in the pane's own terms: asking (prompts & replies), the answer kept in context
-# (tools), re-reading it (context re-reads); TokenTab's own hook text as fees
-COLOR.update({OVERHEAD: SERIES["fees"], PROMPTS: SERIES["ask"], REREADS: SERIES["read"]})
-LABEL.update({k: k for k in (OVERHEAD, PROMPTS, REREADS)})
-TOOLS_COLOR, OTHER_COLOR = SERIES["ctx"], SERIES["session_other"]
+ASKING, INTO_CTX, ANSWERS_REREAD = "tool asks", "answers into context", "answers re-read"
+# Where a tool's money went, in the pane's three parts (its Tools bars): asking for the call,
+# the answer written into context, re-reading that answer later. What no tool accounts for
+# goes past the tool column: re-reading the rest of the context, and prompts & replies. A
+# sink takes paths through a tool or past it, never both, so its node is as tall as its ribbons.
+TOOL_SINK = {"ask": ASKING, "think": ASKING, "result_1h": INTO_CTX, "result_5m": INTO_CTX, "read": ANSWERS_REREAD}
+COLOR.update({ASKING: SERIES["ask"], INTO_CTX: SERIES["ctx"], ANSWERS_REREAD: SERIES["read"],
+              REREADS: SERIES["read"], PROMPTS: SERIES["input"], OVERHEAD: SERIES["fees"]})
+LABEL.update({k: k for k in (ASKING, INTO_CTX, ANSWERS_REREAD, REREADS, PROMPTS, OVERHEAD)})
+OTHER_COLOR = SERIES["session_other"]
 
 # tools and models take the pane's categorical series, costliest first
 TOOL_COLORS = [SERIES[f"session_{i}"] for i in range(1, 11)]
 MODEL_COLORS = [SERIES[f"model_{i}"] for i in range(1, 6)]
 # fixed display order for the named nodes; models and tools sort by cost inside their column
 RANK = {n: i for i, n in enumerate(["session"] + list(TREE) + [l for ls in TREE.values() for l in ls]
-                                   + ["tools", OVERHEAD, PROMPTS, REREADS])}
+                                   + [ASKING, INTO_CTX, ANSWERS_REREAD, REREADS, PROMPTS, OVERHEAD])}
 
 
 def slug(n):
@@ -157,19 +163,21 @@ def slug(n):
 
 def fold_tools(paths, colors, labels, keep):
     """The tool paths beyond the `keep` costliest tools, folded into one "other tools" node,
-    for the compact drawing. Paths with the same nodes are summed."""
+    for the compact drawing. Paths with the same nodes are summed. Only for an unhidden
+    drawing, where a tool path is the full length (its tool second to last)."""
     OTHER = "other tools"
+    via_tool = lambda nodes: len(nodes) == len(ROLES)
     cost = {}
     for nodes, v in paths:
-        if len(nodes) >= 2 and nodes[-1] == "tools":
+        if via_tool(nodes):
             cost[nodes[-2]] = cost.get(nodes[-2], 0.0) + v
     top = {n for n, _ in sorted(cost.items(), key=lambda kv: -kv[1])[:keep]}
     if len(cost) <= keep + 1:
         return paths, colors, labels
     merged = {}
     for nodes, v in paths:
-        if len(nodes) >= 2 and nodes[-1] == "tools" and nodes[-2] not in top:
-            nodes = nodes[:-2] + (OTHER, "tools")
+        if via_tool(nodes) and nodes[-2] not in top:
+            nodes = nodes[:-2] + (OTHER, nodes[-1])
         merged[nodes] = merged.get(nodes, 0.0) + v
     colors = dict(colors, **{OTHER: OTHER_COLOR})
     labels = dict(labels, **{OTHER: f"{len(cost) - len(top)} other tools"})
@@ -214,7 +222,7 @@ def flows(b, tb=None):
                     if r == rate and f.get(field, 0) > 0:
                         v = min(f[field], leaf - taken)
                         if v > 0:   # keeps the per-tool split by rate visible
-                            out.append((head + ((OVERHEAD,) if name == OVERHEAD else (name, "tools")), v))
+                            out.append((head + ((OVERHEAD,) if name == OVERHEAD else (name, TOOL_SINK[field])), v))
                             taken += v
             if leaf - taken > 0:
                 out.append((head + (REREADS if rate == "cache_read" else PROMPTS,), leaf - taken))
@@ -225,7 +233,6 @@ def flows(b, tb=None):
             merged[k] = merged.get(k, 0.0) + v
         out = list(merged.items())
     colors, labels = dict(COLOR), dict(LABEL)
-    colors["tools"], labels["tools"] = TOOLS_COLOR, "tools"
     for i, (name, _) in enumerate(tools):
         colors[name] = TOOL_COLORS[i % len(TOOL_COLORS)]; labels[name] = name
     for i, m in enumerate(models):   # any past the fifth share the last, as in the pane
@@ -234,13 +241,14 @@ def flows(b, tb=None):
 
 
 def visible(nodes):
-    """A path without the nodes of hidden columns. Every path keeps its sink, so hiding
-    "where it went" only drops the "tools" node behind the tools; with the tool column
-    hidden too, "tools" stays as the tool paths' sink."""
+    """A path without the nodes of hidden columns. A path that runs past no tool keeps its
+    sink, so hiding "where it went" only drops the sink behind a tool (the tool then ends
+    the path); with the tool column hidden too, every path keeps its sink."""
     roles = ROLES[:len(nodes) - 1] + ("sink",)
+    via_tool = "tool" in roles
     keep = []
     for n, r in zip(nodes, roles):
-        if r == "sink" and not (n == "tools" and "sink" in HIDE and "tool" not in HIDE) \
+        if r == "sink" and not ("sink" in HIDE and via_tool and "tool" not in HIDE) \
                 or r != "sink" and r not in HIDE:
             keep.append(n)
     return tuple(keep)
@@ -484,34 +492,158 @@ def flow_svg(R, keep_tools=FLOW_TOOLS, hide=FLOW_HIDE):
     return s.replace("<defs>", f"<style>{FLOW_STYLE}</style><defs>", 1)
 
 
-def tools_table(R):
-    """Every tool, with the same split the terminal shows (ask · answer into context ·
-    re-reads) and, with several models, what each model paid for it."""
-    b = R["transcript"]
-    rows = R["tools"]
-    if not rows:
-        return ""
-    models = sorted({m for by in b.tools.values() for m in by}, key=lambda m: -sum(b.cost_bm.get(m, {}).values()))
-    if len(models) < 2 or not MODELS:
-        models = []   # a single model adds nothing to the cost column
-    per = lambda name, m: sum(b.tools[name].get(m, {}).get(f, 0.0) for f in kt.TOOL_DRAWS)
-    th = "".join(f'<th class="n">{esc(short_model(m))}</th>' for m in models)
-    tr = "".join(f'<tr><td>{esc(k)}</td><td class="n">{v["calls"]}</td><td class="n">{kt.money(v["cost"])}</td>'
-                 + "".join(f'<td class="n">{kt.money(per(k, m))}</td>' for m in models)
-                 + f'<td class="n">{kt.money(v["ask"] + v["think"])}</td><td class="n">{kt.money(v["result"])}</td>'
-                   f'<td class="n m">{kt.num(v["rtokens"])}</td><td class="n">{kt.money(v["read"])}</td></tr>'
-                 for k, v in rows)
-    o = R["overhead"]
-    if o["cost"]:
-        tr += (f'<tr class="m"><td>TokenTab overhead</td><td></td><td class="n">{kt.money(o["cost"])}</td>'
-               + "<td></td>" * len(models) + f'<td></td><td class="n">{kt.money(o["cost"] - o["read"])}</td>'
-               f'<td class="n">{kt.num(o["rtokens"])}</td><td class="n">{kt.money(o["read"])}</td></tr>')
-    return (f'<section class="wide"><h2>tools <span>asking + answer into context + re-reading it (estimates)</span></h2>'
-            f'<table><tr><th>tool</th><th class="n">calls</th><th class="n">cost</th>{th}<th class="n">ask</th>'
-            f'<th class="n">into context</th><th class="n">tok</th><th class="n">re-read</th></tr>{tr}</table></section>')
-
-
 esc = html.escape
+
+# The page's figures follow the pane's: dollars with 2 places for the hero and the totals,
+# 4 in the tables; shares as whole percents; plan windows to a tenth.
+usd = lambda x, d=2: f"${x:,.{d}f}"
+pct = lambda share: f"{round(share * 100)}%"
+percent = lambda n: f"{round(n * 10) / 10:g}%"
+WINDOW_SHORT = {"five_hour": "5-hour", "seven_day": "week"}
+SESSIONS_COLOURED = 10
+
+
+def tone(frac, warn_at):
+    """How close a scope is to its limit, as the pane's toneOf: over at 100%, warning from warn_at."""
+    return "error" if frac >= 1 else ("warning" if frac * 100 >= warn_at else "success")
+
+
+def dot(series):
+    return f'<i class="sd" style="background:var(--s-{series})"></i>'
+
+
+def sbar(parts, cls="sbar"):
+    """A stacked bar like the pane's: [(series, fraction of the width)], left to right on a track."""
+    segs = "".join(f'<i style="width:{max(0.0, min(f, 1)) * 100:.2f}%;background:var(--s-{s})"></i>'
+                   for s, f in parts if f > 0)
+    return f'<div class="{cls}">{segs}</div>'
+
+
+def label(text, note=""):
+    return f'<h2>{esc(text)}' + (f' <span>{esc(note)}</span>' if note else "") + "</h2>"
+
+
+def hero(P):
+    """The pane's Spend hero (Figma "A · Hero number"): under percent the plan window leads and
+    dollars move below, else this session's dollars; the badge and the bar in the limit's tone."""
+    s = P["session"]
+    if not s:
+        return '<section class="hero"><p class="m">No API call in this session yet; its spend shows from the first one.</p></section>'
+    windows = s["windows"] if s["unit"] == "percent" else []
+    lead, others = (windows[0], windows[1:]) if windows else (None, [])
+    api = " at API rates" if s["plan"] else ""
+    frac = lead["frac"] if lead else s["frac"]
+    worst = max(w["frac"] for w in windows) if lead else frac
+    badge = ""
+    if worst is not None:
+        t = tone(worst, s["warn_at"])
+        badge = (f'<span class="chip {t}">' + ("Over · " if t == "error" else "Warning · " if t == "warning" else "")
+                 + pct(worst) + ("" if t != "success" else " used") + "</span>")
+    resets = lambda w: f' · resets {w["resets"]}' if w.get("resets") else ""
+    if lead:
+        figure = percent(lead["used"])
+        note = f'of {kt.WINDOW_NAMES[lead["scope"]]} · limit {percent(lead["limit"])}{resets(lead)}'
+    else:
+        figure, note = usd(s["cost"]), ("at API rates" if s["plan"] else "")
+    mode = f'{"hard stop" if s["hard_stop"] else "warn only"}, warns at {s["warn_at"]}%'
+    under = " · ".join(x for x in [
+        f'{usd(s["cost"])}{api}' if lead else (s["limit"] or ""),
+        f'{kt.num(s["tokens"])} tokens',
+        mode if frac is not None else "limits off" if not s["limits_on"]
+        else "no window limit set or no reading yet" if s["unit"] == "percent" else "no session limit set",
+    ] if x)
+    meter = (f'<div class="sbar hbar"><i style="width:{min(frac, 1) * 100:.2f}%;background:var(--s-{tone(frac, s["warn_at"])})"></i></div>'
+             if frac is not None else "")
+    rest = "".join(f'<div class="m">{WINDOW_SHORT[w["scope"]]} {percent(w["used"])}, limit {percent(w["limit"])}{resets(w)}</div>'
+                   for w in others)
+    return (f'<section class="hero"><div class="row">{label("plan usage" if lead else "session spend")}{badge}</div>'
+            f'<div class="fig"><b>{esc(figure)}</b><span class="m">{esc(note)}</span></div>'
+            f'{meter}{rest}<div class="m">{esc(under)}</div></section>')
+
+
+def rates_section(P):
+    """The pane's SESSION block: this session by rate as a bar and a table."""
+    s, rates = P["session"], P.get("rates") or []
+    if not s:
+        return ""
+    series = lambda k: k if k in SERIES else "input"
+    rows = "".join(f'<tr><td>{dot(series(r["key"]))}{esc(r["label"])}</td><td class="n">{kt.num(r["tokens"])}</td>'
+                   f'<td class="n">{usd(r["cost"], 4)}</td><td class="n m">{pct(r["share"])}</td></tr>' for r in rates)
+    t = P.get("total") or {"tokens": 0, "cost": s["cost"]}
+    rows += (f'<tr class="tot"><td>total{" at API rates" if s["plan"] else ""}</td><td class="n">{kt.num(t["tokens"])}</td>'
+             f'<td class="n">{usd(t["cost"], 4)}</td><td></td></tr>')
+    if P.get("unmatched"):
+        rows += f'<tr class="m"><td colspan="4">{kt.num(P["unmatched"])} output tok have no transcript line. Any thinking is counted in output.</td></tr>'
+    return (f'<section>{label("session", str(s["msgs"]) + " msgs")}'
+            f'{sbar([(series(r["key"]), r["share"]) for r in rates])}<table>'
+            f'<tr><th></th><th class="n">tokens</th><th class="n">cost</th><th class="n">%</th></tr>{rows}</table></section>')
+
+
+def models_section(P):
+    models = P.get("models") or []
+    if not models:
+        return ""
+    series = lambda rank: f"model_{min(rank + 1, 5)}"
+    rows = "".join(f'<tr><td>{dot(series(i))}{esc(re.sub("^claude-", "", m["name"]))}</td><td class="n m">{kt.num(m["msgs"])} msgs</td>'
+                   f'<td class="n">{usd(m["cost"], 4)}</td><td class="n m">{pct(m["share"])}</td></tr>' for i, m in enumerate(models))
+    return (f'<section>{label("models", f"{len(models)} used")}'
+            f'{sbar([(series(i), m["share"]) for i, m in enumerate(models)])}<table>{rows}</table></section>')
+
+
+def tool_rows(t, path, top, depth):
+    """One tool, or one layer of its breakdown, as the pane draws it: name, calls, cost, a bar
+    of asking / answer into context / re-reading against the costliest sibling, and the three
+    figures. A row with a breakdown is a <details> that opens its layers beneath it."""
+    kids = t.get("children") or []
+    bar = sbar([("ask", t["ask"] / top), ("ctx", t["ctx"] / top), ("read", t["read"] / top)], "sbar tb")
+    cells = (f'<span class="nm" style="padding-left:{depth * 16}px">{esc(t["name"])}</span>{bar}'
+             f'<span class="n m">{t["calls"]} {"call" if t["calls"] == 1 else "calls"}</span>'
+             f'<span class="n c">{usd(t["cost"], 4)}</span><span class="n">{usd(t["ask"], 4)}</span>'
+             f'<span class="n">{usd(t["ctx"], 4)}</span><span class="n m">{kt.num(t["ctx_tokens"])}</span>'
+             f'<span class="n">{usd(t["read"], 4)}</span>')
+    cls = "tr top" if depth == 0 else "tr"
+    if not kids:
+        return f'<div class="{cls} leaf">{cells}</div>'
+    kid_top = max([k["cost"] for k in kids] + [1e-9])
+    inner = "".join(tool_rows(k, f'{path}/{k["name"]}', kid_top, depth + 1) for k in kids)
+    return f'<details data-path="{esc(path)}"><summary class="{cls}">{cells}</summary>{inner}</details>'
+
+
+def tools_section(P):
+    """Every tool (the pane shows the costliest few), each opening into its layers."""
+    tools = P.get("tools") or []
+    if not tools and not P.get("overhead"):
+        return ""
+    calls = sum(t["calls"] for t in tools)
+    top = max([t["cost"] for t in tools] + [1e-9])
+    head = ('<div class="tr th"><span>tool</span><span></span><span class="n">calls</span><span class="n">cost</span>'
+            '<span class="n">ask</span><span class="n">into context</span><span class="n">tok</span><span class="n">re-read</span></div>')
+    body = "".join(tool_rows(t, t["name"], top, 0) for t in tools) or '<p class="m">No tool calls in this session yet.</p>'
+    over = (f'<p class="m">TokenTab overhead {usd(P["overhead"], 4)}: its hook text in context</p>' if P.get("overhead") else "")
+    legend = "".join(f'<span>{dot(k)}{n}</span>' for k, n in (("ask", "ask"), ("ctx", "into context"), ("read", "re-read")))
+    return (f'<section class="wide tools">{label("tools", f"{len(tools)} tools · {calls} calls")}'
+            f'<p class="m">cost = asking + answer into context + re-reading it (estimates)</p>'
+            f'<div class="tt">{head}{body}</div>{over}<div class="legend">{legend}</div></section>')
+
+
+def sessions_section(P, R):
+    """The pane's ALL SESSIONS: today and this month over every session, the last five minutes
+    and hour, and this month's sessions as a bar and a table (this one in bold)."""
+    sessions = P.get("sessions") or []
+    figs = "".join(f'<div><span>{n}</span><b>{usd(v)}</b></div>' for n, v in (("Today", P["today"]), ("This month", P["month"])))
+    w = R.get("window") or {}
+    recent = (f'<div class="m">last 5 min {usd(w["5m"], 4)} · last hour {usd(w["1h"], 4)}</div>' if w else "")
+    if not sessions:
+        return f'<section class="wide">{label("all sessions")}<div class="figs">{figs}</div>{recent}</section>'
+    series = lambda rank: f"session_{rank + 1}" if rank < SESSIONS_COLOURED else "session_other"
+    others = sum(x["share"] for x in sessions[SESSIONS_COLOURED:])
+    parts = [(series(i), x["share"]) for i, x in enumerate(sessions[:SESSIONS_COLOURED])] + ([("session_other", others)] if others else [])
+    rows = "".join(f'<tr class="{"me" if x["sid"] == P["sid"] else ""}"><td>{dot(series(i))}{esc(x["name"])}'
+                   + (f'<span class="m"> · {esc(x["detail"])}</span>' if x.get("detail") else "")
+                   + f'</td><td class="n">{usd(x["cost"])}</td><td class="n m">{pct(x["share"])}</td></tr>'
+                   for i, x in enumerate(sessions))
+    return (f'<section class="wide">{label("all sessions", f"{len(sessions)} this month")}<div class="figs">{figs}</div>{recent}'
+            f'{sbar(parts)}<table><tr><th>name</th><th class="n">cost</th><th class="n">% of costs</th></tr>{rows}</table></section>')
 
 
 def meter(frac):
@@ -521,37 +653,11 @@ def meter(frac):
 
 
 def status_html(R):
-    """The terminal's live view (tokentab.py render()) as panels: same report, same numbers."""
-    out = []
-    t = R["total"]
-    rows = "".join(f'<tr><td>{esc(r["label"])}</td><td class="n">{kt.num(r["tokens"])}</td>'
-                   f'<td class="n">{kt.money(r["cost"])}</td><td class="n m">{r["share"] * 100:.0f}%</td></tr>'
-                   for r in R["rates"])
-    if R["unmatched"]:
-        rows += (f'<tr class="m"><td colspan="4">{kt.num(R["unmatched"])} output tok without a transcript line: '
-                 'any thinking is in output text</td></tr>')
-    rows += (f'<tr class="tot"><td>total</td><td class="n">{kt.num(t["tokens"])}</td>'
-             f'<td class="n">{kt.money(t["cost"])}</td><td class="n m">{t["msgs"]} msgs</td></tr>')
-    out.append(f'<section><h2>by rate</h2><table>{rows}</table></section>')
-
-    q = R["requests"]
-    if q:
-        rows = ""
-        for label in ("latest", "previous"):
-            r = q[label]
-            if r:
-                at = time.strftime("%H:%M", time.localtime(r[0]))
-                rows += (f'<tr><td>{label}</td><td class="n">{kt.money(r[1])}</td>'
-                         f'<td class="m">{r[2]} calls · {at}</td></tr>')
-        rows += (f'<tr class="m"><td>average</td><td class="n">{kt.money(q["average"])}</td>'
-                 f'<td>of {q["count"]} requests</td></tr>')
-        out.append(f'<section><h2>requests <span>one prompt and everything it set off</span></h2><table>{rows}</table></section>')
-
-    if R["by_source"]:
-        rows = "".join(f'<tr><td>{esc(nm)}</td><td class="n">{calls}</td><td class="m">calls</td>'
-                       f'<td class="n">{kt.money(c)}</td><td class="n m">{share * 100:.0f}%</td></tr>'
-                       for nm, calls, c, share in R["by_source"])
-        out.append(f'<section><h2>by call source <span>what in Claude Code made the call</span></h2><table>{rows}</table></section>')
+    """The cards under the chart: the pane's sections from its report (`R["pane"]`, the same
+    pane_report() the pane draws), then what the pane has no room for: the budget lines with
+    the context and its cache, the requests, and what made the calls."""
+    P = R["pane"]
+    out = [rates_section(P), models_section(P)]
 
     bg = R["budget"]
     if bg and (bg["lines"] or bg["context"]):
@@ -567,29 +673,45 @@ def status_html(R):
                      f'<td class="m">{kt.money(c["per_call"])}/call to re-read · {cache}</td></tr>')
         mode = ((f'{"hard stop" if bg["hard_stop"] else "warn only"} · warns at {bg["warn_at"]}%')
                 if bg["on"] else "off · /tokentab:budget turns budgets on")
-        out.append(f'<section class="wrap"><h2>budget <span>{esc(mode)}</span></h2><table>{rows}</table></section>')
+        out.append(f'<section class="wrap">{label("budget", mode)}<table>{rows}</table></section>')
 
-    w, tt = R["window"], R["totals"]
-    rows = (f'<tr><td>all sessions · last 5 min</td><td class="n">{kt.money(w["5m"])}</td></tr>'
-            f'<tr><td>all sessions · last hour</td><td class="n">{kt.money(w["1h"])}</td></tr>')
-    if tt:
-        rows += (f'<tr><td>today, all sessions</td><td class="n">{kt.money(tt["today"])}</td></tr>'
-                 f'<tr><td>all sessions, all time</td><td class="n">{kt.money(tt["all"])}</td>'
-                 f'<td class="m">{tt["sessions"]} sessions</td></tr>')
-    out.append(f'<section><h2>totals</h2><table>{rows}</table></section>')
-    return f'<div class="grid">{"".join(out)}{tools_table(R)}</div>'
+    q = R["requests"]
+    if q:
+        rows = ""
+        for name in ("latest", "previous"):
+            r = q[name]
+            if r:
+                at = time.strftime("%H:%M", time.localtime(r[0]))
+                rows += (f'<tr><td>{name}</td><td class="n">{kt.money(r[1])}</td>'
+                         f'<td class="m">{r[2]} calls · {at}</td></tr>')
+        rows += (f'<tr class="m"><td>average</td><td class="n">{kt.money(q["average"])}</td>'
+                 f'<td>of {q["count"]} requests</td></tr>')
+        out.append(f'<section>{label("requests", "one prompt and everything it set off")}<table>{rows}</table></section>')
+
+    if R["by_source"]:
+        rows = "".join(f'<tr><td>{esc(nm)}</td><td class="n">{calls}</td><td class="m">calls</td>'
+                       f'<td class="n">{kt.money(c)}</td><td class="n m">{share * 100:.0f}%</td></tr>'
+                       for nm, calls, c, share in R["by_source"])
+        out.append(f'<section>{label("by call source", "what in Claude Code made the call")}<table>{rows}</table></section>')
+
+    out += [tools_section(P), sessions_section(P, R)]
+    return f'<div class="grid">{"".join(out)}</div>'
 
 
 def report(live, sid=None):
-    """kt.report() for one session from a Live's stores (rescanned first). Without sid:
-    the most recently active session."""
+    """kt.report() for one session from a Live's stores (rescanned first), with the pane's
+    report of it (kt.pane_report(), what `tokentab.py --report` prints) as R["pane"]: the page
+    draws its figures from the same data as the pane. Without sid: the most recently active
+    session."""
     live.scan()
     sid = sid or live.store.newest_session()
     try:
         budget = json.load(open(kt.BUDGET_PATH, encoding="utf-8"))
     except (OSError, ValueError):
         budget = {}
-    return kt.report(live.store, sid, live.prices, budget, True, live.led)
+    R = kt.report(live.store, sid, live.prices, budget, True, live.led)
+    R["pane"] = kt.pane_report(live.store, sid, live.prices, budget, live.led)
+    return R
 
 
 class Live:
@@ -726,11 +848,13 @@ def timeline(R):
 
     seg = ('<span class="seg"><button data-x="time" onclick="kx(\'time\')">time</button>'
            '<button data-x="calls" onclick="kx(\'calls\')">calls</button></span>')
-    return (f'<section class="chart"><h2>cost over time <span>cumulative by rate · '
+    s = (R.get("pane") or {}).get("session") or {}
+    api = " at API rates" if s.get("plan") else ""   # a subscription pays its plan, not these dollars
+    return (f'<section class="chart"><h2>cost over time <span>cumulative by rate{api} · '
             f'dashed: your prompts</span>{seg}</h2>{draw("time")}{draw("calls")}</section>')
 
 
-PARTS = ("head", "kpi", "flow", "chart", "status")
+PARTS = ("head", "hero", "flow", "chart", "status")
 
 
 def parts(R, direction="ltr", models=True, hide=()):
@@ -743,21 +867,19 @@ def parts(R, direction="ltr", models=True, hide=()):
     HIDE = frozenset(hide) & {k for k, _, _ in COLUMNS} | (set() if models else {"model"})
     MODELS = "model" not in HIDE
     s, b, tb = R["session"], R["bucket"], R["transcript"]
+    P = R.get("pane")
     if not s:
         head = f'<div class="sub">session {esc(R["sid"] or "?")} · waiting for activity…</div>'
-        return {"head": head, "kpi": "", "flow": "", "chart": "", "status": ""}
+        status = f'<div class="grid">{sessions_section(P, R)}</div>' if P else ""
+        return {"head": head, "hero": hero(P) if P else "", "flow": "", "chart": "", "status": status}
     since = s["since"].strftime("%H:%M") if s["since"] else "?"
     name = f'<b title="{esc(R["sid"])}">{esc(s["title"])}</b>' if s["title"] else f'session {esc(R["sid"][:8])}'
     head = (f'<div class="sub">{name} · {esc(", ".join(s["models"]))} · since {since}'
             f' · updated {R["now"].strftime("%H:%M:%S")}</div>'
             f'<div class="src">{esc(s["source"])}</div>'
             + ("" if R["prices_verified"] else '<div class="src warn">prices unverified</div>'))
-    t = R["total"]
-    kpi = (f'<div class="kpi"><div><span>session spend</span><b>{kt.money(t["cost"])}</b></div>'
-           f'<div><span>tokens</span><b>{kt.num(t["tokens"])}</b></div>'
-           f'<div><span>messages</span><b>{t["msgs"]}</b></div></div>')
     flow = svg(b, tb) if b and b.cost > 0 else "<p>no usage for this session yet.</p>"
-    return {"head": head, "kpi": kpi, "flow": flow, "chart": timeline(R), "status": status_html(R)}
+    return {"head": head, "hero": hero(P), "flow": flow, "chart": timeline(R), "status": status_html(R)}
 
 
 def body(R, direction="ltr", models=True, hide=()):
@@ -776,10 +898,12 @@ def push_js(R, direction="ltr", models=True, hide=()):
 
 def css_vars():
     """The tokens as CSS custom properties, light on :root and dark under prefers-color-scheme:
-    every surface token as --<name>, the tones the page uses (--ok, --warn, --over, --track)
-    from the series."""
+    every surface token as --<name>, every series as --s-<name> (the HTML bars and dots, which
+    switch with the scheme as the pane's Svg bars do), and the tones the page uses (--ok,
+    --warn, --over, --track) from the series."""
     pairs = {k.replace("_", "-"): v for k, v in TOKENS["surface"].items()}
     s = TOKENS["series"]
+    pairs.update({f"s-{k}": v for k, v in s.items()})
     pairs.update({"ok": s["success"], "warn": s["warning"], "over": s["error"], "track": s["track"]})
     side = lambda i: ";".join(f"--{k}:{v[i]}" for k, v in pairs.items())
     f = TOKENS["font"]
@@ -798,11 +922,30 @@ h2{font-size:11px;line-height:16px;margin:0 0 10px;color:var(--dim);font-weight:
 h2 span{text-transform:none;letter-spacing:0;font-weight:400;margin-left:6px}
 .sub{color:var(--dim);font-size:12px;margin-bottom:2px}.sub b{color:var(--text);font-weight:500}
 .src{font-size:12px;color:var(--dim);margin-bottom:2px}.src.ok{color:var(--ok)}.src.warn,.warn{color:var(--warn)}.over{color:var(--over)}
-.kpi{display:flex;align-items:flex-end;gap:32px;margin:18px 0 20px}
-.kpi div{display:flex;flex-direction:column;gap:2px}
-.kpi span{color:var(--dim);font-size:11px;line-height:16px;font-weight:500;text-transform:uppercase;letter-spacing:.06em}
-.kpi b{font-size:16px;line-height:23px;font-weight:600;font-variant-numeric:tabular-nums}
-.kpi div:first-child b{font-size:34px;line-height:39px}
+.hero{margin:16px 0;display:flex;flex-direction:column;gap:8px}
+.hero .row{display:flex;justify-content:space-between;align-items:center}.hero h2{margin:0}
+.hero .fig{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.hero .fig b{font-size:34px;line-height:39px;font-weight:600;font-variant-numeric:tabular-nums}
+.hero .m,.m{color:var(--dim);font-size:12px}
+.chip{font:600 11px/16px var(--sans);border-radius:10px;padding:2px 8px}
+.chip.error{background:var(--error-soft);color:var(--over)}.chip.warning{color:var(--warn)}.chip.success{color:var(--ok)}
+.sbar{display:flex;gap:2px;height:8px;border-radius:4px;background:var(--track);overflow:hidden;margin:2px 0 10px}
+.sbar i{display:block;height:100%}.hbar{margin:0}.hbar i{border-radius:4px}
+.sbar.tb{height:4px;margin:0;align-self:center}
+.sd{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:8px;vertical-align:baseline}
+.figs{display:flex;gap:32px;margin-bottom:4px}.figs div{display:flex;flex-direction:column}
+.figs span{color:var(--secondary);font-size:12px}.figs b{font-size:16px;line-height:23px;font-weight:600;font-variant-numeric:tabular-nums}
+section .sbar:not(.tb):not(.hbar){margin-top:12px}
+tr.me td{font-weight:700}
+.tools p{margin:0 0 10px}.tt{font:12px/18px var(--mono);min-width:760px}
+.tr{display:grid;grid-template-columns:minmax(150px,1fr) 110px 70px 78px 78px 92px 70px 78px;gap:0 12px;align-items:center;padding:3px 0}
+.tr.th{color:var(--dim);border-bottom:1px solid var(--line);margin-bottom:2px}
+.tr.top{border-top:1px solid var(--line)}.tr.top .nm,.tr.top .c{font-weight:700}
+.tr .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+summary.tr{cursor:pointer;list-style:none}summary.tr::-webkit-details-marker{display:none}
+summary.tr .nm::before{content:"▸ ";color:var(--dim)}details[open]>summary.tr .nm::before{content:"▾ "}
+.tr.leaf .nm{padding-left:14px}summary.tr:hover{background:var(--hover)}
+.legend{display:flex;gap:16px;margin-top:10px;font:11px var(--mono);color:var(--dim)}.tools>p.m+.legend{margin-top:4px}
 svg{max-width:SVGWpx;display:block}svg text{fill:var(--text);font-family:var(--sans);font-size:13px}svg .v{fill:var(--dim)}
 #p-flow>svg,#p-flow>p{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:8px 0;box-sizing:border-box}
 #p-flow>p{padding:16px;margin:0;color:var(--dim)}
@@ -839,7 +982,7 @@ html:not([data-x=calls]) svg.xc,html[data-x=calls] svg.xt{display:none}
 .cols button{background:var(--primary);border-color:var(--primary);color:var(--on-primary)}
 .cols button[aria-pressed=false]{background:none;border-color:var(--control);color:var(--dim);text-decoration:line-through}
 .cols button.all{background:none;border-color:transparent;color:var(--dim);text-decoration:underline}
-@media (max-width:600px){body{padding:16px}.kpi{gap:20px;flex-wrap:wrap}}
+@media (max-width:600px){body{padding:16px}.figs{gap:20px}}
 """
 
 # Which x-axis the cost-over-time chart shows. Kept on <html>, outside the body the live
@@ -853,7 +996,7 @@ try { const m = localStorage.getItem("tokentab-x"); if (m) document.documentElem
 # Keeps the page current from its data file (`--push`): every few seconds a script tag
 # loads `<name>.js` beside the page (a cache-busting query on it), which calls
 # `__tokentab` with the parts; only a part whose markup changed is swapped, in place, so
-# the Sankey's hover, the scroll position and the chart's axis survive. The dot says
+# the Sankey's hover, the scroll position, the chart's axis and the opened tool rows survive. The dot says
 # whether a push arrived in the last 15 s.
 LIVE = """<script>
 (function () {
@@ -865,7 +1008,14 @@ LIVE = """<script>
     for (var k in d.parts) {
       if (last[k] === d.parts[k]) continue;
       var el = document.getElementById("p-" + k);
-      if (el) el.innerHTML = d.parts[k];
+      if (el) {
+        // a tool row the reader opened stays open across the swap
+        var open = Array.prototype.map.call(el.querySelectorAll("details[open]"), function (x) { return x.dataset.path; });
+        el.innerHTML = d.parts[k];
+        open.forEach(function (p) {
+          Array.prototype.forEach.call(el.querySelectorAll("details"), function (x) { if (x.dataset.path === p) x.open = true; });
+        });
+      }
       last[k] = d.parts[k];
     }
   };

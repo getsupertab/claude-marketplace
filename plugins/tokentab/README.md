@@ -54,10 +54,11 @@ The pane has two tabs:
 - **Budget** (`b`): your limits, editable in place, and the switch that opens the pane
   at session start.
 
-**In the browser.** "Open in browser" (`o`) opens a status page with a flow diagram of
-where the money went, cost over time, and every figure TokenTab tracks. It keeps
-updating for 30 minutes; the dot in its header says whether it's `live`, `stale` or a
-`snapshot`.
+**In the browser.** "Open in browser" (`o`) opens a status page with everything the pane
+shows, from the same report and in your plan's unit, with room for more: every tool with
+its breakdown (Bash → git → status), a flow diagram of where the money went, cost over
+time, the budget lines, and this month's sessions. It keeps updating for 30 minutes; the
+dot in its header says whether it's `live`, `stale` or a `snapshot`.
 
 **Ask Claude.** "How much have I spent?" or "Where did the money go?" gets an answer
 from the same numbers.

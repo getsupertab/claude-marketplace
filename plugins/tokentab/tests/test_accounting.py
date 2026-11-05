@@ -11,7 +11,7 @@ No dependencies, no pytest; run from anywhere, exits non-zero on a failure:
 
   python3 plugins/tokentab/tests/test_accounting.py
 """
-import json, os, re, sys, tempfile
+import html, itertools, json, os, re, sys, tempfile
 from xml.dom import minidom
 
 PLUGIN = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -194,6 +194,7 @@ def main():
     errs += locked_page_case(root)
     errs += names_case(prices)
     errs += tokens_case()
+    errs += page_case(store, prices)
     for err in errs:
         print("  " + err)
     print("ALL OK" if not errs else f"{len(errs)} FAILURES")
@@ -456,6 +457,61 @@ def series_check(b, label, store):
         errs.append(f"{label}: chart is not well-formed: {e}")
     if out.count("<svg") != 2 or 'class="ln"' not in out:
         errs.append(f"{label}: chart is missing an axis or its lines")
+    return errs
+
+
+def page_case(store, prices):
+    """The status page draws the pane's report: its hero leads with the pane's figure (the
+    plan window under percent, else this session's dollars), every tool and layer of the
+    pane's tree is on the page, and the Sankey ends in the pane's three parts and balances
+    with any set of columns hidden."""
+    errs = []
+    budget = {"budgets_on": True, "session_limit_usd": 0.0001, "warn_at_percent": 70,
+              "five_hour_limit_percent": 80, "weekly_limit_percent": 50}
+    b = store.sessions["fx"]
+    R = kt.report(store, "fx", prices, budget, True)
+    windows = {"five_hour": {"kind": "five_hour", "percentUsed": 40, "resetsAt": "2999-01-01T00:00:00Z"}}
+    for win, want in (({}, sankey.usd(b.cost)), (windows, "40%")):
+        R["pane"] = P = kt.pane_report(store, "fx", prices, budget, windows=win)
+        p = sankey.parts(R)
+        if f"<b>{want}</b>" not in p["hero"]:
+            errs.append(f"page: hero does not lead with {want}: {p['hero'][:200]}")
+        names, stack = [], list(P["tools"])
+        while stack:
+            t = stack.pop()
+            names.append(t["name"]); stack += t["children"]
+        missing = [n for n in names if f">{html.escape(n)}</span>" not in p["status"]]
+        if missing:
+            errs.append(f"page: tools of the pane's report missing from the page: {missing}")
+        try:
+            minidom.parseString(f"<div>{p['hero']}{p['status']}</div>")
+        except Exception as e:
+            errs.append(f"page: sections are not well-formed: {e}")
+    if '"plan usage"' in p["hero"] or "plan usage" not in p["hero"] or "at API rates" not in p["hero"]:
+        errs.append("page: under percent the hero is not plan usage with dollars at API rates")
+    sinks = {n for nodes, _ in sankey.flows(b)[0] for n in nodes[-1:]}
+    if "tools" in sinks or not sinks <= {sankey.ASKING, sankey.INTO_CTX, sankey.ANSWERS_REREAD, sankey.REREADS, sankey.PROMPTS, sankey.OVERHEAD}:
+        errs.append(f"page: Sankey sinks are not the pane's parts: {sinks}")
+    keys = [k for k, _, _ in sankey.COLUMNS]
+    for n in range(len(keys) + 1):
+        for hide in itertools.combinations(keys, n):
+            sankey.HIDE = frozenset(hide)
+            try:
+                cols, links, _, _ = sankey.graph(b)
+                bad = [i for i, c in enumerate(cols) if abs(sum(c.values()) - b.cost) > 1e-6 and i in (0, len(cols) - 1)]
+                if bad:
+                    errs.append(f"page: Sankey with {hide or 'nothing'} hidden does not balance in columns {bad}")
+                # every node is as tall as the ribbons arriving at it, so none spills past it
+                w, pos = sankey.layout(cols, links)
+                into = {}
+                for (src, dst, _), width in zip(links, w):
+                    into[dst] = into.get(dst, 0.0) + width
+                spill = [d for d, h in into.items() if abs(pos[d][2] - h) > 0.01]
+                if spill:
+                    errs.append(f"page: Sankey with {hide or 'nothing'} hidden: ribbons spill past {spill}")
+            finally:
+                sankey.HIDE = frozenset()
+    print("[page] " + ("OK" if not errs else "FAIL"))
     return errs
 
 
