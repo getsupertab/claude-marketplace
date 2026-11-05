@@ -1,21 +1,78 @@
-# TokenTab
+# TokenTab: see what Claude Code is spending
 
-See what Claude Code is spending while you work, and set limits so it doesn't run away
-with your budget.
+**Ever wondered why one prompt cost so much more than the last?** So did we. TokenTab is
+a free Claude Code plugin that prices every API call as it happens and shows you where
+the money went, tool by tool. Nothing leaves your machine.
 
-TokenTab records the cost of every API call Claude Code makes, including helper agents
-and Claude Code's own background calls. It shows the running total beside the chat,
-warns you when you near a limit, and can stop tool calls once you pass it. It also gives
-Claude the numbers, so you can ask "what have I spent?" and get a straight answer.
+```
+/plugin install tokentab --marketplace getsupertab/claude-marketplace
+```
 
-There's nothing to set up: no telemetry, no settings, no restart.
+Start a new session (or run `/reload-plugins`) and it's counting from your first prompt.
+Full steps are under [Install](#install).
 
-**Requirements:** Claude Code 2.1.304 or later, and Python 3 (standard library only) on
-macOS, Linux or Windows. Older versions of Claude Code can't load TokenTab; it tells you
-so on your first prompt.
+## Why we built it
 
-More detail on how costs are worked out, how budgets behave and the threat model is in
-[`tokentab/README.md`](tokentab/README.md).
+It started over Slack. One of us noticed a Claude Code session had burned through far
+more than usual, and nobody could say why. Context? Big files? Too many tool calls?
+Something in the background? We all had guesses and no answers.
+
+So we built a meter. Once we could see the numbers, a few things surprised us:
+
+- **Going to get coffee can cost you.** The prompt cache expires. Come back after it has
+  and your next message re-sends the whole conversation at the expensive rate. TokenTab
+  catches that before it's sent and tells you what it'll cost, so you can decide.
+- **The "suggested next prompt" isn't free.** After each turn Claude Code makes a
+  background call to guess what you'll type next, and that call re-reads your context
+  too. You never see it. TokenTab does.
+- **Cheaper models aren't always cheaper.** We watched a Haiku helper make four times the
+  calls Opus did on the same job, and still not finish.
+
+And the one we didn't expect: **once Claude could see the numbers, it worked
+differently.** TokenTab never tells Claude how to save money. It just shows it the bill.
+With that in front of it, Claude started handing us commands to run ourselves instead of
+churning through the output, and stopped writing essays when a short answer would do.
+
+## "Doesn't `/usage` already do this?"
+
+Sort of! We use both. `/usage` tells you how much is left in the tank. TokenTab tells you
+what's using it.
+
+| | `/usage` | TokenTab |
+|---|:-:|:-:|
+| How much of my plan is left | ✅ | ✅ (as percent budgets) |
+| Cost in dollars, per session, day and month | ❌ | ✅ |
+| Which tool or call cost what | ❌ | ✅ |
+| Always on screen | ❌ you run it | ✅ |
+| Warns or stops you *before* you spend | ❌ | ✅ |
+| Claude can see the numbers | ❌ | ✅ |
+| Limits you pick yourself | ❌ | ✅ |
+
+If you're on Pro or Max and just don't want to hit the wall, `/usage` is honestly fine.
+If you want to know *why* a session got expensive, or you're paying per token, that's
+where TokenTab comes in.
+
+## What you get
+
+- **Every API call, priced.** Including helper agents, web search, prompt suggestions and
+  Claude Code's own background calls: the ones you'd never think to count.
+- **A live pane beside the chat** with this session's cost, or a status line under the
+  prompt in narrow terminals.
+- **The breakdown.** Cost by tool, and by type (input, cache writes, cache reads, output,
+  thinking), plus today and this month across every session and project.
+- **A picture of where the money went.** A flow diagram and cost over time, in your
+  browser.
+- **Plain answers.** Ask Claude "how much have I spent?" or "where did the money go?" and
+  it answers from the same numbers.
+- **Budgets, if you want them.** Session and daily limits that warn you, and can stop
+  tool calls if you ask them to. On Pro or Max they count in percent of your plan's
+  5-hour and weekly windows; on the API they count in dollars. Your account decides,
+  even when you switch between them. Off until you turn them on.
+- **Heads-ups that save money.** A warning before an expensive resend after the cache
+  goes cold, and a nudge to start fresh once a new session would be cheaper than carrying
+  on.
+- **A card to share** what a session cost, if you're proud of it (or horrified).
+
 
 ## Install
 
@@ -35,6 +92,16 @@ From a shell instead:
 claude plugin marketplace add getsupertab/claude-marketplace
 claude plugin install tokentab@supertab
 ```
+
+
+**Requirements:** Claude Code 2.1.304 or later, and Python 3 (standard library only) on
+macOS, Linux or Windows. It works in Claude Code (the terminal and the Desktop app's Code
+tab), not in Claude chat. Older versions of Claude Code can't load TokenTab; it tells you
+so on your first prompt.
+
+There's nothing to set up: no settings, no restart. More detail on how costs are worked
+out, how budgets behave and the threat model is in
+[`tokentab/README.md`](tokentab/README.md).
 
 ## See what you've spent
 
@@ -111,24 +178,41 @@ The limits are off, but these checks run from the start. Each one is set in
 - **Tamper check.** If the usage record for a session shrinks, which doesn't happen in
   normal use, TokenTab stops the session and says why.
 
-## Privacy
+## Your data stays yours
 
-Everything stays on your machine. TokenTab sends nothing over the network and calls no
-outside service. The share page's X and LinkedIn links open those sites with the card's
-text only when you click them.
+We think you should be able to see what you're paying for, and that starts with us being
+clear about what TokenTab does:
 
-- **What it records:** for each API call, the time, model, token counts, cost, session
-  id and request id. No prompts, replies or file contents.
+- **No account, no sign-up, no telemetry.** TokenTab sends nothing over the network and
+  calls no outside service. The share page's X and LinkedIn links open those sites with
+  the card's text only when you click them.
+- **It records numbers, not content.** For each API call: the time, model, token counts,
+  cost, session id and request id. Never your prompts, Claude's replies or your files.
 - **What it reads:** the cost records Claude Code produces for every API call (it reads
   them and passes them on unchanged), and the session's transcript, to count tokens for
-  the budget guard. The transcript is only read, never copied. From `.claude.json` it reads
-only the account and organization ids, so a usage-window reading is never applied to
-another login.
-- **What it runs:** Python 3, to work out costs and draw the views; `open`, `xdg-open`
-  or `explorer.exe` when you choose "Open in browser" or the share page; and `uname`, to tell macOS from
-  Linux. Nothing else.
+  the budget guard. The transcript is only read, never copied. From `.claude.json` it
+  reads only the account and organization ids, so a usage-window reading is never applied
+  to another login.
+- **What it runs:** Python 3, to work out costs and draw the views; `open`, `xdg-open` or
+  `explorer.exe` when you choose "Open in browser" or the share page; and `uname`, to tell
+  macOS from Linux. Nothing else.
 - **Where it writes:** only `plugins/data/tokentab-supertab/` in your Claude config
   folder. Uninstalling leaves that folder; delete it to remove the data.
+- **It's open source** (Apache 2.0), so you don't have to take our word for any of this.
+
+## Tell us what you think
+
+TokenTab is early, and we'd love to hear from you:
+
+- **Budgets:** do you care? Would you actually set one? What number? Or is just seeing
+  the spend enough?
+- **Your tricks for keeping sessions cheap.** We'll collect the good ones and share them.
+- **Anything else,** good or bad.
+
+Email us at [product@supertab.co](mailto:product@supertab.co) or
+[open an issue](https://github.com/getsupertab/claude-marketplace/issues). And if you're
+curious what Supertab does when it isn't building token meters, it's at
+[supertab.co](https://supertab.co/).
 
 ## Update
 
