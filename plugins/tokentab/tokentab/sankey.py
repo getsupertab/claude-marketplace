@@ -494,13 +494,23 @@ def flow_svg(R, keep_tools=FLOW_TOOLS, hide=FLOW_HIDE):
 
 esc = html.escape
 
-# The page's figures follow the pane's: dollars with 2 places for the hero and the totals,
-# 4 in the tables; shares as whole percents; plan windows to a tenth.
+# The page's figures follow the pane's: dollars with 2 places for the big figures, 4 in the
+# tables; shares as whole percents; plan windows to a tenth. Words follow the pane's too:
+# "messages" are API calls, "calls" are tool calls. Where the pane shortens a word for its
+# width ("tok", "msgs"), the page has room and spells it out.
 usd = lambda x, d=2: f"${x:,.{d}f}"
 pct = lambda share: f"{round(share * 100)}%"
 percent = lambda n: f"{round(n * 10) / 10:g}%"
+big = lambda x: usd(x, 2 if x >= 0.01 or x == 0 else 4)     # a big figure, unless it would read $0.00
 WINDOW_SHORT = {"five_hour": "5-hour", "seven_day": "week"}
 SESSIONS_COLOURED = 10
+TOP_TOOLS = 4                     # tools in the summary card; the table at the bottom has them all
+
+# What each rate is, under its name in "Where the money went"
+RATE_NOTE = {"input": "new input, not cached", "cache_write_1h": "saving context to the cache for 1 hour",
+             "cache_write_5m": "saving context to the cache for 5 minutes", "cache_read": "re-reading cached context on each call",
+             "output": "Claude's replies and tool inputs", "thinking": "extended thinking", "fees": "web searches"}
+UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
 
 
 def tone(frac, warn_at):
@@ -512,95 +522,216 @@ def dot(series):
     return f'<i class="sd" style="background:var(--s-{series})"></i>'
 
 
-def sbar(parts, cls="sbar"):
+def sbar(parts, cls="sbar", title=""):
     """A stacked bar like the pane's: [(series, fraction of the width)], left to right on a track."""
     segs = "".join(f'<i style="width:{max(0.0, min(f, 1)) * 100:.2f}%;background:var(--s-{s})"></i>'
                    for s, f in parts if f > 0)
-    return f'<div class="{cls}">{segs}</div>'
+    tip = f' title="{esc(title)}"' if title else ""
+    return f'<div class="{cls}"{tip}>{segs}</div>'
 
 
 def label(text, note=""):
+    """A card's title, with a dim note beside it."""
     return f'<h2>{esc(text)}' + (f' <span>{esc(note)}</span>' if note else "") + "</h2>"
 
 
-def hero(P):
-    """The pane's Spend hero (Figma "A · Hero number"): under percent the plan window leads and
-    dollars move below, else this session's dollars; the badge and the bar in the limit's tone."""
+def source_tag(name):
+    """Where a tool comes from, from its full name: an MCP server (mcp__<server>__<tool>) or
+    Claude Code itself. A connector's server is an id, not a name, so it reads "MCP"."""
+    if not name.startswith("mcp__"):
+        return "built-in"
+    server = name.split("__")[1] if name.count("__") >= 2 else ""
+    return "MCP" if not server or UUID.match(server) else server.replace("_", " ")
+
+
+def lead(P):
+    """(scope row or None, its fraction, the worst fraction over every window): what the
+    first tile leads with, as the pane's hero: under percent the first plan window."""
     s = P["session"]
-    if not s:
-        return '<section class="hero"><p class="m">No API call in this session yet; its spend shows from the first one.</p></section>'
     windows = s["windows"] if s["unit"] == "percent" else []
-    lead, others = (windows[0], windows[1:]) if windows else (None, [])
+    first = windows[0] if windows else None
+    frac = first["frac"] if first else s["frac"]
+    worst = max(w["frac"] for w in windows) if first else frac
+    return first, frac, worst
+
+
+def spend_tile(P, R):
+    """The first tile, the pane's Spend hero: plan usage under percent (dollars at API rates
+    move below), else this session's dollars; the badge and the bar in the limit's tone, the
+    other windows or limits, and how the limits behave."""
+    s = P["session"]
+    first, frac, worst = lead(P)
     api = " at API rates" if s["plan"] else ""
-    frac = lead["frac"] if lead else s["frac"]
-    worst = max(w["frac"] for w in windows) if lead else frac
     badge = ""
     if worst is not None:
         t = tone(worst, s["warn_at"])
         badge = (f'<span class="chip {t}">' + ("Over · " if t == "error" else "Warning · " if t == "warning" else "")
                  + pct(worst) + ("" if t != "success" else " used") + "</span>")
     resets = lambda w: f' · resets {w["resets"]}' if w.get("resets") else ""
-    if lead:
-        figure = percent(lead["used"])
-        note = f'of {kt.WINDOW_NAMES[lead["scope"]]} · limit {percent(lead["limit"])}{resets(lead)}'
+    lines = []
+    if first:
+        figure = percent(first["used"])
+        lines.append(f'of the {kt.WINDOW_NAMES[first["scope"]]} · limit {percent(first["limit"])}{resets(first)}')
+        lines += [f'{WINDOW_SHORT[w["scope"]]} {percent(w["used"])}, limit {percent(w["limit"])}{resets(w)}'
+                  for w in s["windows"][1:]]
+        lines.append(f'{big(s["cost"])}{api}')
     else:
-        figure, note = usd(s["cost"]), ("at API rates" if s["plan"] else "")
-    mode = f'{"hard stop" if s["hard_stop"] else "warn only"}, warns at {s["warn_at"]}%'
-    under = " · ".join(x for x in [
-        f'{usd(s["cost"])}{api}' if lead else (s["limit"] or ""),
-        f'{kt.num(s["tokens"])} tokens',
-        mode if frac is not None else "limits off" if not s["limits_on"]
-        else "no window limit set or no reading yet" if s["unit"] == "percent" else "no session limit set",
-    ] if x)
+        figure = big(s["cost"])
+        if s["limit"]:
+            lines.append(s["limit"] + api)
+        elif api:
+            lines.append(api.strip())
+        bg = R.get("budget") or {}
+        lines += [f'{r["name"]} {r["parts"][0]}' for r in bg.get("lines") or []
+                  if r["scope"] != "session" and bg.get("unit") == "usd"]
+    lines.append(f'{"hard stop" if s["hard_stop"] else "warn only"} · warns at {s["warn_at"]}%' if frac is not None
+                 else "limits off" if not s["limits_on"]
+                 else "no window limit set or no reading yet" if s["unit"] == "percent" else "no session limit set")
     meter = (f'<div class="sbar hbar"><i style="width:{min(frac, 1) * 100:.2f}%;background:var(--s-{tone(frac, s["warn_at"])})"></i></div>'
              if frac is not None else "")
-    rest = "".join(f'<div class="m">{WINDOW_SHORT[w["scope"]]} {percent(w["used"])}, limit {percent(w["limit"])}{resets(w)}</div>'
-                   for w in others)
-    return (f'<section class="hero"><div class="row">{label("plan usage" if lead else "session spend")}{badge}</div>'
-            f'<div class="fig"><b>{esc(figure)}</b><span class="m">{esc(note)}</span></div>'
-            f'{meter}{rest}<div class="m">{esc(under)}</div></section>')
+    small = "".join(f'<div class="m">{esc(x)}</div>' for x in lines)
+    return (f'<div class="kpi lead"><div class="kl"><span>{"plan usage" if first else "session spend"}</span>{badge}</div>'
+            f'<b>{esc(figure)}</b>{meter}{small}</div>')
 
 
-def rates_section(P):
-    """The pane's SESSION block: this session by rate as a bar and a table."""
-    s, rates = P["session"], P.get("rates") or []
+def tile(name, figure, note="", cls=""):
+    return (f'<div class="kpi"><div class="kl"><span>{esc(name)}</span></div><b class="{cls}">{esc(figure)}</b>'
+            + (f'<div class="m">{esc(note)}</div>' if note else "") + "</div>")
+
+
+def kpis(P, R):
+    """The summary: the first tile (the pane's hero), then tokens, messages, a request's average
+    cost and the context, and a banner for anything that needs attention now."""
+    s = P["session"]
     if not s:
-        return ""
+        return '<div class="card empty">No API call in this session yet; its spend shows from the first one.</div>'
+    api = " at API rates" if s["plan"] else ""
+    total = (P.get("total") or {}).get("tokens") or 0
+    read = sum(r["tokens"] for r in P.get("rates") or [] if r["key"] == "cache_read")
+    calls = sum(t["calls"] for t in P.get("tools") or [])
+    q = R.get("requests")
+    ctx = (R.get("budget") or {}).get("context")
+    tiles = [spend_tile(P, R),
+             tile("tokens", kt.num(total), f"{pct(read / total)} cache read" if total else ""),
+             tile("messages", kt.num(s["msgs"]), f"{calls} tool {'call' if calls == 1 else 'calls'}"),
+             tile("average per request", big(q["average"]) if q else "–",
+                  f'of {q["count"]} {"request" if q["count"] == 1 else "requests"}{api}' if q else ""),
+             tile("context", f'{kt.num(ctx["tokens"])} tokens' if ctx else "–",
+                  f'{usd(ctx["per_call"], 4)}/call to re-read{api}' if ctx else "", ctx["level"] if ctx else "")]
+    alerts = []
+    first, frac, worst = lead(P)
+    if worst is not None and worst >= 1:
+        what = f'the {kt.WINDOW_NAMES[max(s["windows"], key=lambda w: w["frac"])["scope"]]}' if first else "this session"
+        alerts.append(("error", f"Over the limit of {what} ({pct(worst)}). "
+                       + ("Hard stop is on: TokenTab blocks tool calls." if s["hard_stop"] else "TokenTab only warns: hard stop is off.")))
+    if ctx and ctx["cold"]:
+        alerts.append(("warning", f'Cache is cold. The next prompt re-writes the context ({kt.num(ctx["tokens"])} tokens), '
+                       f'about {big(ctx["rewrite"])}{api}.'))
+    if not P.get("prices_verified", True):
+        alerts.append(("warning", "Prices unverified: the figures are estimates at the default rates."))
+    banners = "".join(f'<div class="alert {t}"><i></i>{esc(x)}</div>' for t, x in alerts)
+    return f'<div class="kpis">{"".join(tiles)}</div>' + (f'<div class="alerts">{banners}</div>' if banners else "")
+
+
+def rates_card(P):
+    """Where the money went: this session by rate, a bar and a table, each rate saying what it is."""
+    s, rates = P["session"], P.get("rates") or []
     series = lambda k: k if k in SERIES else "input"
-    rows = "".join(f'<tr><td>{dot(series(r["key"]))}{esc(r["label"])}</td><td class="n">{kt.num(r["tokens"])}</td>'
+    rows = "".join(f'<tr><td><div class="rl"><span class="dl">{dot(series(r["key"]))}</span><div><div>{esc(r["label"])}</div>'
+                   f'<div class="m">{esc(RATE_NOTE.get(r["key"], ""))}</div></div></div></td><td class="n">{kt.num(r["tokens"])}</td>'
                    f'<td class="n">{usd(r["cost"], 4)}</td><td class="n m">{pct(r["share"])}</td></tr>' for r in rates)
     t = P.get("total") or {"tokens": 0, "cost": s["cost"]}
     rows += (f'<tr class="tot"><td>total{" at API rates" if s["plan"] else ""}</td><td class="n">{kt.num(t["tokens"])}</td>'
              f'<td class="n">{usd(t["cost"], 4)}</td><td></td></tr>')
-    if P.get("unmatched"):
-        rows += f'<tr class="m"><td colspan="4">{kt.num(P["unmatched"])} output tok have no transcript line. Any thinking is counted in output.</td></tr>'
-    return (f'<section>{label("session", str(s["msgs"]) + " msgs")}'
-            f'{sbar([(series(r["key"]), r["share"]) for r in rates])}<table>'
-            f'<tr><th></th><th class="n">tokens</th><th class="n">cost</th><th class="n">%</th></tr>{rows}</table></section>')
+    foot = (f'<p class="m">{kt.num(P["unmatched"])} output tokens have no transcript line. Any thinking is counted in output.</p>'
+            if P.get("unmatched") else "")
+    return (f'<section class="card">{label("Where the money went", "by rate" + (" at API rates" if s["plan"] else ""))}'
+            f'{sbar([(series(r["key"]), r["share"]) for r in rates], "sbar big")}<table class="rates">'
+            f'<tr><th>rate</th><th class="n">tokens</th><th class="n">cost</th><th class="n">share</th></tr>{rows}</table>{foot}</section>')
 
 
-def models_section(P):
-    models = P.get("models") or []
-    if not models:
+def list_rows(rows):
+    """A side card's rows: name on the left, a dim note and a figure on the right."""
+    return "".join(f'<div class="li{" " + cls if cls else ""}"><span class="nm">{nm}</span><span class="m">{esc(note)}</span>'
+                   f'<span class="n">{esc(fig)}</span></div>' for nm, note, fig, cls in rows)
+
+
+def requests_card(R):
+    q = R.get("requests")
+    if not q:
         return ""
-    series = lambda rank: f"model_{min(rank + 1, 5)}"
-    rows = "".join(f'<tr><td>{dot(series(i))}{esc(re.sub("^claude-", "", m["name"]))}</td><td class="n m">{kt.num(m["msgs"])} msgs</td>'
-                   f'<td class="n">{usd(m["cost"], 4)}</td><td class="n m">{pct(m["share"])}</td></tr>' for i, m in enumerate(models))
-    return (f'<section>{label("models", f"{len(models)} used")}'
-            f'{sbar([(series(i), m["share"]) for i, m in enumerate(models)])}<table>{rows}</table></section>')
+    rows = []
+    for name in ("latest", "previous"):
+        r = q[name]
+        if r:
+            at = time.strftime("%H:%M", time.localtime(r[0]))
+            rows.append((name, f'{r[2]} {"message" if r[2] == 1 else "messages"} · {at}', usd(r[1], 4), ""))
+    rows.append(("average", f'of {q["count"]} {"request" if q["count"] == 1 else "requests"}', usd(q["average"], 4), "dim"))
+    return f'<section class="card">{label("Requests", "one prompt and everything it set off")}{list_rows(rows)}</section>'
 
 
-def tool_rows(t, path, top, depth):
-    """One tool, or one layer of its breakdown, as the pane draws it: name, calls, cost, a bar
-    of asking / answer into context / re-reading against the costliest sibling, and the three
-    figures. A row with a breakdown is a <details> that opens its layers beneath it."""
+def share_card(title, note, items, series):
+    """A side card of shares (call source, models): a row each, then a bar of the shares."""
+    if not items:
+        return ""
+    rows = [(esc(nm), f'{kt.num(msgs)} {"message" if msgs == 1 else "messages"} · {pct(share)}', usd(cost, 4), "")
+            for nm, msgs, cost, share in items]
+    return (f'<section class="card">{label(title, note)}{list_rows(rows)}'
+            f'{sbar([(series(i), x[3]) for i, x in enumerate(items)], "sbar foot")}</section>')
+
+
+def sessions_card(P):
+    """The pane's ALL SESSIONS: today and this month over every session, then this month's
+    sessions (this one in bold), opening like a tool row."""
+    rows = [("today", "", usd(P["today"]), ""), ("this month", "", usd(P["month"]), "")]
+    sessions = P.get("sessions") or []
+    body = list_rows(rows)
+    if sessions:
+        series = lambda rank: f"session_{rank + 1}" if rank < SESSIONS_COLOURED else "session_other"
+        others = sum(x["share"] for x in sessions[SESSIONS_COLOURED:])
+        parts = [(series(i), x["share"]) for i, x in enumerate(sessions[:SESSIONS_COLOURED])] + ([("session_other", others)] if others else [])
+        items = list_rows((f'{dot(series(i))}{esc(x["name"])}', pct(x["share"]), usd(x["cost"]),
+                           "me" if x["sid"] == P["sid"] else "") for i, x in enumerate(sessions))
+        n = len(sessions)
+        body += (f'<details data-path="~sessions"><summary class="li"><span class="nm">{n} {"session" if n == 1 else "sessions"} this month</span>'
+                 f'<span></span><span></span></summary>{sbar(parts, "sbar foot")}{items}</details>')
+    return f'<section class="card sessions">{label("All sessions")}{body}</section>'
+
+
+def top_tools_card(P, R):
+    """The costliest few tools, a bar each against the costliest; the rest folded into one row.
+    The full table is at the bottom of the page."""
+    tools = P.get("tools") or []
+    if not tools:
+        return f'<section class="card">{label("Top tools")}<p class="m">No tool calls in this session yet.</p></section>'
+    tags = [source_tag(nm) for nm, _ in R.get("tools") or []]
+    total = sum(t["cost"] for t in tools)
+    top = max(t["cost"] for t in tools) or 1e-9
+    shown, rest = tools[:TOP_TOOLS], tools[TOP_TOOLS:]
+    row = lambda name, tag, calls, cost, cls="": (
+        f'<div class="tt-row{cls}"><div class="li"><span class="nm">{name}</span><span class="m">{esc(tag)}</span>'
+        f'<span class="m n">{calls} {"call" if calls == 1 else "calls"}</span><span class="n">{usd(cost, 4)}</span></div>'
+        f'<div class="sbar thin"><i style="width:{min(cost / top, 1) * 100:.2f}%"></i></div></div>')
+    rows = "".join(row(f'<b>{esc(t["name"])}</b>', tags[i] if i < len(tags) else "", t["calls"], t["cost"]) for i, t in enumerate(shown))
+    if rest:
+        rows += row(f"{len(rest)} more", "", sum(t["calls"] for t in rest), sum(t["cost"] for t in rest), " more")
+    over = f'+ TokenTab overhead {usd(P["overhead"], 4)} · ' if P.get("overhead") else ""
+    return (f'<section class="card">{label("Top tools", f"{usd(total, 4)} total")}{rows}'
+            f'<p class="m foot">{over}<a href="#tools">all tools ↓</a></p></section>')
+
+
+def tool_rows(t, path, top, depth, tag=""):
+    """One tool, or one layer of its breakdown, as the pane draws it: name, calls, cost and a
+    bar of asking / answer into context / re-reading against the costliest sibling (the
+    dollars on hover), and the tokens its answers put into context. A row with a breakdown is
+    a <details> that opens its layers beneath it."""
     kids = t.get("children") or []
-    bar = sbar([("ask", t["ask"] / top), ("ctx", t["ctx"] / top), ("read", t["read"] / top)], "sbar tb")
-    cells = (f'<span class="nm" style="padding-left:{depth * 16}px">{esc(t["name"])}</span>{bar}'
-             f'<span class="n m">{t["calls"]} {"call" if t["calls"] == 1 else "calls"}</span>'
-             f'<span class="n c">{usd(t["cost"], 4)}</span><span class="n">{usd(t["ask"], 4)}</span>'
-             f'<span class="n">{usd(t["ctx"], 4)}</span><span class="n m">{kt.num(t["ctx_tokens"])}</span>'
-             f'<span class="n">{usd(t["read"], 4)}</span>')
+    tip = f'ask {usd(t["ask"], 4)} · into context {usd(t["ctx"], 4)} · re-read {usd(t["read"], 4)}'
+    bar = sbar([("ask", t["ask"] / top), ("ctx", t["ctx"] / top), ("read", t["read"] / top)], "sbar tb", tip)
+    chip = f'<em class="tag">{esc(tag)}</em>' if tag else ""
+    cells = (f'<span class="tn" style="padding-left:{depth * 18}px"><span class="nm">{esc(t["name"])}</span>{chip}</span>'
+             f'<span class="n m">{t["calls"]}</span><span class="n">{usd(t["cost"], 4)}</span>{bar}'
+             f'<span class="n m">{kt.num(t["ctx_tokens"])}</span>')
     cls = "tr top" if depth == 0 else "tr"
     if not kids:
         return f'<div class="{cls} leaf">{cells}</div>'
@@ -609,93 +740,47 @@ def tool_rows(t, path, top, depth):
     return f'<details data-path="{esc(path)}"><summary class="{cls}">{cells}</summary>{inner}</details>'
 
 
-def tools_section(P):
-    """Every tool (the pane shows the costliest few), each opening into its layers."""
+def tools_card(P, R):
+    """Every tool (the pane shows the costliest few), each opening into its layers, and
+    TokenTab's own overhead last."""
     tools = P.get("tools") or []
     if not tools and not P.get("overhead"):
         return ""
+    tags = [source_tag(nm) for nm, _ in R.get("tools") or []]
     calls = sum(t["calls"] for t in tools)
     top = max([t["cost"] for t in tools] + [1e-9])
-    head = ('<div class="tr th"><span>tool</span><span></span><span class="n">calls</span><span class="n">cost</span>'
-            '<span class="n">ask</span><span class="n">into context</span><span class="n">tok</span><span class="n">re-read</span></div>')
-    body = "".join(tool_rows(t, t["name"], top, 0) for t in tools) or '<p class="m">No tool calls in this session yet.</p>'
-    over = (f'<p class="m">TokenTab overhead {usd(P["overhead"], 4)}: its hook text in context</p>' if P.get("overhead") else "")
+    head = ('<div class="tr th"><span>tool</span><span class="n">calls</span><span class="n">cost</span>'
+            '<span>ask · into context · re-read</span><span class="n" title="tokens its answers put into context">tokens</span></div>')
+    body = "".join(tool_rows(t, t["name"], top, 0, tags[i] if i < len(tags) else "") for i, t in enumerate(tools))
+    o = R.get("overhead") or {}
+    if P.get("overhead"):
+        ask, ctx, read = o.get("ask", 0) + o.get("think", 0), o.get("result", 0), o.get("read", 0)
+        tip = f'into context {usd(ctx, 4)} · re-read {usd(read, 4)}'
+        body += (f'<div class="tr top leaf over"><span class="tn"><span class="nm">TokenTab overhead</span></span><span></span>'
+                 f'<span class="n">{usd(P["overhead"], 4)}</span>'
+                 f'{sbar([("ask", ask / top), ("ctx", ctx / top), ("read", read / top)], "sbar tb", tip)}'
+                 f'<span class="n m">{kt.num(o.get("rtokens", 0))}</span></div>')
     legend = "".join(f'<span>{dot(k)}{n}</span>' for k, n in (("ask", "ask"), ("ctx", "into context"), ("read", "re-read")))
-    return (f'<section class="wide tools">{label("tools", f"{len(tools)} tools · {calls} calls")}'
-            f'<p class="m">cost = asking + answer into context + re-reading it (estimates)</p>'
-            f'<div class="tt">{head}{body}</div>{over}<div class="legend">{legend}</div></section>')
-
-
-def sessions_section(P, R):
-    """The pane's ALL SESSIONS: today and this month over every session, the last five minutes
-    and hour, and this month's sessions as a bar and a table (this one in bold)."""
-    sessions = P.get("sessions") or []
-    figs = "".join(f'<div><span>{n}</span><b>{usd(v)}</b></div>' for n, v in (("Today", P["today"]), ("This month", P["month"])))
-    w = R.get("window") or {}
-    recent = (f'<div class="m">last 5 min {usd(w["5m"], 4)} · last hour {usd(w["1h"], 4)}</div>' if w else "")
-    if not sessions:
-        return f'<section class="wide">{label("all sessions")}<div class="figs">{figs}</div>{recent}</section>'
-    series = lambda rank: f"session_{rank + 1}" if rank < SESSIONS_COLOURED else "session_other"
-    others = sum(x["share"] for x in sessions[SESSIONS_COLOURED:])
-    parts = [(series(i), x["share"]) for i, x in enumerate(sessions[:SESSIONS_COLOURED])] + ([("session_other", others)] if others else [])
-    rows = "".join(f'<tr class="{"me" if x["sid"] == P["sid"] else ""}"><td>{dot(series(i))}{esc(x["name"])}'
-                   + (f'<span class="m"> · {esc(x["detail"])}</span>' if x.get("detail") else "")
-                   + f'</td><td class="n">{usd(x["cost"])}</td><td class="n m">{pct(x["share"])}</td></tr>'
-                   for i, x in enumerate(sessions))
-    return (f'<section class="wide">{label("all sessions", f"{len(sessions)} this month")}<div class="figs">{figs}</div>{recent}'
-            f'{sbar(parts)}<table><tr><th>name</th><th class="n">cost</th><th class="n">% of costs</th></tr>{rows}</table></section>')
-
-
-def meter(frac):
-    level = "ok" if frac < 0.7 else ("warn" if frac < 1.0 else "over")
-    return (f'<span class="meter {level}"><i style="width:{min(frac, 1) * 100:.1f}%"></i></span>'
-            f'<span class="pct {level}">{frac * 100:.0f}%</span>')
+    note = f'{len(tools)} {"tool" if len(tools) == 1 else "tools"} · {calls} {"call" if calls == 1 else "calls"} · cost = asking + answer into context + re-reading it (estimates)'
+    return (f'<section class="card tools" id="tools">{label("Tools", note)}'
+            f'<div class="scroll"><div class="tt">{head}{body}</div></div><div class="legend">{legend}</div></section>')
 
 
 def status_html(R):
-    """The cards under the chart: the pane's sections from its report (`R["pane"]`, the same
-    pane_report() the pane draws), then what the pane has no room for: the budget lines with
-    the context and its cache, the requests, and what made the calls."""
+    """The cards under the charts, from the pane's report (`R["pane"]`, the same pane_report()
+    the pane draws) and what the pane has no room for: where the money went beside the
+    requests, the call sources, the models and all sessions; then every tool."""
     P = R["pane"]
-    out = [rates_section(P), models_section(P)]
-
-    bg = R["budget"]
-    if bg and (bg["lines"] or bg["context"]):
-        rows = "".join(f'<tr><td>{esc(r["name"])}</td><td>{meter(r["frac"])}</td>'
-                       f'<td class="m">{esc(" · ".join(r["parts"]))}'
-                       + (' <b class="over">OVER</b>' if r["frac"] >= 1 else "") + "</td></tr>"
-                       for r in bg["lines"])
-        c = bg["context"]
-        if c:
-            cache = (f'<span class="over">cache COLD</span>: next prompt re-writes it, ~{kt.money(c["rewrite"])}'
-                     if c["cold"] else f'cache warm, {c["minutes_left"]}m left')
-            rows += (f'<tr><td>context</td><td class="{c["level"]}">{kt.num(c["tokens"])} tok</td>'
-                     f'<td class="m">{kt.money(c["per_call"])}/call to re-read · {cache}</td></tr>')
-        mode = ((f'{"hard stop" if bg["hard_stop"] else "warn only"} · warns at {bg["warn_at"]}%')
-                if bg["on"] else "off · /tokentab:budget turns budgets on")
-        out.append(f'<section class="wrap">{label("budget", mode)}<table>{rows}</table></section>')
-
-    q = R["requests"]
-    if q:
-        rows = ""
-        for name in ("latest", "previous"):
-            r = q[name]
-            if r:
-                at = time.strftime("%H:%M", time.localtime(r[0]))
-                rows += (f'<tr><td>{name}</td><td class="n">{kt.money(r[1])}</td>'
-                         f'<td class="m">{r[2]} calls · {at}</td></tr>')
-        rows += (f'<tr class="m"><td>average</td><td class="n">{kt.money(q["average"])}</td>'
-                 f'<td>of {q["count"]} requests</td></tr>')
-        out.append(f'<section>{label("requests", "one prompt and everything it set off")}<table>{rows}</table></section>')
-
-    if R["by_source"]:
-        rows = "".join(f'<tr><td>{esc(nm)}</td><td class="n">{calls}</td><td class="m">calls</td>'
-                       f'<td class="n">{kt.money(c)}</td><td class="n m">{share * 100:.0f}%</td></tr>'
-                       for nm, calls, c, share in R["by_source"])
-        out.append(f'<section>{label("by call source", "what in Claude Code made the call")}<table>{rows}</table></section>')
-
-    out += [tools_section(P), sessions_section(P, R)]
-    return f'<div class="grid">{"".join(out)}</div>'
+    model_series = lambda rank: f"model_{min(rank + 1, 5)}"
+    source_series = lambda rank: f"session_{rank + 1}" if rank < SESSIONS_COLOURED else "session_other"
+    side = (requests_card(R)
+            + share_card("By call source", "what in Claude Code made the call",
+                         [(nm, calls, c, share) for nm, calls, c, share in R["by_source"]], source_series)
+            + share_card("Models", f'{len(P.get("models") or [])} used',
+                         [(re.sub("^claude-", "", m["name"]), m["msgs"], m["cost"], m["share"]) for m in P.get("models") or []],
+                         model_series)
+            + sessions_card(P))
+    return f'<div class="row2">{rates_card(P)}<div class="side">{side}</div></div>{tools_card(P, R)}'
 
 
 def report(live, sid=None):
@@ -850,10 +935,13 @@ def timeline(R):
            '<button data-x="calls" onclick="kx(\'calls\')">calls</button></span>')
     s = (R.get("pane") or {}).get("session") or {}
     api = " at API rates" if s.get("plan") else ""   # a subscription pays its plan, not these dollars
-    return (f'<section class="chart"><h2>cost over time <span>cumulative by rate{api} · '
+    return (f'<section class="card chart"><h2>Cost over time <span>cumulative by rate{api} · '
             f'dashed: your prompts</span>{seg}</h2>{draw("time")}{draw("calls")}</section>')
 
 
+# Page order, "summary first" (Figma "TokenTab browser / A summary first v2"): the tiles and
+# banners, the cost flow, cost over time beside the top tools, where the money went beside
+# the smaller cards, then every tool.
 PARTS = ("head", "hero", "flow", "chart", "status")
 
 
@@ -870,16 +958,18 @@ def parts(R, direction="ltr", models=True, hide=()):
     P = R.get("pane")
     if not s:
         head = f'<div class="sub">session {esc(R["sid"] or "?")} · waiting for activity…</div>'
-        status = f'<div class="grid">{sessions_section(P, R)}</div>' if P else ""
-        return {"head": head, "hero": hero(P) if P else "", "flow": "", "chart": "", "status": status}
+        status = f'<div class="row2"><div></div><div class="side">{sessions_card(P)}</div></div>' if P else ""
+        return {"head": head, "hero": kpis(P, R) if P else "", "flow": "", "chart": "", "status": status}
     since = s["since"].strftime("%H:%M") if s["since"] else "?"
     name = f'<b title="{esc(R["sid"])}">{esc(s["title"])}</b>' if s["title"] else f'session {esc(R["sid"][:8])}'
     head = (f'<div class="sub">{name} · {esc(", ".join(s["models"]))} · since {since}'
             f' · updated {R["now"].strftime("%H:%M:%S")}</div>'
-            f'<div class="src">{esc(s["source"])}</div>'
-            + ("" if R["prices_verified"] else '<div class="src warn">prices unverified</div>'))
-    flow = svg(b, tb) if b and b.cost > 0 else "<p>no usage for this session yet.</p>"
-    return {"head": head, "hero": hero(P), "flow": flow, "chart": timeline(R), "status": status_html(R)}
+            f'<div class="src">{esc(s["source"])}</div>')
+    flow = (f'<section class="card flow">{label("Cost flow", "session → model → context / generation → rate → where it went")}'
+            + (svg(b, tb) if b and b.cost > 0 else '<p class="m">No usage for this session yet.</p>') + "</section>")
+    chart = timeline(R)
+    chart = f'<div class="row2">{chart or "<div></div>"}{top_tools_card(P, R)}</div>'
+    return {"head": head, "hero": kpis(P, R), "flow": flow, "chart": chart, "status": status_html(R)}
 
 
 def body(R, direction="ltr", models=True, hide=()):
@@ -911,78 +1001,116 @@ def css_vars():
             f"@media (prefers-color-scheme:dark){{:root{{{side(1)}}}}}")
 
 
-# The pane's design language (Figma "TokenTab UI"): Inter for words, mono for figures in
-# tables, white cards on a warm ground with hairline borders, 11px uppercase section labels,
-# a hero figure, 8px bars on a track, black pill tabs.
+# The pane's design language (Figma "TokenTab UI") in the page's layout (Figma "TokenTab
+# browser / A summary first v2"): Inter for words, mono for figures, white cards on a warm
+# ground with hairline borders, a row of summary tiles, bars on a track.
 CSS = css_vars() + """
-body{margin:0;padding:24px;background:var(--bg);color:var(--text);font:13px/1.45 var(--sans)}
-#app{max-width:SVGWpx}
-h1{font-size:16px;font-weight:600;margin:0 0 6px;display:flex;align-items:center;gap:10px}
-h2{font-size:11px;line-height:16px;margin:0 0 10px;color:var(--dim);font-weight:500;text-transform:uppercase;letter-spacing:.06em}
-h2 span{text-transform:none;letter-spacing:0;font-weight:400;margin-left:6px}
-.sub{color:var(--dim);font-size:12px;margin-bottom:2px}.sub b{color:var(--text);font-weight:500}
-.src{font-size:12px;color:var(--dim);margin-bottom:2px}.src.ok{color:var(--ok)}.src.warn,.warn{color:var(--warn)}.over{color:var(--over)}
-.hero{margin:16px 0;display:flex;flex-direction:column;gap:8px}
-.hero .row{display:flex;justify-content:space-between;align-items:center}.hero h2{margin:0}
-.hero .fig{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
-.hero .fig b{font-size:34px;line-height:39px;font-weight:600;font-variant-numeric:tabular-nums}
-.hero .m,.m{color:var(--dim);font-size:12px}
-.chip{font:600 11px/16px var(--sans);border-radius:10px;padding:2px 8px}
+*{box-sizing:border-box}
+body{margin:0;padding:32px 40px 48px;background:var(--bg);color:var(--text);font:13px/1.45 var(--sans)}
+#app{max-width:1360px}
+header{max-width:1360px}
+h1{font-size:20px;line-height:28px;font-weight:600;margin:0 0 4px;display:flex;align-items:center;gap:10px}
+h2{font-size:15px;line-height:22px;margin:0 0 14px;font-weight:600;display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+h2 span{font-size:12px;font-weight:400;color:var(--dim)}
+.sub{color:var(--dim);font-size:12px}.sub b{color:var(--secondary);font-weight:500}
+.src{font-size:12px;color:var(--dim)}
+.m{color:var(--dim);font-size:12px}.warn{color:var(--warn)}.over{color:var(--over)}
+a{color:inherit}
+#app>div{margin-bottom:20px}#app>div:empty{display:none}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:22px;min-width:0}
+.card.empty{color:var(--dim)}
+.row2{display:grid;grid-template-columns:minmax(0,2.2fr) minmax(0,1fr);gap:20px;align-items:stretch}
+.side{display:flex;flex-direction:column;gap:20px}
+.row2+.card{margin-top:20px}
+/* the summary tiles: one card, split by hairlines */
+.kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));background:var(--panel);border:1px solid var(--line);border-radius:12px}
+.kpi{padding:18px 22px;border-left:1px solid var(--line);display:flex;flex-direction:column;gap:2px;min-width:0}
+.kpi:first-child{border-left:0}
+.kl{display:flex;justify-content:space-between;align-items:center;gap:8px;min-height:20px}
+.kl span{font-size:11px;line-height:16px;font-weight:500;color:var(--dim);text-transform:uppercase;letter-spacing:.06em}
+.kpi b{font-size:20px;line-height:28px;font-weight:600;font-variant-numeric:tabular-nums}
+.kpi.lead b{font-size:30px;line-height:40px}
+.kpi b.warn{color:var(--warn)}.kpi b.over{color:var(--over)}
+.kpi .hbar{margin:6px 0 4px}
+.chip{font:600 11px/16px var(--sans);border-radius:10px;padding:2px 8px;white-space:nowrap}
 .chip.error{background:var(--error-soft);color:var(--over)}.chip.warning{color:var(--warn)}.chip.success{color:var(--ok)}
-.sbar{display:flex;gap:2px;height:8px;border-radius:4px;background:var(--track);overflow:hidden;margin:2px 0 10px}
-.sbar i{display:block;height:100%}.hbar{margin:0}.hbar i{border-radius:4px}
-.sbar.tb{height:4px;margin:0;align-self:center}
-.sd{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:8px;vertical-align:baseline}
-.figs{display:flex;gap:32px;margin-bottom:4px}.figs div{display:flex;flex-direction:column}
-.figs span{color:var(--secondary);font-size:12px}.figs b{font-size:16px;line-height:23px;font-weight:600;font-variant-numeric:tabular-nums}
-section .sbar:not(.tb):not(.hbar){margin-top:12px}
-tr.me td{font-weight:700}
-.tools p{margin:0 0 10px}.tt{font:12px/18px var(--mono);min-width:760px}
-.tr{display:grid;grid-template-columns:minmax(150px,1fr) 110px 70px 78px 78px 92px 70px 78px;gap:0 12px;align-items:center;padding:3px 0}
-.tr.th{color:var(--dim);border-bottom:1px solid var(--line);margin-bottom:2px}
-.tr.top{border-top:1px solid var(--line)}.tr.top .nm,.tr.top .c{font-weight:700}
-.tr .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.alert{display:flex;align-items:center;gap:12px;border-radius:12px;padding:14px 18px;margin-top:20px;font-size:13px;
+ border:1px solid color-mix(in srgb,var(--warn) 35%,var(--panel));background:color-mix(in srgb,var(--warn) 10%,var(--panel))}
+.alert i{flex:none;width:10px;height:10px;border-radius:50%;background:var(--warn)}
+.alert.error{border-color:color-mix(in srgb,var(--over) 35%,var(--panel));background:var(--error-soft)}.alert.error i{background:var(--over)}
+/* bars */
+.sbar{display:flex;gap:2px;height:8px;border-radius:4px;background:var(--track);overflow:hidden}
+.sbar i{display:block;height:100%}.hbar i{border-radius:4px}
+.sbar.big{height:12px;border-radius:6px;margin-bottom:14px}
+.sbar.foot{margin-top:12px}
+.sbar.thin{height:5px;border-radius:3px;margin-top:6px}.sbar.thin i{background:var(--s-ctx);border-radius:3px}
+.tt-row.more .sbar.thin i{background:var(--dim)}
+.sbar.tb{height:8px;border-radius:2px;background:none;align-self:center}.sbar.tb i{border-radius:2px}
+.sd{display:inline-block;width:8px;height:8px;border-radius:50%;flex:none}
+/* side card rows: name, a dim note, a figure */
+.li{display:grid;grid-template-columns:minmax(0,1fr) auto 76px;gap:8px;align-items:baseline;padding:6px 0}
+.li .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:flex;align-items:center;gap:8px}
+.li .n,.n{text-align:right;font:13px var(--mono);font-variant-numeric:tabular-nums}
+.li .m.n{font:12px var(--sans)}
+th.n,.tr.th .n{font:11px var(--sans)}
+.li.dim .nm,.li.dim .n{color:var(--dim)}.li.me .nm,.li.me .n{font-weight:700}
+.sessions details>summary.li{cursor:pointer;list-style:none;color:var(--secondary)}
+.sessions summary::-webkit-details-marker{display:none}
+.sessions summary .nm::before{content:"▸";color:var(--dim)}.sessions details[open]>summary .nm::before{content:"▾"}
+.sessions details .li .nm{font-size:12px}
+.tt-row{padding:4px 0 8px}.tt-row .li{padding:0;grid-template-columns:auto minmax(0,1fr) auto 76px}
+.tt-row .li .nm b{font:600 13px var(--mono)}
+p.foot{margin:10px 0 0}
+/* where the money went */
+table{border-collapse:collapse;width:100%}
+th{font-size:11px;font-weight:400;color:var(--dim);text-align:left;padding:0 0 6px}
+td{padding:9px 0;border-top:1px solid var(--line);vertical-align:middle}
+th.n,td.n{padding-left:16px;white-space:nowrap}
+.rl{display:flex;gap:10px}.rl .m{font-size:12px}
+/* the dot sits on the middle of the first line (the rate's name), not the top of the row */
+.dl{display:flex;align-items:center;height:1.45em}
+tr.tot td{font-weight:700;font-family:var(--sans)}tr.tot td.n{font-family:var(--mono)}
+.card>p.m{margin:12px 0 0}
+/* every tool */
+.scroll{overflow-x:auto}.tt{min-width:720px}
+.tr{display:grid;grid-template-columns:minmax(200px,1fr) 60px 90px 220px 80px;gap:0 16px;align-items:center;padding:8px 0;border-top:1px solid var(--line)}
+.tr.th{border-top:0;padding:0 0 6px;font-size:11px;color:var(--dim)}
+details details .tr,details .tr.leaf{border-top:0;padding:4px 0}
+.tn{display:flex;align-items:center;gap:8px;min-width:0}
+.tn .nm{font:13px var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tr.top>.tn .nm{font-weight:500}.tr.over .nm{color:var(--dim)}
+.tag{font:400 11px/16px var(--sans);font-style:normal;color:var(--secondary);background:var(--bg);border-radius:6px;padding:1px 7px;white-space:nowrap}
 summary.tr{cursor:pointer;list-style:none}summary.tr::-webkit-details-marker{display:none}
-summary.tr .nm::before{content:"▸ ";color:var(--dim)}details[open]>summary.tr .nm::before{content:"▾ "}
-.tr.leaf .nm{padding-left:14px}summary.tr:hover{background:var(--hover)}
-.legend{display:flex;gap:16px;margin-top:10px;font:11px var(--mono);color:var(--dim)}.tools>p.m+.legend{margin-top:4px}
-svg{max-width:SVGWpx;display:block}svg text{fill:var(--text);font-family:var(--sans);font-size:13px}svg .v{fill:var(--dim)}
-#p-flow>svg,#p-flow>p{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:8px 0;box-sizing:border-box}
-#p-flow>p{padding:16px;margin:0;color:var(--dim)}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:16px;margin-top:16px}
-section{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;overflow-x:auto}
-section.wide{grid-column:1/-1}.wrap td:last-child{white-space:normal}
-table{border-collapse:collapse;width:100%;font:12px/18px var(--mono)}
-td,th{text-align:left;padding:2px 12px 2px 0;white-space:nowrap}td:last-child,th:last-child{padding-right:0}
-th{color:var(--dim);font-weight:400}.n{text-align:right;font-variant-numeric:tabular-nums}.m,.m td{color:var(--dim)}
-tr.tot td{border-top:1px solid var(--line);font-weight:700;padding-top:6px}
-.meter{display:inline-block;width:120px;height:8px;border-radius:4px;background:var(--track);vertical-align:middle;overflow:hidden}
-.meter i{display:block;height:100%;border-radius:4px;background:var(--ok)}.meter.warn i{background:var(--warn)}.meter.over i{background:var(--over)}
-.pct{display:inline-block;width:44px;text-align:right;font-variant-numeric:tabular-nums}.pct.ok{color:var(--text)}
-b.over{background:var(--error-soft);color:var(--over);font:600 11px/16px var(--sans);border-radius:10px;padding:2px 8px}
+summary.tr .tn::before{content:"▸";color:var(--dim);width:10px;flex:none}details[open]>summary.tr .tn::before{content:"▾"}
+.tr.leaf .tn::before{content:"";width:10px;flex:none}
+summary.tr:hover,summary.li:hover{background:var(--hover)}
+.legend{display:flex;gap:16px;margin-top:14px;font-size:12px;color:var(--dim)}.legend span{display:flex;align-items:center;gap:6px}
+/* charts */
+svg{display:block;width:100%;height:auto}svg text{fill:var(--text);font-family:var(--sans);font-size:13px}svg .v{fill:var(--dim)}
+.flow svg{max-width:100%}
 .dot{font-size:12px;font-weight:400;color:var(--dim);display:inline-flex;align-items:center;gap:6px}
 .dot::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--dim)}
-#pick{font:inherit;font-size:12px;color:var(--text);background:var(--panel);border:1px solid var(--control);
- border-radius:6px;padding:4px 8px;margin:4px 0 6px;max-width:100%}
 .dot.on::before{background:var(--ok)}.dot.off::before{background:var(--over)}
-section.chart{margin-top:16px}section.chart h2{display:flex;align-items:center;gap:8px}
-.seg{margin-left:auto;display:inline-flex;gap:4px}
-.seg button,.cols button{font:12px/17px var(--sans);text-transform:none;letter-spacing:0;color:var(--text);background:none;
- border:1px solid var(--control);border-radius:6px;padding:4px 9px;cursor:pointer;transition:background .15s,color .15s}
-.seg button:hover,.cols button:hover{background:var(--hover)}
-html:not([data-x=calls]) .seg [data-x=time],html[data-x=calls] .seg [data-x=calls]{background:var(--primary);
- border-color:var(--primary);color:var(--on-primary);font-weight:500}
+html[data-state=stale] #p-hero{opacity:.55}
+html[data-state=stale] #p-hero::after{content:"These figures stopped updating: the session may have ended.";display:block;margin-top:8px;font-size:12px;color:var(--dim)}
+.chart h2{align-items:center}
+.seg{margin-left:auto;display:inline-flex;gap:2px;padding:2px;border-radius:8px;background:var(--bg)}
+.seg button{font:12px/17px var(--sans);color:var(--dim);background:none;border:0;border-radius:6px;padding:4px 10px;cursor:pointer}
+.seg button:hover{color:var(--text)}
+html:not([data-x=calls]) .seg [data-x=time],html[data-x=calls] .seg [data-x=calls]{background:var(--panel);color:var(--text);font-weight:500;
+ box-shadow:0 0 0 1px var(--line)}
 html:not([data-x=calls]) svg.xc,html[data-x=calls] svg.xt{display:none}
 .chart svg text{font-size:12px}.chart .g{stroke:var(--line)}.chart .a{stroke:var(--dim);stroke-opacity:.5}
 .chart .ln{fill:none;stroke-width:2;stroke-linejoin:round}.chart .ln:hover{stroke-width:3.5}
 .pm line{stroke:var(--dim);stroke-opacity:.4;stroke-dasharray:3 4}.pm .hit{stroke:#000;stroke-opacity:0;stroke-width:9;stroke-dasharray:none}
 .pm:hover line:first-child{stroke-opacity:.9}
-.cols{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin:14px 0 4px;font-size:12px;color:var(--dim)}
-.cols>span{font-size:11px;text-transform:uppercase;letter-spacing:.06em;font-weight:500;margin-right:6px}
-.cols button{background:var(--primary);border-color:var(--primary);color:var(--on-primary)}
-.cols button[aria-pressed=false]{background:none;border-color:var(--control);color:var(--dim);text-decoration:line-through}
-.cols button.all{background:none;border-color:transparent;color:var(--dim);text-decoration:underline}
-@media (max-width:600px){body{padding:16px}.figs{gap:20px}}
+/* narrower windows: tiles wrap, the side column moves under the main one */
+@media (max-width:1200px){.kpis{grid-template-columns:repeat(3,minmax(0,1fr))}.kpi{border-top:1px solid var(--line)}
+ .kpi:nth-child(-n+3){border-top:0}.kpi:nth-child(3n+1){border-left:0}}
+@media (max-width:1000px){.row2{grid-template-columns:minmax(0,1fr)}}
+@media (max-width:640px){body{padding:16px}.card{padding:16px}.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .kpis .kpi{border-left:0;border-top:1px solid var(--line)}.kpis .kpi.lead{grid-column:1/-1;border-top:0}
+ .kpis .kpi:nth-child(odd):not(.lead){border-left:1px solid var(--line)}}
 """
 
 # Which x-axis the cost-over-time chart shows. Kept on <html>, outside the body the live
@@ -997,7 +1125,7 @@ try { const m = localStorage.getItem("tokentab-x"); if (m) document.documentElem
 # loads `<name>.js` beside the page (a cache-busting query on it), which calls
 # `__tokentab` with the parts; only a part whose markup changed is swapped, in place, so
 # the Sankey's hover, the scroll position, the chart's axis and the opened tool rows survive. The dot says
-# whether a push arrived in the last 15 s.
+# whether a push arrived in the last 15 s; a stale page dims its tiles.
 LIVE = """<script>
 (function () {
   var src = SRC, last = {}, seen = 0, at = "", dot = document.getElementById("dot");
@@ -1030,6 +1158,7 @@ LIVE = """<script>
     var ok = Date.now() - seen < 15000;
     dot.className = "dot " + (ok ? "on" : "off");
     dot.textContent = ok ? "live" : (seen ? "stale" : "snapshot");
+    document.documentElement.dataset.state = ok ? "live" : (seen ? "stale" : "snapshot");
   }, 1000);
   poll();
 })();
@@ -1044,7 +1173,7 @@ def page(content, data_src=None):
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>TokenTab status</title>
 <style>{CSS.replace("SVGW", str(size()[0]))}</style></head><body>
-<h1>TokenTab · status <span class="dot" id="dot">snapshot</span></h1>
+<header><h1>TokenTab status <span class="dot" id="dot">snapshot</span></h1></header>
 <div id="app">{content}</div>
 {AXIS}{live}</body></html>"""
 

@@ -55,10 +55,13 @@ The pane has two tabs:
   at session start.
 
 **In the browser.** "Open in browser" (`o`) opens a status page with everything the pane
-shows, from the same report and in your plan's unit, with room for more: every tool with
-its breakdown (Bash → git → status), a flow diagram of where the money went, cost over
-time, the budget lines, and this month's sessions. It keeps updating for 30 minutes; the
-dot in its header says whether it's `live`, `stale` or a `snapshot`.
+shows, from the same report and in your plan's unit, with room for more. It leads with a
+summary: the session against its limit, tokens, msgs, a request's average cost and the
+context, plus a banner when you're over a limit or the cache has gone cold. Below that come
+a flow diagram of where the money went, cost over time, the top tools, the cost by rate,
+by call source and by model, this month's sessions, and every tool with its breakdown
+(Bash → git → status). It keeps updating for 30 minutes; the dot in its header says
+whether it's `live`, `stale` or a `snapshot`.
 
 **Ask Claude.** "How much have I spent?" or "Where did the money go?" gets an answer
 from the same numbers.
