@@ -696,7 +696,9 @@ class LedgerStore:
 def requests(calls, prompts):
     """Cost of each request: one prompt and every call until the next prompt.
     That includes the prompt suggestion Claude Code makes after the reply.
-    Returns [(start_epoch, USD, calls)], oldest first."""
+    Returns [(start_epoch, USD, calls)], oldest first, one per prompt (the chart marks
+    every prompt), so a prompt that never reached the API is there with 0 calls: see
+    made_calls()."""
     starts = sorted(prompts)
     out = [[t, 0.0, 0] for t in starts]
     for t, c in calls:
@@ -705,6 +707,13 @@ def requests(calls, prompts):
             out[i][1] += c
             out[i][2] += 1
     return [tuple(x) for x in out]
+
+
+def made_calls(reqs):
+    """The requests that reached the API. A local slash command (/tokentab:status) or a
+    prompt the expired-cache check held back is a prompt with no call: not a request for
+    latest, previous, the average or the count."""
+    return [r for r in reqs if r[2]]
 
 
 def day_total(events):
@@ -910,7 +919,7 @@ def report(store, sid, prices, budget, show_all, led=None):
     R["unmatched"] = led.unmatched(sid, store) if led else 0
     R["total"] = {"tokens": b.tokens, "cost": b.cost, "msgs": b.msgs}
     R["prompts"] = store.prompts.get(sid, [])
-    reqs = requests(b.calls, R["prompts"])
+    reqs = made_calls(requests(b.calls, R["prompts"]))
     R["requests"] = reqs and {"latest": reqs[-1], "previous": reqs[-2] if len(reqs) > 1 else None,
                               "average": sum(r[1] for r in reqs) / len(reqs), "count": len(reqs)}
     R["by_source"] = [(nm, calls, c, (c / b.cost) if b.cost else 0)
@@ -1075,7 +1084,7 @@ def snapshot(store, sid, prices, led=None):
         "all_sessions_cost_usd": round(sum(x.cost for x in src.sessions.values()), 6),
         "requests": [{"start": datetime.fromtimestamp(t, timezone.utc).isoformat(),
                       "cost_usd": round(c, 6), "calls": n}
-                     for t, c, n in requests(b.calls, store.prompts.get(sid, []))[-5:]],
+                     for t, c, n in made_calls(requests(b.calls, store.prompts.get(sid, [])))[-5:]],
     }
 
 
