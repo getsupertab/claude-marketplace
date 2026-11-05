@@ -504,7 +504,6 @@ percent = lambda n: f"{round(n * 10) / 10:g}%"
 big = lambda x: usd(x, 2 if x >= 0.01 or x == 0 else 4)     # a big figure, unless it would read $0.00
 WINDOW_SHORT = {"five_hour": "5-hour", "seven_day": "week"}
 SESSIONS_COLOURED = 10
-TOP_TOOLS = 4                     # tools in the summary card; the table at the bottom has them all
 
 # What each rate is, under its name in "Where the money went"
 RATE_NOTE = {"input": "new input, not cached", "cache_write_1h": "saving context to the cache for 1 hour",
@@ -696,27 +695,6 @@ def sessions_card(P):
         body += (f'<details data-path="~sessions"><summary class="li"><span class="nm">{n} {"session" if n == 1 else "sessions"} this month</span>'
                  f'<span></span><span></span></summary>{sbar(parts, "sbar foot")}{items}</details>')
     return f'<section class="card sessions">{label("All sessions")}{body}</section>'
-
-
-def top_tools_card(P, R):
-    """The costliest few tools, a bar each against the costliest; the rest folded into one row.
-    The full table is at the bottom of the page."""
-    tools = P.get("tools") or []
-    if not tools:
-        return f'<section class="card">{label("Top tools")}<p class="m">No tool calls in this session yet.</p></section>'
-    tags = [source_tag(nm) for nm, _ in R.get("tools") or []]
-    top = max(t["cost"] for t in tools) or 1e-9
-    shown, rest = tools[:TOP_TOOLS], tools[TOP_TOOLS:]
-    row = lambda name, tag, calls, cost, cls="": (
-        f'<div class="tt-row{cls}"><div class="li"><span class="nm">{name}</span><span class="m">{esc(tag)}</span>'
-        f'<span class="m n">{calls} {"call" if calls == 1 else "calls"}</span><span class="n">{usd(cost, 4)}</span></div>'
-        f'<div class="sbar thin"><i style="width:{min(cost / top, 1) * 100:.2f}%"></i></div></div>')
-    rows = "".join(row(f'<b>{esc(t["name"])}</b>', tags[i] if i < len(tags) else "", t["calls"], t["cost"]) for i, t in enumerate(shown))
-    if rest:
-        rows += row(f"{len(rest)} more", "", sum(t["calls"] for t in rest), sum(t["cost"] for t in rest), " more")
-    over = f'+ TokenTab overhead {usd(P["overhead"], 4)} · ' if P.get("overhead") else ""
-    return (f'<section class="card">{label("Top tools")}{rows}'
-            f'<p class="m foot">{over}<a href="#tools">all tools ↓</a></p></section>')
 
 
 def tool_rows(t, path, top, depth, tag=""):
@@ -939,7 +917,7 @@ def timeline(R):
 
 
 # Page order, "summary first" (Figma "TokenTab browser / A summary first v2"): the tiles and
-# banners, the cost flow, cost over time beside the top tools, where the money went beside
+# banners, the cost flow, cost over time across the full width, where the money went beside
 # the smaller cards, then every tool.
 PARTS = ("head", "hero", "flow", "chart", "status")
 
@@ -963,9 +941,7 @@ def parts(R, direction="ltr", models=True, hide=()):
     head = f'<div class="sub">since {since} · updated {R["now"].strftime("%H:%M:%S")}</div>'
     flow = (f'<section class="card flow">{label("Cost flow", "session → model → context / generation → rate → where it went")}'
             + (svg(b, tb) if b and b.cost > 0 else '<p class="m">No usage for this session yet.</p>') + "</section>")
-    chart = timeline(R)
-    chart = f'<div class="row2">{chart or "<div></div>"}{top_tools_card(P, R)}</div>'
-    return {"head": head, "hero": kpis(P, R), "flow": flow, "chart": chart, "status": status_html(R)}
+    return {"head": head, "hero": kpis(P, R), "flow": flow, "chart": timeline(R) or "", "status": status_html(R)}
 
 
 def body(R, direction="ltr", models=True, hide=()):
@@ -1038,8 +1014,6 @@ a{color:inherit}
 .sbar i{display:block;height:100%}.hbar i{border-radius:4px}
 .sbar.big{height:12px;border-radius:6px;margin-bottom:14px}
 .sbar.foot{margin-top:12px}
-.sbar.thin{height:5px;border-radius:3px;margin-top:6px}.sbar.thin i{background:var(--s-ctx);border-radius:3px}
-.tt-row.more .sbar.thin i{background:var(--dim)}
 .sbar.tb{height:8px;border-radius:2px;background:none;align-self:center}.sbar.tb i{border-radius:2px}
 .sd{display:inline-block;width:8px;height:8px;border-radius:50%;flex:none}
 /* side card rows: name, a dim note, a figure */
@@ -1053,9 +1027,6 @@ th.n,.tr.th .n{font:11px var(--sans)}
 .sessions summary::-webkit-details-marker{display:none}
 .sessions summary .nm::before{content:"▸";color:var(--dim)}.sessions details[open]>summary .nm::before{content:"▾"}
 .sessions details .li .nm{font-size:12px}
-.tt-row{padding:4px 0 8px}.tt-row .li{padding:0;grid-template-columns:auto minmax(0,1fr) auto 76px}
-.tt-row .li .nm b{font:600 13px var(--mono)}
-p.foot{margin:10px 0 0}
 /* where the money went */
 table{border-collapse:collapse;width:100%}
 th{font-size:11px;font-weight:400;color:var(--dim);text-align:left;padding:0 0 6px}
