@@ -195,6 +195,7 @@ def main():
     errs += names_case(prices)
     errs += tokens_case()
     errs += page_case(store, prices)
+    errs += requests_case(store, prices)
     for err in errs:
         print("  " + err)
     print("ALL OK" if not errs else f"{len(errs)} FAILURES")
@@ -512,6 +513,62 @@ def page_case(store, prices):
             finally:
                 sankey.HIDE = frozenset()
     print("[page] " + ("OK" if not errs else "FAIL"))
+    return errs
+
+
+def requests_case(store, prices):
+    """A prompt that never reached the API (a local slash command such as /tokentab:status,
+    or one the expired-cache check held back) is not a request: latest, previous, average
+    and count cover only prompts that made a call, in the terminal view, on the page and in
+    --json alike. A session whose prompts made no call has no Requests card at all."""
+    errs = []
+    b = store.sessions["fx"]
+    saved = store.prompts.get("fx")
+    first, last = b.calls[0][0], b.calls[-1][0]
+    spent = sum(c for _, c in b.calls)
+    budget = {}
+    card = "one prompt and everything it set off"
+
+    def page(R):
+        R["pane"] = kt.pane_report(store, "fx", prices, budget, windows={})
+        return sankey.parts(R)["status"]
+
+    try:
+        # two prompts that set off the calls, then two that made none after them
+        store.prompts["fx"] = [first - 1, last - 0.5, last + 10, last + 20]
+        R = kt.report(store, "fx", prices, budget, True)
+        q = R["requests"]
+        if not q or q["count"] != 2:
+            errs.append(f"requests: prompts without a call are counted: {q and q['count']} requests, want 2")
+        else:
+            if q["latest"][0] != last - 0.5 or q["latest"][2] < 1:
+                errs.append(f"requests: latest is a prompt without a call: {q['latest']}")
+            if not q["previous"] or q["previous"][0] != first - 1 or q["previous"][2] < 1:
+                errs.append(f"requests: previous is a prompt without a call: {q['previous']}")
+            if abs(q["average"] - spent / 2) > 1e-9:
+                errs.append(f"requests: average {q['average']:.6f} is not over the 2 requests ({spent / 2:.6f})")
+        if re.search(r"(?<!\d)0 calls · ", page(R)):
+            errs.append("requests: the page's Requests card shows a request with 0 calls")
+        if re.search(r"(?<!\d)0 calls · ", kt.render(store, "fx", prices, budget, True)):
+            errs.append("requests: the terminal view shows a request with 0 calls")
+        snap = kt.snapshot(store, "fx", prices)["requests"]
+        if len(snap) != 2 or any(r["calls"] < 1 for r in snap):
+            errs.append(f"requests: --json lists prompts without a call: {snap}")
+        # every prompt of the session made no call: no card, not a $0 average
+        store.prompts["fx"] = [last + 10, last + 20]
+        R = kt.report(store, "fx", prices, budget, True)
+        if R["requests"]:
+            errs.append(f"requests: a session whose prompts made no call has requests: {R['requests']}")
+        if card in page(R):
+            errs.append("requests: the page shows a Requests card for a session whose prompts made no call")
+        if kt.snapshot(store, "fx", prices)["requests"]:
+            errs.append("requests: --json lists requests for a session whose prompts made no call")
+    finally:
+        if saved is None:
+            store.prompts.pop("fx", None)
+        else:
+            store.prompts["fx"] = saved
+    print("[requests] " + ("OK" if not errs else "FAIL"))
     return errs
 
 
