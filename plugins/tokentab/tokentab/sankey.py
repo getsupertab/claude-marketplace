@@ -496,7 +496,8 @@ esc = html.escape
 
 # The page's figures follow the pane's: dollars with 2 places for the big figures, 4 in the
 # tables; shares as whole percents; plan windows to a tenth. Words follow the pane's too:
-# "msgs" are API calls, "calls" are tool calls.
+# "messages" are API calls, "calls" are tool calls. Where the pane shortens a word for its
+# width ("tok", "msgs"), the page has room and spells it out.
 usd = lambda x, d=2: f"${x:,.{d}f}"
 pct = lambda share: f"{round(share * 100)}%"
 percent = lambda n: f"{round(n * 10) / 10:g}%"
@@ -599,7 +600,7 @@ def tile(name, figure, note="", cls=""):
 
 
 def kpis(P, R):
-    """The summary: the first tile (the pane's hero), then tokens, msgs, a request's average
+    """The summary: the first tile (the pane's hero), then tokens, messages, a request's average
     cost and the context, and a banner for anything that needs attention now."""
     s = P["session"]
     if not s:
@@ -612,10 +613,10 @@ def kpis(P, R):
     ctx = (R.get("budget") or {}).get("context")
     tiles = [spend_tile(P, R),
              tile("tokens", kt.num(total), f"{pct(read / total)} cache read" if total else ""),
-             tile("msgs", kt.num(s["msgs"]), f"{calls} tool {'call' if calls == 1 else 'calls'}"),
-             tile("avg per request", big(q["average"]) if q else "–",
+             tile("messages", kt.num(s["msgs"]), f"{calls} tool {'call' if calls == 1 else 'calls'}"),
+             tile("average per request", big(q["average"]) if q else "–",
                   f'of {q["count"]} {"request" if q["count"] == 1 else "requests"}{api}' if q else ""),
-             tile("context", f'{kt.num(ctx["tokens"])} tok' if ctx else "–",
+             tile("context", f'{kt.num(ctx["tokens"])} tokens' if ctx else "–",
                   f'{usd(ctx["per_call"], 4)}/call to re-read{api}' if ctx else "", ctx["level"] if ctx else "")]
     alerts = []
     first, frac, worst = lead(P)
@@ -624,7 +625,7 @@ def kpis(P, R):
         alerts.append(("error", f"Over the limit of {what} ({pct(worst)}). "
                        + ("Hard stop is on: TokenTab blocks tool calls." if s["hard_stop"] else "TokenTab only warns: hard stop is off.")))
     if ctx and ctx["cold"]:
-        alerts.append(("warning", f'Cache is cold. The next prompt re-writes the context ({kt.num(ctx["tokens"])} tok), '
+        alerts.append(("warning", f'Cache is cold. The next prompt re-writes the context ({kt.num(ctx["tokens"])} tokens), '
                        f'about {big(ctx["rewrite"])}{api}.'))
     if not P.get("prices_verified", True):
         alerts.append(("warning", "Prices unverified: the figures are estimates at the default rates."))
@@ -642,7 +643,7 @@ def rates_card(P):
     t = P.get("total") or {"tokens": 0, "cost": s["cost"]}
     rows += (f'<tr class="tot"><td>total{" at API rates" if s["plan"] else ""}</td><td class="n">{kt.num(t["tokens"])}</td>'
              f'<td class="n">{usd(t["cost"], 4)}</td><td></td></tr>')
-    foot = (f'<p class="m">{kt.num(P["unmatched"])} output tok have no transcript line. Any thinking is counted in output.</p>'
+    foot = (f'<p class="m">{kt.num(P["unmatched"])} output tokens have no transcript line. Any thinking is counted in output.</p>'
             if P.get("unmatched") else "")
     return (f'<section class="card">{label("Where the money went", "by rate" + (" at API rates" if s["plan"] else ""))}'
             f'{sbar([(series(r["key"]), r["share"]) for r in rates], "sbar big")}<table class="rates">'
@@ -664,7 +665,7 @@ def requests_card(R):
         r = q[name]
         if r:
             at = time.strftime("%H:%M", time.localtime(r[0]))
-            rows.append((name, f'{r[2]} {"msg" if r[2] == 1 else "msgs"} · {at}', usd(r[1], 4), ""))
+            rows.append((name, f'{r[2]} {"message" if r[2] == 1 else "messages"} · {at}', usd(r[1], 4), ""))
     rows.append(("average", f'of {q["count"]} {"request" if q["count"] == 1 else "requests"}', usd(q["average"], 4), "dim"))
     return f'<section class="card">{label("Requests", "one prompt and everything it set off")}{list_rows(rows)}</section>'
 
@@ -673,7 +674,7 @@ def share_card(title, note, items, series):
     """A side card of shares (call source, models): a row each, then a bar of the shares."""
     if not items:
         return ""
-    rows = [(esc(nm), f'{kt.num(msgs)} {"msg" if msgs == 1 else "msgs"} · {pct(share)}', usd(cost, 4), "")
+    rows = [(esc(nm), f'{kt.num(msgs)} {"message" if msgs == 1 else "messages"} · {pct(share)}', usd(cost, 4), "")
             for nm, msgs, cost, share in items]
     return (f'<section class="card">{label(title, note)}{list_rows(rows)}'
             f'{sbar([(series(i), x[3]) for i, x in enumerate(items)], "sbar foot")}</section>')
@@ -749,7 +750,7 @@ def tools_card(P, R):
     calls = sum(t["calls"] for t in tools)
     top = max([t["cost"] for t in tools] + [1e-9])
     head = ('<div class="tr th"><span>tool</span><span class="n">calls</span><span class="n">cost</span>'
-            '<span>ask · into context · re-read</span><span class="n">tok</span></div>')
+            '<span>ask · into context · re-read</span><span class="n" title="tokens its answers put into context">tokens</span></div>')
     body = "".join(tool_rows(t, t["name"], top, 0, tags[i] if i < len(tags) else "") for i, t in enumerate(tools))
     o = R.get("overhead") or {}
     if P.get("overhead"):
