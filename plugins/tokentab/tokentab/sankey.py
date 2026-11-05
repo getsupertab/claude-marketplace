@@ -46,19 +46,38 @@ COLUMNS = [
 ]
 ROLES = ("session", "model", "kind", "rate", "tool", "sink")   # a path's nodes; non-tool paths skip "tool"
 
-# HA energy palette: one colour per leaf, parents take a neutral tone.
+TOKENS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "hooks", "tokens.ts")
+
+
+def load_tokens(path=TOKENS_PATH):
+    """The pane's design tokens (hooks/tokens.ts): the object after `TOKENS ... =` is strict
+    JSON, so the page and the pane draw from the same colours, grounds and fonts."""
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    start = text.index("= {", text.index("export const TOKENS")) + 2
+    return json.loads(text[start:text.rindex("}") + 1])
+
+
+TOKENS = load_tokens()
+# The light value of each series: a mid tone that reads on both grounds, as the pane's dots
+# take it. The Sankey and the chart colour inline, so they cannot switch with the scheme.
+SERIES = {k: v[0] for k, v in TOKENS["series"].items()}
+NEUTRAL = TOKENS["surface"]["dim"][0]
+
+# One colour per leaf, as the pane colours its rates; the session and the kinds above the
+# rates take a neutral tone, so the colour starts where the pane's colours do.
 COLOR = {
-    "session":        "#8a94a6",
-    "context":        "#4f8fdb",
-    "generation":     "#f0a040",
-    "fees":           "#9e9e9e",
-    "cache_read":     "#22b8a8",
-    "cache_write_1h": "#5c6bc0",
-    "cache_write_5m": "#7e57c2",
-    "input":          "#43a047",
-    "output":         "#fb8c00",
-    "thinking":       "#ab47bc",
-    "fees_leaf":      "#bdbdbd",
+    "session":        NEUTRAL,
+    "context":        NEUTRAL,
+    "generation":     NEUTRAL,
+    "fees":           NEUTRAL,
+    "cache_read":     SERIES["cache_read"],
+    "cache_write_1h": SERIES["cache_write_1h"],
+    "cache_write_5m": SERIES["cache_write_5m"],
+    "input":          SERIES["input"],
+    "output":         SERIES["output"],
+    "thinking":       SERIES["thinking"],
+    "fees_leaf":      SERIES["fees"],
 }
 LABEL = {
     "session": "session", "context": "context", "generation": "generation", "fees": "fees",
@@ -117,11 +136,15 @@ def node(u, v, h, color, label, value, right):
 
 
 OVERHEAD, PROMPTS, REREADS = "TokenTab overhead", "prompts & replies", "context re-reads"
-COLOR.update({OVERHEAD: "#e57373", PROMPTS: "#5c6f82", REREADS: "#3f7f7a"})
+# the sinks in the pane's own terms: asking (prompts & replies), the answer kept in context
+# (tools), re-reading it (context re-reads); TokenTab's own hook text as fees
+COLOR.update({OVERHEAD: SERIES["fees"], PROMPTS: SERIES["ask"], REREADS: SERIES["read"]})
 LABEL.update({k: k for k in (OVERHEAD, PROMPTS, REREADS)})
+TOOLS_COLOR, OTHER_COLOR = SERIES["ctx"], SERIES["session_other"]
 
-TOOL_COLORS = ["#26a69a", "#ec407a", "#ffca28", "#42a5f5", "#8d6e63", "#66bb6a", "#ff7043", "#78909c"]
-MODEL_COLORS = ["#d4a63a", "#4db6ac", "#ba68c8", "#7cb342", "#f06292", "#90a4ae"]
+# tools and models take the pane's categorical series, costliest first
+TOOL_COLORS = [SERIES[f"session_{i}"] for i in range(1, 11)]
+MODEL_COLORS = [SERIES[f"model_{i}"] for i in range(1, 6)]
 # fixed display order for the named nodes; models and tools sort by cost inside their column
 RANK = {n: i for i, n in enumerate(["session"] + list(TREE) + [l for ls in TREE.values() for l in ls]
                                    + ["tools", OVERHEAD, PROMPTS, REREADS])}
@@ -148,7 +171,7 @@ def fold_tools(paths, colors, labels, keep):
         if len(nodes) >= 2 and nodes[-1] == "tools" and nodes[-2] not in top:
             nodes = nodes[:-2] + (OTHER, "tools")
         merged[nodes] = merged.get(nodes, 0.0) + v
-    colors = dict(colors, **{OTHER: "#9e9e9e"})
+    colors = dict(colors, **{OTHER: OTHER_COLOR})
     labels = dict(labels, **{OTHER: f"{len(cost) - len(top)} other tools"})
     return list(merged.items()), colors, labels
 
@@ -202,11 +225,11 @@ def flows(b, tb=None):
             merged[k] = merged.get(k, 0.0) + v
         out = list(merged.items())
     colors, labels = dict(COLOR), dict(LABEL)
-    colors["tools"], labels["tools"] = "#f5b041", "tools"
+    colors["tools"], labels["tools"] = TOOLS_COLOR, "tools"
     for i, (name, _) in enumerate(tools):
         colors[name] = TOOL_COLORS[i % len(TOOL_COLORS)]; labels[name] = name
-    for i, m in enumerate(models):
-        colors[m] = MODEL_COLORS[i % len(MODEL_COLORS)]; labels[m] = short_model(m)
+    for i, m in enumerate(models):   # any past the fifth share the last, as in the pane
+        colors[m] = MODEL_COLORS[min(i, len(MODEL_COLORS) - 1)]; labels[m] = short_model(m)
     return out, colors, labels
 
 
@@ -436,8 +459,9 @@ def svg(b, tb=None, traces=True, keep_tools=None):
 # where that is too small to read, "open in browser" shows the page.
 FLOW_W, FLOW_H, FLOW_PAD, FLOW_FONT, FLOW_LABEL, FLOW_TOOLS = W, H, 110, 8, 30, 12
 FLOW_HIDE = ()
-FLOW_STYLE = ("text{font:8px -apple-system,system-ui,sans-serif;fill:#d4d4d4}.v{fill:#9a9a9a}"
-              "@media(prefers-color-scheme:light){text{fill:#1f1f1f}.v{fill:#6b6b6b}}")
+_S = TOKENS["surface"]
+FLOW_STYLE = (f"text{{font:8px {TOKENS['font']['sans']};fill:{_S['text'][1]}}}.v{{fill:{_S['dim'][1]}}}"
+              f"@media(prefers-color-scheme:light){{text{{fill:{_S['text'][0]}}}.v{{fill:{_S['dim'][0]}}}}}")
 
 
 def flow_svg(R, keep_tools=FLOW_TOOLS, hide=FLOW_HIDE):
@@ -729,9 +753,9 @@ def parts(R, direction="ltr", models=True, hide=()):
             f'<div class="src">{esc(s["source"])}</div>'
             + ("" if R["prices_verified"] else '<div class="src warn">prices unverified</div>'))
     t = R["total"]
-    kpi = (f'<div class="kpi"><div><b>{kt.money(t["cost"])}</b><span>this session</span></div>'
-           f'<div><b>{kt.num(t["tokens"])}</b><span>tokens</span></div>'
-           f'<div><b>{t["msgs"]}</b><span>messages</span></div></div>')
+    kpi = (f'<div class="kpi"><div><span>session spend</span><b>{kt.money(t["cost"])}</b></div>'
+           f'<div><span>tokens</span><b>{kt.num(t["tokens"])}</b></div>'
+           f'<div><span>messages</span><b>{t["msgs"]}</b></div></div>')
     flow = svg(b, tb) if b and b.cost > 0 else "<p>no usage for this session yet.</p>"
     return {"head": head, "kpi": kpi, "flow": flow, "chart": timeline(R), "status": status_html(R)}
 
@@ -750,51 +774,72 @@ def push_js(R, direction="ltr", models=True, hide=()):
     return "window.__tokentab && window.__tokentab(" + json.dumps(data, ensure_ascii=False) + ");\n"
 
 
-CSS = """
-:root{color-scheme:light dark;--bg:#f6f7f9;--fg:#1d2330;--muted:#5d6676;--line:#dde1e7;--panel:#fff;
- --ok:#2e7d32;--warn:#a86b00;--over:#c62828;--track:#e6e9ee}
-@media (prefers-color-scheme:dark){:root{--bg:#111318;--fg:#e3e6ec;--muted:#9aa3b2;--line:#262a33;--panel:#181b22;
- --ok:#66bb6a;--warn:#ffca28;--over:#ef5350;--track:#2a2f39}}
-body{margin:0;padding:24px;background:var(--bg);color:var(--fg);font:14px/1.4 -apple-system,system-ui,sans-serif}
-h1{font-size:18px;font-weight:600;margin:0 0 4px;display:flex;align-items:center;gap:10px}
-h2{font-size:13px;margin:0 0 8px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
-h2 span{text-transform:none;letter-spacing:0;font-weight:400}
-.sub{color:var(--muted);margin-bottom:6px}.sub b{color:var(--fg);font-weight:600}
-.src{font-size:13px;margin-bottom:4px}.src.ok{color:var(--ok)}.src.warn,.warn{color:var(--warn)}.over{color:var(--over)}
-.kpi{display:flex;gap:28px;margin:14px 0 4px}.kpi b{font-size:22px;font-weight:600;font-variant-numeric:tabular-nums;display:block}
-.kpi span{color:var(--muted);font-size:12px}
-svg{max-width:SVGWpx;display:block}svg text{fill:var(--fg);font-size:13px}svg .v{fill:var(--muted)}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:16px;margin-top:20px;max-width:SVGWpx}
-section{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto}
+def css_vars():
+    """The tokens as CSS custom properties, light on :root and dark under prefers-color-scheme:
+    every surface token as --<name>, the tones the page uses (--ok, --warn, --over, --track)
+    from the series."""
+    pairs = {k.replace("_", "-"): v for k, v in TOKENS["surface"].items()}
+    s = TOKENS["series"]
+    pairs.update({"ok": s["success"], "warn": s["warning"], "over": s["error"], "track": s["track"]})
+    side = lambda i: ";".join(f"--{k}:{v[i]}" for k, v in pairs.items())
+    f = TOKENS["font"]
+    return (f":root{{color-scheme:light dark;--sans:{f['sans']};--mono:{f['mono']};{side(0)}}}\n"
+            f"@media (prefers-color-scheme:dark){{:root{{{side(1)}}}}}")
+
+
+# The pane's design language (Figma "TokenTab UI"): Inter for words, mono for figures in
+# tables, white cards on a warm ground with hairline borders, 11px uppercase section labels,
+# a hero figure, 8px bars on a track, black pill tabs.
+CSS = css_vars() + """
+body{margin:0;padding:24px;background:var(--bg);color:var(--text);font:13px/1.45 var(--sans)}
+#app{max-width:SVGWpx}
+h1{font-size:16px;font-weight:600;margin:0 0 6px;display:flex;align-items:center;gap:10px}
+h2{font-size:11px;line-height:16px;margin:0 0 10px;color:var(--dim);font-weight:500;text-transform:uppercase;letter-spacing:.06em}
+h2 span{text-transform:none;letter-spacing:0;font-weight:400;margin-left:6px}
+.sub{color:var(--dim);font-size:12px;margin-bottom:2px}.sub b{color:var(--text);font-weight:500}
+.src{font-size:12px;color:var(--dim);margin-bottom:2px}.src.ok{color:var(--ok)}.src.warn,.warn{color:var(--warn)}.over{color:var(--over)}
+.kpi{display:flex;align-items:flex-end;gap:32px;margin:18px 0 20px}
+.kpi div{display:flex;flex-direction:column;gap:2px}
+.kpi span{color:var(--dim);font-size:11px;line-height:16px;font-weight:500;text-transform:uppercase;letter-spacing:.06em}
+.kpi b{font-size:16px;line-height:23px;font-weight:600;font-variant-numeric:tabular-nums}
+.kpi div:first-child b{font-size:34px;line-height:39px}
+svg{max-width:SVGWpx;display:block}svg text{fill:var(--text);font-family:var(--sans);font-size:13px}svg .v{fill:var(--dim)}
+#p-flow>svg,#p-flow>p{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:8px 0;box-sizing:border-box}
+#p-flow>p{padding:16px;margin:0;color:var(--dim)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:16px;margin-top:16px}
+section{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;overflow-x:auto}
 section.wide{grid-column:1/-1}.wrap td:last-child{white-space:normal}
-table{border-collapse:collapse;width:100%}td,th{text-align:left;padding:3px 12px 3px 0;white-space:nowrap}
-th{color:var(--muted);font-weight:500}.n{text-align:right;font-variant-numeric:tabular-nums}.m,.m td{color:var(--muted)}
-tr.tot td{border-top:1px solid var(--line);font-weight:600;padding-top:6px}
+table{border-collapse:collapse;width:100%;font:12px/18px var(--mono)}
+td,th{text-align:left;padding:2px 12px 2px 0;white-space:nowrap}td:last-child,th:last-child{padding-right:0}
+th{color:var(--dim);font-weight:400}.n{text-align:right;font-variant-numeric:tabular-nums}.m,.m td{color:var(--dim)}
+tr.tot td{border-top:1px solid var(--line);font-weight:700;padding-top:6px}
 .meter{display:inline-block;width:120px;height:8px;border-radius:4px;background:var(--track);vertical-align:middle;overflow:hidden}
-.meter i{display:block;height:100%;background:var(--ok)}.meter.warn i{background:var(--warn)}.meter.over i{background:var(--over)}
-.pct{display:inline-block;width:44px;text-align:right;font-variant-numeric:tabular-nums}.pct.ok{color:var(--fg)}
-.dot{font-size:12px;font-weight:400;color:var(--muted);display:inline-flex;align-items:center;gap:6px}
-.dot::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--muted)}
-#pick{font:inherit;font-size:13px;color:var(--fg);background:var(--panel);border:1px solid var(--line);
- border-radius:6px;padding:3px 6px;margin:4px 0 6px;max-width:100%}
+.meter i{display:block;height:100%;border-radius:4px;background:var(--ok)}.meter.warn i{background:var(--warn)}.meter.over i{background:var(--over)}
+.pct{display:inline-block;width:44px;text-align:right;font-variant-numeric:tabular-nums}.pct.ok{color:var(--text)}
+b.over{background:var(--error-soft);color:var(--over);font:600 11px/16px var(--sans);border-radius:10px;padding:2px 8px}
+.dot{font-size:12px;font-weight:400;color:var(--dim);display:inline-flex;align-items:center;gap:6px}
+.dot::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--dim)}
+#pick{font:inherit;font-size:12px;color:var(--text);background:var(--panel);border:1px solid var(--control);
+ border-radius:6px;padding:4px 8px;margin:4px 0 6px;max-width:100%}
 .dot.on::before{background:var(--ok)}.dot.off::before{background:var(--over)}
-section.chart{margin-top:20px;max-width:SVGWpx}section.chart h2{display:flex;align-items:center;gap:8px}
-.seg{margin-left:auto;display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
-.seg button{font:inherit;font-size:12px;text-transform:none;letter-spacing:0;color:var(--muted);background:none;
- border:0;padding:2px 10px;cursor:pointer}
-html:not([data-x=calls]) .seg [data-x=time],html[data-x=calls] .seg [data-x=calls]{background:var(--track);color:var(--fg)}
+section.chart{margin-top:16px}section.chart h2{display:flex;align-items:center;gap:8px}
+.seg{margin-left:auto;display:inline-flex;gap:4px}
+.seg button,.cols button{font:12px/17px var(--sans);text-transform:none;letter-spacing:0;color:var(--text);background:none;
+ border:1px solid var(--control);border-radius:6px;padding:4px 9px;cursor:pointer;transition:background .15s,color .15s}
+.seg button:hover,.cols button:hover{background:var(--hover)}
+html:not([data-x=calls]) .seg [data-x=time],html[data-x=calls] .seg [data-x=calls]{background:var(--primary);
+ border-color:var(--primary);color:var(--on-primary);font-weight:500}
 html:not([data-x=calls]) svg.xc,html[data-x=calls] svg.xt{display:none}
-.chart .g{stroke:var(--line)}.chart .a{stroke:var(--muted);stroke-opacity:.5}
+.chart svg text{font-size:12px}.chart .g{stroke:var(--line)}.chart .a{stroke:var(--dim);stroke-opacity:.5}
 .chart .ln{fill:none;stroke-width:2;stroke-linejoin:round}.chart .ln:hover{stroke-width:3.5}
-.pm line{stroke:var(--muted);stroke-opacity:.35;stroke-dasharray:3 4}.pm .hit{stroke:#000;stroke-opacity:0;stroke-width:9;stroke-dasharray:none}
+.pm line{stroke:var(--dim);stroke-opacity:.4;stroke-dasharray:3 4}.pm .hit{stroke:#000;stroke-opacity:0;stroke-width:9;stroke-dasharray:none}
 .pm:hover line:first-child{stroke-opacity:.9}
-.cols{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:14px 0 4px;font-size:12px;color:var(--muted)}
-.cols>span{text-transform:uppercase;letter-spacing:.04em;font-weight:600;margin-right:4px}
-.cols button{font:inherit;color:var(--fg);background:var(--track);border:1px solid var(--line);border-radius:999px;
- padding:2px 11px;cursor:pointer;transition:background .15s,color .15s}
-.cols button[aria-pressed=false]{background:none;color:var(--muted);text-decoration:line-through;border-style:dashed}
-.cols button.all{background:none;border-color:transparent;color:var(--muted);text-decoration:underline}
-@media (max-width:600px){body{padding:16px}}
+.cols{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin:14px 0 4px;font-size:12px;color:var(--dim)}
+.cols>span{font-size:11px;text-transform:uppercase;letter-spacing:.06em;font-weight:500;margin-right:6px}
+.cols button{background:var(--primary);border-color:var(--primary);color:var(--on-primary)}
+.cols button[aria-pressed=false]{background:none;border-color:var(--control);color:var(--dim);text-decoration:line-through}
+.cols button.all{background:none;border-color:transparent;color:var(--dim);text-decoration:underline}
+@media (max-width:600px){body{padding:16px}.kpi{gap:20px;flex-wrap:wrap}}
 """
 
 # Which x-axis the cost-over-time chart shows. Kept on <html>, outside the body the live
