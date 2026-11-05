@@ -667,16 +667,16 @@ def requests_card(R):
             at = time.strftime("%H:%M", time.localtime(r[0]))
             rows.append((name, f'{r[2]} {"message" if r[2] == 1 else "messages"} · {at}', usd(r[1], 4), ""))
     rows.append(("average", f'of {q["count"]} {"request" if q["count"] == 1 else "requests"}', usd(q["average"], 4), "dim"))
-    return f'<section class="card">{label("Requests", "one prompt and everything it set off")}{list_rows(rows)}</section>'
+    return f'<section class="card">{label("Requests")}{list_rows(rows)}</section>'
 
 
-def share_card(title, note, items, series):
+def share_card(title, items, series):
     """A side card of shares (call source, models): a row each, then a bar of the shares."""
     if not items:
         return ""
     rows = [(esc(nm), f'{kt.num(msgs)} {"message" if msgs == 1 else "messages"} · {pct(share)}', usd(cost, 4), "")
             for nm, msgs, cost, share in items]
-    return (f'<section class="card">{label(title, note)}{list_rows(rows)}'
+    return (f'<section class="card">{label(title)}{list_rows(rows)}'
             f'{sbar([(series(i), x[3]) for i, x in enumerate(items)], "sbar foot")}</section>')
 
 
@@ -705,7 +705,6 @@ def top_tools_card(P, R):
     if not tools:
         return f'<section class="card">{label("Top tools")}<p class="m">No tool calls in this session yet.</p></section>'
     tags = [source_tag(nm) for nm, _ in R.get("tools") or []]
-    total = sum(t["cost"] for t in tools)
     top = max(t["cost"] for t in tools) or 1e-9
     shown, rest = tools[:TOP_TOOLS], tools[TOP_TOOLS:]
     row = lambda name, tag, calls, cost, cls="": (
@@ -716,7 +715,7 @@ def top_tools_card(P, R):
     if rest:
         rows += row(f"{len(rest)} more", "", sum(t["calls"] for t in rest), sum(t["cost"] for t in rest), " more")
     over = f'+ TokenTab overhead {usd(P["overhead"], 4)} · ' if P.get("overhead") else ""
-    return (f'<section class="card">{label("Top tools", f"{usd(total, 4)} total")}{rows}'
+    return (f'<section class="card">{label("Top tools")}{rows}'
             f'<p class="m foot">{over}<a href="#tools">all tools ↓</a></p></section>')
 
 
@@ -774,9 +773,9 @@ def status_html(R):
     model_series = lambda rank: f"model_{min(rank + 1, 5)}"
     source_series = lambda rank: f"session_{rank + 1}" if rank < SESSIONS_COLOURED else "session_other"
     side = (requests_card(R)
-            + share_card("By call source", "what in Claude Code made the call",
+            + share_card("By call source",
                          [(nm, calls, c, share) for nm, calls, c, share in R["by_source"]], source_series)
-            + share_card("Models", f'{len(P.get("models") or [])} used',
+            + share_card("Models",
                          [(re.sub("^claude-", "", m["name"]), m["msgs"], m["cost"], m["share"]) for m in P.get("models") or []],
                          model_series)
             + sessions_card(P))
@@ -961,10 +960,7 @@ def parts(R, direction="ltr", models=True, hide=()):
         status = f'<div class="row2"><div></div><div class="side">{sessions_card(P)}</div></div>' if P else ""
         return {"head": head, "hero": kpis(P, R) if P else "", "flow": "", "chart": "", "status": status}
     since = s["since"].strftime("%H:%M") if s["since"] else "?"
-    name = f'<b title="{esc(R["sid"])}">{esc(s["title"])}</b>' if s["title"] else f'session {esc(R["sid"][:8])}'
-    head = (f'<div class="sub">{name} · {esc(", ".join(s["models"]))} · since {since}'
-            f' · updated {R["now"].strftime("%H:%M:%S")}</div>'
-            f'<div class="src">{esc(s["source"])}</div>')
+    head = f'<div class="sub">since {since} · updated {R["now"].strftime("%H:%M:%S")}</div>'
     flow = (f'<section class="card flow">{label("Cost flow", "session → model → context / generation → rate → where it went")}'
             + (svg(b, tb) if b and b.cost > 0 else '<p class="m">No usage for this session yet.</p>') + "</section>")
     chart = timeline(R)
@@ -1012,8 +1008,7 @@ header{max-width:1360px}
 h1{font-size:20px;line-height:28px;font-weight:600;margin:0 0 4px;display:flex;align-items:center;gap:10px}
 h2{font-size:15px;line-height:22px;margin:0 0 14px;font-weight:600;display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
 h2 span{font-size:12px;font-weight:400;color:var(--dim)}
-.sub{color:var(--dim);font-size:12px}.sub b{color:var(--secondary);font-weight:500}
-.src{font-size:12px;color:var(--dim)}
+.sub{color:var(--dim);font-size:12px}
 .m{color:var(--dim);font-size:12px}.warn{color:var(--warn)}.over{color:var(--over)}
 a{color:inherit}
 #app>div{margin-bottom:20px}#app>div:empty{display:none}
@@ -1088,9 +1083,6 @@ summary.tr:hover,summary.li:hover{background:var(--hover)}
 /* charts */
 svg{display:block;width:100%;height:auto}svg text{fill:var(--text);font-family:var(--sans);font-size:13px}svg .v{fill:var(--dim)}
 .flow svg{max-width:100%}
-.dot{font-size:12px;font-weight:400;color:var(--dim);display:inline-flex;align-items:center;gap:6px}
-.dot::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--dim)}
-.dot.on::before{background:var(--ok)}.dot.off::before{background:var(--over)}
 html[data-state=stale] #p-hero{opacity:.55}
 html[data-state=stale] #p-hero::after{content:"These figures stopped updating: the session may have ended.";display:block;margin-top:8px;font-size:12px;color:var(--dim)}
 .chart h2{align-items:center}
@@ -1124,11 +1116,11 @@ try { const m = localStorage.getItem("tokentab-x"); if (m) document.documentElem
 # Keeps the page current from its data file (`--push`): every few seconds a script tag
 # loads `<name>.js` beside the page (a cache-busting query on it), which calls
 # `__tokentab` with the parts; only a part whose markup changed is swapped, in place, so
-# the Sankey's hover, the scroll position, the chart's axis and the opened tool rows survive. The dot says
+# the Sankey's hover, the scroll position, the chart's axis and the opened tool rows survive. <html>'s data-state says
 # whether a push arrived in the last 15 s; a stale page dims its tiles.
 LIVE = """<script>
 (function () {
-  var src = SRC, last = {}, seen = 0, at = "", dot = document.getElementById("dot");
+  var src = SRC, last = {}, seen = 0, at = "";
   window.__tokentab = function (d) {
     seen = Date.now();
     if (d.at === at) return;
@@ -1156,8 +1148,6 @@ LIVE = """<script>
   setInterval(poll, 3000);
   setInterval(function () {
     var ok = Date.now() - seen < 15000;
-    dot.className = "dot " + (ok ? "on" : "off");
-    dot.textContent = ok ? "live" : (seen ? "stale" : "snapshot");
     document.documentElement.dataset.state = ok ? "live" : (seen ? "stale" : "snapshot");
   }, 1000);
   poll();
@@ -1173,7 +1163,7 @@ def page(content, data_src=None):
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>TokenTab status</title>
 <style>{CSS.replace("SVGW", str(size()[0]))}</style></head><body>
-<header><h1>TokenTab status <span class="dot" id="dot">snapshot</span></h1></header>
+<header><h1>TokenTab status</h1></header>
 <div id="app">{content}</div>
 {AXIS}{live}</body></html>"""
 

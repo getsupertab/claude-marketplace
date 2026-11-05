@@ -538,7 +538,7 @@ def requests_case(store, prices):
     first, last = b.calls[0][0], b.calls[-1][0]
     spent = sum(c for _, c in b.calls)
     budget = {}
-    card = "one prompt and everything it set off"
+    card = "<h2>Requests</h2>"
 
     def page(R):
         R["pane"] = kt.pane_report(store, "fx", prices, budget, windows={})
