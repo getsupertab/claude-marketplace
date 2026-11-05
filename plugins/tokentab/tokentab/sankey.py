@@ -1018,7 +1018,7 @@ a{color:inherit}
 #app>div{margin-bottom:20px}#app>div:empty{display:none}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:22px;min-width:0}
 .card.empty{color:var(--dim)}
-.row2{display:grid;grid-template-columns:minmax(0,2.2fr) minmax(0,1fr);gap:20px;align-items:start}
+.row2{display:grid;grid-template-columns:minmax(0,2.2fr) minmax(0,1fr);gap:20px;align-items:stretch}
 .side{display:flex;flex-direction:column;gap:20px}
 /* the summary tiles: one card, split by hairlines */
 .kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));background:var(--panel);border:1px solid var(--line);border-radius:12px}
