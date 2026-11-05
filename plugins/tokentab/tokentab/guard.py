@@ -59,7 +59,7 @@ def tally(transcript, prices, st, others=frozenset()):
     Returns (cost, tokens, state, tampered). Totals never decrease: the log is
     append-only in normal operation, so a fall means it was rewritten.
     """
-    # State keeps RAW token counts per date and model. Cost and weighted tokens
+    # State keeps RAW token counts per date and model. Cost and token totals
     # are derived from them at the current prices every time, so a price change
     # re-prices history. The tamper check runs on raw counts, which only grow.
     keep = {k: st.get(k) for k in ("band_session", "band_today", "band_five_hour", "band_seven_day",
@@ -145,18 +145,13 @@ def tally(transcript, prices, st, others=frozenset()):
 
 
 def price_raw(raw, prices, only_date=None):
-    """(USD, weighted tokens) for raw counts {date: {model: {key: n}}}, at
-    current prices. Cache reads count toward tokens at their price relative
-    to fresh input for that model (0.05x on Opus 5.5, 0.1x elsewhere)."""
+    """(USD, tokens) for raw counts {date: {model: {key: n}}}, at current prices."""
     cost, toks = 0.0, 0
     for day, models in raw.items():
         if only_date and day != only_date:
             continue
         for model, n in models.items():
-            ri = rate(prices, model, "input")
-            r = n.get("cache_read", 0)
-            toks += (n.get("input", 0) + n.get("cache_write_5m", 0) + n.get("cache_write_1h", 0)
-                     + n.get("output", 0) + (int(r * rate(prices, model, "cache_read") / ri) if ri else r))
+            toks += sum(n.get(k, 0) for k in ("input", "cache_write_5m", "cache_write_1h", "cache_read", "output"))
             cost += sum(n.get(k, 0) * rate(prices, model, k) for k in
                         ("input", "cache_write_5m", "cache_write_1h", "cache_read", "output")) / 1_000_000.0
     return cost, toks
@@ -194,8 +189,7 @@ def ledger_files():
     return [p for d in days for p in sorted(glob.glob(os.path.join(d, "*.jsonl")))]
 
 def ledger_totals(sid, today, prices):
-    """(session cost, session tokens, day cost, day tokens) from the ledger. Tokens are
-    weighted like tally(): cache reads at their price relative to input. Returns zeros
+    """(session cost, session tokens, day cost, day tokens) from the ledger. Returns zeros
     when there is no ledger."""
     sc = dc = 0.0; st_ = dt = 0
     for p in ledger_files():
@@ -208,11 +202,8 @@ def ledger_totals(sid, today, prices):
                 e = json.loads(line)
             except ValueError:
                 continue
-            m, t = e.get("model") or "unknown", e.get("tokens") or {}
-            ri = rate(prices, m, "input")
-            r = int(t.get("cache_read") or 0)
-            n = (int(t.get("input") or 0) + int(t.get("cache_write") or 0) + int(t.get("output") or 0)
-                 + (int(r * rate(prices, m, "cache_read") / ri) if ri else r))
+            t = e.get("tokens") or {}
+            n = sum(int(t.get(k) or 0) for k in ("input", "cache_write", "cache_read", "output"))
             c = float(e.get("cost_usd") or 0.0) + fee(e)
             if e.get("session_id") == sid:
                 sc += c; st_ += n
