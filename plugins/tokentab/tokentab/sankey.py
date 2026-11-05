@@ -1020,6 +1020,7 @@ a{color:inherit}
 .card.empty{color:var(--dim)}
 .row2{display:grid;grid-template-columns:minmax(0,2.2fr) minmax(0,1fr);gap:20px;align-items:stretch}
 .side{display:flex;flex-direction:column;gap:20px}
+.row2+.card{margin-top:20px}
 /* the summary tiles: one card, split by hairlines */
 .kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));background:var(--panel);border:1px solid var(--line);border-radius:12px}
 .kpi{padding:18px 22px;border-left:1px solid var(--line);display:flex;flex-direction:column;gap:2px;min-width:0}
