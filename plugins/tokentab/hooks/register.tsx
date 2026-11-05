@@ -1,4 +1,5 @@
 import type { EngineInterface, PluginOptions, Register, RenderChildren, TelemetryRecordEntry, Timer, UiOpenResult } from 'claude-code'
+import { TOKENS } from './tokens'
 
 // TokenTab's hooks module, three parts:
 //
@@ -238,43 +239,12 @@ export function toneOf(frac: number, warnAt: number): Tone {
   return frac >= 1 ? 'error' : frac * 100 >= warnAt ? 'warning' : 'success'
 }
 
-// The series colours from the Figma frames, a light and a dark value each: the Svg bars
-// pick one through prefers-color-scheme (the API carries no theme), the dots in the
-// tables take the light one, a mid tone that reads on both grounds.
-export const SERIES: Record<string, [string, string]> = {
-  input: ['#9a99a6', '#a9a8b4'],
-  cache_write_1h: ['#6b6fc5', '#8d90e0'],
-  cache_write_5m: ['#9a9ee0', '#b3b6ee'],
-  cache_read: ['#5ba899', '#6cc2b1'],
-  output: ['#e0973a', '#f0ab55'],
-  thinking: ['#a874c9', '#c08fe0'],
-  fees: ['#c9655b', '#e07e74'],
-  ask: ['#7f80cf', '#9a9be6'],
-  ctx: ['#5ba899', '#6cc2b1'],
-  read: ['#d9a23e', '#ebb757'],
-  success: ['#2e7d32', '#5fd75f'],
-  warning: ['#c18f00', '#e5c07b'],
-  error: ['#c0392b', '#ff6b6b'],
-  track: ['#ecebe6', '#3a3a3a'],
-  // Spend's models, costliest first; any past the fifth share the last
-  model_1: ['#c26b4a', '#e08a68'],
-  model_2: ['#4f86c6', '#6fa3e0'],
-  model_3: ['#5ba899', '#6cc2b1'],
-  model_4: ['#c9a227', '#e5c04a'],
-  model_5: ['#9a99a6', '#a9a8b4'],
-  // Spend's sessions this month, costliest first; the rest share grey, and one bar segment
-  session_1: ['#c26b4a', '#e08a68'],
-  session_2: ['#4f86c6', '#6fa3e0'],
-  session_3: ['#5ba899', '#6cc2b1'],
-  session_4: ['#c9a227', '#e5c04a'],
-  session_5: ['#a874c9', '#c08fe0'],
-  session_6: ['#c75b8f', '#e07aaa'],
-  session_7: ['#6a9a4a', '#86b865'],
-  session_8: ['#6b6fc5', '#8d90e0'],
-  session_9: ['#e0973a', '#f0ab55'],
-  session_10: ['#3f9fbf', '#5cb8d8'],
-  session_other: ['#9a99a6', '#a9a8b4'],
-}
+// The series colours from the Figma frames, a light and a dark value each (hooks/tokens.ts,
+// shared with the status page): the Svg bars pick one through prefers-color-scheme (the
+// API carries no theme), the dots in the tables take the light one, a mid tone that reads
+// on both grounds. Spend's models (model_1..5) and its sessions this month (session_1..10,
+// then session_other) go costliest first.
+export const SERIES = TOKENS.series
 const BAR_STYLE = Object.entries(SERIES).map(([k, [light]]) => `.${k}{fill:${light}}`).join('')
   + '@media(prefers-color-scheme:dark){' + Object.entries(SERIES).map(([k, [, dark]]) => `.${k}{fill:${dark}}`).join('') + '}'
 

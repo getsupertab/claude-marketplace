@@ -11,7 +11,7 @@ No dependencies, no pytest; run from anywhere, exits non-zero on a failure:
 
   python3 plugins/tokentab/tests/test_accounting.py
 """
-import json, os, sys, tempfile
+import json, os, re, sys, tempfile
 from xml.dom import minidom
 
 PLUGIN = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -193,6 +193,7 @@ def main():
     errs += utf8_case(root, prices)
     errs += locked_page_case(root)
     errs += names_case(prices)
+    errs += tokens_case()
     for err in errs:
         print("  " + err)
     print("ALL OK" if not errs else f"{len(errs)} FAILURES")
@@ -378,6 +379,29 @@ def locked_page_case(root):
         if f.read() != "new":
             errs.append("locked page: the next redraw did not write")
     print("[locked page] " + ("OK" if not errs else "FAIL"))
+    return errs
+
+
+def tokens_case():
+    """hooks/tokens.ts reads as JSON for the page, every token is a [light, dark] pair of
+    colours, and the page and its Sankey draw from them, not from colours of their own."""
+    errs = []
+    hexc = re.compile(r"^#[0-9a-fA-F]{6}$")
+    t = sankey.load_tokens()
+    for group in ("series", "surface"):
+        for k, v in t[group].items():
+            if not (isinstance(v, list) and len(v) == 2 and all(hexc.match(c) for c in v)):
+                errs.append(f"tokens: {group}.{k} is not a [light, dark] pair of colours: {v}")
+    page = sankey.page("<p>x</p>")
+    for k, (light, dark) in t["surface"].items():
+        if f"--{k.replace('_', '-')}:{light}" not in page or f"--{k.replace('_', '-')}:{dark}" not in page:
+            errs.append(f"tokens: surface.{k} is missing from the page's CSS")
+    allowed = {v[0] for v in t["series"].values()}
+    stray = {c for c in sankey.COLOR.values() if c not in allowed and c != sankey.NEUTRAL}
+    stray |= {c for c in sankey.TOOL_COLORS + sankey.MODEL_COLORS if c not in allowed}
+    if stray:
+        errs.append(f"tokens: the Sankey uses colours outside the tokens: {sorted(stray)}")
+    print("[tokens] " + ("OK" if not errs else "FAIL"))
     return errs
 
 

@@ -152,6 +152,7 @@ too.
 | Part | What it does |
 |---|---|
 | `hooks/register.tsx` | Runs inside Claude Code. Sees every API request, prices it and writes one line to the ledger. Draws the pane and the status line. |
+| `hooks/tokens.ts` | The design tokens (colours and fonts) the pane and the browser status page share. |
 | `scripts/guard.sh`, `tokentab/guard.py` | The budget guard. Runs before every prompt and tool call, warns or stops, and tells Claude how much budget is left. |
 | `scripts/loaded-check.sh` | Tells you once, on your first prompt, if your Claude Code is too old to load TokenTab. |
 | `tokentab/tokentab.py`, `tokentab/sankey.py` | The accounting, the terminal view, and the browser status page. |
