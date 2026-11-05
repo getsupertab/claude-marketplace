@@ -127,8 +127,8 @@ summary: the session against its limit, tokens, msgs, a request's average cost a
 context, plus a banner when you're over a limit or the cache has gone cold. Below that come
 a flow diagram of where the money went, cost over time, the top tools, the cost by rate,
 by call source and by model, this month's sessions, and every tool with its breakdown
-(Bash → git → status). It keeps updating for 30 minutes; the dot in its header says
-whether it's `live`, `stale` or a `snapshot`.
+(Bash → git → status). It keeps updating for 30 minutes; once it stops, the summary dims
+and says so.
 
 **Ask Claude.** "How much have I spent?" or "Where did the money go?" gets an answer
 from the same numbers.
