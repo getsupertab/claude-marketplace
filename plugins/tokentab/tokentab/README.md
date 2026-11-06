@@ -88,10 +88,11 @@ Everything is in `budget.json` in your data folder. `null` turns a limit off. `/
 | `hard_stop` | `false` | `true` stops Claude at 100%; `false` only warns. |
 | `context_warn_tokens` | `[200000, 350000]` | Tells you and Claude when the context passes each size. Re-arms after a compaction. |
 | `cold_resume` | on | Holds back the first prompt after the prompt cache has expired. See below. |
+| `keep_warm` | on | While idle, pings the cache before it expires and writes a handoff note first. See below. |
 | `new_session` | on | Asks Claude to suggest a new session when that would be cheaper. See below. |
 | `helpers_may_delegate` | `false` | Whether a helper agent may start or message other agents. |
 
-The last four work whether or not `budgets_on` is set.
+The last five work whether or not `budgets_on` is set.
 
 Each session keeps its own usage-window reading in `state/windows/<session>.json`. The
 latest reading of any session goes to `state/rate_limits.json` with its login, and a new
@@ -108,6 +109,26 @@ asks first, above the prompt box, showing what it will cost against what a new s
 would; **Continue** sends it for you. Where nothing can be shown (`claude -p`), the prompt is held back once:
 send it again within two minutes to go ahead. `/compact` doesn't avoid the cost: compacting reads the whole
 context once too.
+
+### Keeping the cache warm
+
+Between turns of the main conversation, with a surface open (not under `claude -p`), a
+timer fires `ping_at_minutes_1h` (50) or `ping_at_minutes_5m` (3) minutes after the last
+call. On a context of `min_context_tokens` or more it forks the conversation once
+(`$.model.fork`): the fork re-sends the cached prefix, billed as a cache read, and that
+restarts the cache's clock. The first fork asks for a handoff note (`handoff: false`
+skips it) and writes it to `handoff/<session>.md`; later ones ask for one word. Pings
+stop when the next would pass `max_share_of_rewrite` (0.5) of one re-write, each fork
+priced from the usage it reports (output and thinking too), or after
+`max_hours` (8); then the cache goes cold, and the expired-cache question names the
+handoff note. A prompt of yours ends the stretch. `enabled: false` keeps the handoff
+note and sends no pings.
+
+On Opus 5.5 (reads at 0.05× input), a 1-hour cache reaches `max_hours` first, after
+about 10 pings; a 5-minute cache reaches the spend cap after about 12, roughly 36 minutes.
+A computer that sleeps
+stops the timer, and an agent waiting on a permission prompt is mid-turn, so no timer
+runs then.
 
 ### New session check
 

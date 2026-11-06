@@ -22,6 +22,16 @@
     "confirm_seconds": 120,
     "fresh_session_tokens": 75000
   },
+  "_keep_warm_comment": "While the session sits idle between turns, keeps a large context's prompt cache from expiring and writes a handoff note before it can. Shortly before the cache would expire (ping_at_minutes_1h / _5m after the last call) one cheap request re-reads the cached context, which restarts its clock. The first one asks for a handoff note (handoff/<session>.md in the plugin's data folder). Pings stop once they have cost max_share_of_rewrite of one re-write, or after max_hours; then the cache goes cold. Needs the session open and the computer awake. enabled false turns pings off; handoff false skips the note.",
+  "keep_warm": {
+    "enabled": true,
+    "handoff": true,
+    "min_context_tokens": 100000,
+    "ping_at_minutes_1h": 50,
+    "ping_at_minutes_5m": 3,
+    "max_share_of_rewrite": 0.5,
+    "max_hours": 8
+  },
   "_new_session_comment": "Sends Claude the context size, cost per call and break-even for a new session with every prompt, so it can suggest one when the new prompt does not need this conversation.",
   "new_session": {
     "enabled": true,
