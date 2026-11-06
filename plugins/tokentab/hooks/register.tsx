@@ -1,4 +1,4 @@
-import type { EngineInterface, PluginOptions, Register, RenderChildren, TelemetryRecordEntry, Timer, UiOpenResult } from 'claude-code'
+import type { EngineInterface, PluginOptions, PromptSubmitInput, Register, RenderChildren, TelemetryRecordEntry, Timer, UiOpenResult } from 'claude-code'
 
 // TokenTab's hooks module, three parts:
 //
@@ -178,24 +178,48 @@ const ANSI = /\x1b\[([0-9;]*)m/g
 const typed = (kind: string) => kind === 'composer' || kind === 'bridge' || kind === 'sdk'
 export const CONTINUE = 'Continue'
 export const DONT_SEND = "Don't send"
-export const NOT_SENT = 'TokenTab: not sent. The prompt cache had expired; a new session starts cheaper.'
+export const HELD = 'TokenTab: held back, the prompt cache has expired. Continue (or 1) sends it; so does sending it again.'
 
-// Asked before the guard runs, so a Continue goes through with no block shown. Undefined
-// leaves it to the guard: a warm cache, or no dialog (dismissed, a -p run), where it blocks.
-async function coldVerdict($: EngineInterface): Promise<'send' | 'hold' | undefined> {
-  let cold: string | undefined
-  const id = await sid($)
+// The held prompt the band above the prompt box asks about. A hook may not wait on the
+// person (its 10 s budget runs on), so the prompt is dropped and Continue sends it again.
+type ColdAsk = { text: string, prompt: string, attachments: PromptSubmitInput['attachments'], failed?: string }
+let coldAsk: ColdAsk | undefined
+// Continue's resend passes unchecked: Desktop hands it back as typed, not as the plugin's.
+let resending = false
+
+// The cold-cache sentence, or undefined: a warm cache, the check failed, or no surface to
+// ask on (a -p run), where the guard beneath blocks once as before.
+async function coldCheck($: EngineInterface): Promise<string | undefined> {
   try {
-    cold = (JSON.parse(await python($, 'guard.py', ['--cold-check', id])) as { cold?: string }).cold
+    const cold = (JSON.parse(await python($, 'guard.py', ['--cold-check', await sid($)])) as { cold?: string }).cold
+    if (!cold || (await $.session.surfaces()).length === 0) return undefined
+    return `${cold[0]!.toUpperCase()}${cold.slice(1)}`
   } catch { return undefined }
-  if (!cold) return undefined
-  let answer: string
+}
+
+async function answerCold($: EngineInterface, ask: ColdAsk, send: boolean): Promise<void> {
+  if (coldAsk !== ask) return
+  coldAsk = undefined
+  $.ui.invalidate('ui.render')
+  if (!send) return
+  const failed = (step: string, err: unknown) => {
+    coldAsk = { ...ask, failed: `${step}: ${err instanceof Error ? err.message : String(err)}` }
+    $.ui.invalidate('ui.render')
+  }
+  // Confirmed first, so the guard lets the resent prompt through.
+  try { await python($, 'guard.py', ['--cold-confirm', await sid($)]) } catch (err) { return failed('confirming with the guard failed', err) }
+  resending = true
   try {
-    answer = await $.ui.ask(`${cold[0]!.toUpperCase()}${cold.slice(1)} Send your prompt anyway?`, { options: [CONTINUE, DONT_SEND], header: 'Cold cache' })
-  } catch { return undefined }
-  if (answer !== CONTINUE) return 'hold'
-  try { await python($, 'guard.py', ['--cold-confirm', id]) } catch { /* the guard then blocks once */ }
-  return 'send'
+    const sent = await $.prompt.submit({ text: ask.prompt, attachments: ask.attachments, asUser: true })
+    if (sent.drop !== undefined) failed('the prompt was held back', sent.drop)
+  } catch (err) { failed('sending failed', err) } finally { resending = false }
+}
+
+// The person sent again with the question up: that is their go-ahead, as with the guard.
+async function sentAgain($: EngineInterface): Promise<void> {
+  coldAsk = undefined
+  $.ui.invalidate('ui.render')
+  try { await python($, 'guard.py', ['--cold-confirm', await sid($)]) } catch { /* the guard then blocks once */ }
 }
 
 export const stripAnsi = (s: string): string => s.replace(ANSI, '')
@@ -734,6 +758,24 @@ export const register: Register = (on, pluginOptions) => {
     return r
   })
 
+  // The cold-cache question, in the band above the prompt.
+  on('ui.render', { component: 'AbovePrompt' }, ($, e, next) => {
+    if (!coldAsk || e.props.hasSurvey) return next(e)
+    const { Box, Text, Button } = $.ui.resolve(e)
+    const ask = coldAsk
+    return (
+      <Box flexDirection="column" gap={1}>
+        <Text>{ask.text}</Text>
+        {ask.failed ? <Text color="red">TokenTab: {ask.failed}</Text> : null}
+        <Text bold>Send your prompt anyway?</Text>
+        <Box gap={1}>
+          <Button key="cold-send" label={CONTINUE} hotkey="1" plain variant="primary" onPress={() => { void answerCold($, ask, true) }} />
+          <Button key="cold-hold" label={DONT_SEND} hotkey="2" plain onPress={() => { void answerCold($, ask, false) }} />
+        </Box>
+      </Box>
+    )
+  })
+
   // Two tabs over one report (Spend) and budget.json (Budget), the same tree on
   // every surface: the terminal ignores `size`, `weight` and `mono` and is monospaced
   // anyway; the bars are an Svg where the surface draws one and block characters in the
@@ -810,7 +852,14 @@ export const register: Register = (on, pluginOptions) => {
       waiting = false
       if (!(await isPlaced($)) && (await openPane($)).isPlaced) void refresh($)
     }
-    if (typed(e.origin.kind) && (await coldVerdict($)) === 'hold') return { drop: NOT_SENT }
+    if (!typed(e.origin.kind) || e.text.trim() === '' || resending) return next(e)
+    if (coldAsk) { await sentAgain($); return next(e) }
+    const cold = await coldCheck($)
+    if (cold) {
+      coldAsk = { text: cold, prompt: e.text, attachments: e.attachments }
+      $.ui.invalidate('ui.render')
+      return { drop: HELD }
+    }
     return next(e)
   }).catch(($, e, next) => next(e))
 

@@ -869,10 +869,17 @@ test('with no Python 3 at all, the error says what was tried', async ($, on) => 
 
 const COLD = "this session's prompt cache has expired (idle 1h 10m, 1h cache). Sending now re-writes 180,000 tokens, about $3.38. A new session starts at about $1.41."
 
-// The guard's check-only and confirm calls, the dialog, and what reaches the guard beneath.
-function coldWorld(on: On, cold: string | undefined, answer: string | undefined) {
-  const seen = { asked: [] as string[], sent: [] as string[], confirms: 0 }
+const BAND = { surface: 'desktop' as const, component: 'AbovePrompt' as const, requestId: 'above-prompt',
+  props: { hasSurvey: false, isWorking: false, maxRows: 12, bodyColumns: 100, scroll: { offset: 0, bodyRows: 11 }, view: {} } }
+const bandPress = (key: string) => ({ plugin: 'tokentab', key, requestId: 'above-prompt', surface: 'desktop' as const })
+
+// The guard's check-only and confirm calls, the surfaces there, and what reaches the guard beneath.
+function coldWorld(on: On, cold: string | undefined, surfaces: ('terminal' | 'desktop')[] = ['desktop']) {
+  const seen = { sent: [] as string[], confirms: 0, clock: mock.clock(on, { now: T0 }) }
   on('session.id', () => ({ value: SID }))
+  on('session.surfaces', () => ({ value: surfaces }))
+  on('ui.invalidate', () => ({ value: undefined }))
+  on('ui.render', { component: 'AbovePrompt' }, ($, e) => { const { Box } = $.ui.resolve(e); return <Box /> })
   on('process.run', ($, e) => {
     const argv = [...e.argv]
     const out = (stdout: string) => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
@@ -880,52 +887,78 @@ function coldWorld(on: On, cold: string | undefined, answer: string | undefined)
     if (argv.includes('--cold-confirm')) { seen.confirms++; return out('{}') }
     return out(JSON.stringify(cold ? { cold } : {}))
   })
-  on('prompt.submit', ($, e) => { seen.sent.push(e.text); return { text: e.text } })
-  on('tool.call', ($, e) => {
-    if (e.tool !== 'AskUserQuestion') return { deny: 'no tool here' }
-    const q = (e as unknown as { questions: { question: string }[] }).questions[0]!.question
-    seen.asked.push(q)
-    if (answer === undefined) return { deny: 'dismissed' }
-    return { result: { questions: [], answers: { [q]: answer } } }
-  })
+  on('prompt.submit', ($, e) => { seen.sent.push(`${e.origin.kind}: ${e.text}`); return { text: e.text } })
   return seen
 }
 
-test('a cold cache asks before the guard; Continue confirms it and sends the prompt on', async ($, on) => {
-  const seen = coldWorld(on, COLD, 'Continue')
-  const r = await $.prompt.submit({ text: 'go on with the refactor', wait: false, origin: { kind: 'sdk' } })
-  expect(seen.asked).toEqual(["This session's prompt cache has expired (idle 1h 10m, 1h cache). Sending now re-writes 180,000 tokens, about $3.38. A new session starts at about $1.41. Send your prompt anyway?"])
-  expect(seen.confirms).toBe(1)
-  expect(seen.sent).toEqual(['go on with the refactor'])
-  expect(r).toEqual({ text: 'go on with the refactor' })
-})
+const HELD = { drop: 'TokenTab: held back, the prompt cache has expired. Continue (or 1) sends it; so does sending it again.' }
+const lines = async ($: Engine) => texts(await $.ui.render(BAND)).map(x => x.text)
 
-test("Don't send holds the prompt back with a short note", async ($, on) => {
-  const seen = coldWorld(on, COLD, "Don't send")
-  const r = await $.prompt.submit({ text: 'x', wait: false, origin: { kind: 'composer' } })
-  expect(r).toEqual({ drop: 'TokenTab: not sent. The prompt cache had expired; a new session starts cheaper.' })
+test('a cold cache holds the prompt back at once and asks in the band above the prompt box', async ($, on) => {
+  const seen = coldWorld(on, COLD)
+  expect(await $.prompt.submit({ text: 'go on with the refactor', wait: false, origin: { kind: 'sdk' } })).toEqual(HELD)
   expect(seen.sent).toEqual([])
-  expect(seen.confirms).toBe(0)
+  expect(await lines($)).toEqual([
+    "This session's prompt cache has expired (idle 1h 10m, 1h cache). Sending now re-writes 180,000 tokens, about $3.38. A new session starts at about $1.41.",
+    'Send your prompt anyway?',
+  ])
 })
 
-test('a dismissed dialog leaves the prompt to the guard, unconfirmed', async ($, on) => {
-  const seen = coldWorld(on, COLD, undefined)
+test('Continue confirms with the guard, then sends the prompt again as the person\'s own', async ($, on) => {
+  const seen = coldWorld(on, COLD)
+  const clock = seen.clock
+  await $.prompt.submit({ text: 'go on with the refactor', wait: false, origin: { kind: 'composer' } })
+  await lines($)
+  await $.ui.press(bandPress('cold-send'))
+  await clock.settle()
+  expect(seen.confirms).toBe(1)
+  expect(seen.sent).toEqual(['plugin: go on with the refactor'])
+  expect(await lines($)).toEqual([])
+})
+
+test("Don't send closes the band and sends nothing", async ($, on) => {
+  const seen = coldWorld(on, COLD)
+  const clock = seen.clock
   await $.prompt.submit({ text: 'x', wait: false, origin: { kind: 'composer' } })
-  expect(seen.asked.length).toBe(1)
+  await lines($)
+  await $.ui.press(bandPress('cold-hold'))
+  await clock.settle()
   expect(seen.confirms).toBe(0)
-  expect(seen.sent).toEqual(['x'])
+  expect(seen.sent).toEqual([])
+  expect(await lines($)).toEqual([])
 })
 
-test('a warm cache, or a prompt nobody typed, asks nothing', async ($, on) => {
-  const seen = coldWorld(on, undefined, 'Continue')
+test('with no surface to ask on (-p), the prompt is left to the guard, unconfirmed', async ($, on) => {
+  const seen = coldWorld(on, COLD, [])
+  await $.prompt.submit({ text: 'x', wait: false, origin: { kind: 'sdk' } })
+  expect(seen.confirms).toBe(0)
+  expect(seen.sent).toEqual(['sdk: x'])
+})
+
+test('a warm cache asks nothing', async ($, on) => {
+  const seen = coldWorld(on, undefined)
   await $.prompt.submit({ text: 'warm', wait: false, origin: { kind: 'composer' } })
-  expect(seen.asked).toEqual([])
-  expect(seen.sent).toEqual(['warm'])
+  expect(await lines($)).toEqual([])
+  expect(seen.sent).toEqual(['composer: warm'])
 })
 
 test('a prompt from a schedule is never asked about', async ($, on) => {
-  const seen = coldWorld(on, COLD, 'Continue')
+  const seen = coldWorld(on, COLD)
   await $.prompt.submit({ text: 'tick', wait: false, origin: { kind: 'scheduled-trigger' } })
-  expect(seen.asked).toEqual([])
-  expect(seen.sent).toEqual(['tick'])
+  expect(seen.sent).toEqual(['scheduled-trigger: tick'])
+})
+
+test('sending again with the question up is the go-ahead: confirmed, sent, band closed', async ($, on) => {
+  const seen = coldWorld(on, COLD)
+  await $.prompt.submit({ text: 'go on', wait: false, origin: { kind: 'composer' } })
+  expect(await $.prompt.submit({ text: 'go on', wait: false, origin: { kind: 'composer' } })).toEqual({ text: 'go on' })
+  expect(seen.confirms).toBe(1)
+  expect(seen.sent).toEqual(['composer: go on'])
+  expect(await lines($)).toEqual([])
+})
+
+test('an empty prompt is never held', async ($, on) => {
+  const seen = coldWorld(on, COLD)
+  expect(await $.prompt.submit({ text: ' ', wait: false, origin: { kind: 'sdk' } })).toEqual({ text: ' ' })
+  expect(seen.confirms).toBe(0)
 })
