@@ -1,8 +1,8 @@
 import { test, expect, mock } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On, RenderElement, RenderNode } from 'claude-code'
-import { at, barCells, barSvg, dataDir, inUnit, int, liveLines, pct, SECTIONS, SERIES, shareCard, shareCardSvg, shareLinks, sharePageHtml, shareText, shown, stripAnsi, toneOf, unitOf, usd, withNewKeys, wrapWords } from './register'
-import type { Report } from './register'
+import { at, barCells, HANDOFF_PROMPT, KEEP_WARM_DEFAULTS, PING_PROMPT, warmStep, barSvg, dataDir, inUnit, int, liveLines, pct, SECTIONS, SERIES, shareCard, shareCardSvg, shareLinks, sharePageHtml, shareText, shown, stripAnsi, toneOf, unitOf, usd, withNewKeys, wrapWords } from './register'
+import type { Idle, Report } from './register'
 
 // The world beneath the plugin: `$.fs` reaches nothing under `claude plugin test`, and
 // nothing answers `telemetry.log`, `session.id`, the pane, the command, the store, the
@@ -20,6 +20,8 @@ type Ui = {
   pythons: Record<string, string>; probes: string[]; launchers: string[]
   // `uname` what `uname -s` prints; `openers` the browser openers installed, each with the exit code it returns
   uname: string; openers: Record<string, number>
+  // `idle` what guard.py --idle prints; `forks` the prompts forked; `notes` the native notifications
+  idle: Partial<Idle>; forks: string[]; notes: string[]
 }
 function world(on: On, initial: Record<string, string>, placed = { is: true }, report: { value: Report } = { value: REPORT }) {
   const fs = new Map(Object.entries(initial))
@@ -36,7 +38,10 @@ function world(on: On, initial: Record<string, string>, placed = { is: true }, r
     opens: 0, commands: [], status: [], invalidates: 0, runs: [], toasts: [], config: [], store: new Map(), rows: ['tokentab.autoOpen'], surfaces: [],
     pythons: { python3: '3' }, probes: [], launchers: [],
     uname: 'Darwin', openers: { open: 0, 'xdg-open': 0, 'explorer.exe': 1 },
+    idle: {}, forks: [], notes: [],
   }
+  on('model.fork', ($, e) => { ui.forks.push(e.prompt); return { value: { isAnswered: true as const, text: e.prompt === HANDOFF_PROMPT ? '# Handoff\nnext: tests' : 'ok', usage: {} } as never } })
+  on('ui.notify', ($, e) => { ui.notes.push(e.text); return { value: {} as never } })
   on('session.surfaces', () => ({ value: ui.surfaces }))
   on('session.attach', ($, e) => ({ clientId: e.clientId }))
   on('ui.open', () => { ui.opens++; return { value: placed.is ? { isPlaced: true } : { isPlaced: false, reason: 'narrower than 144 columns' } } })
@@ -76,6 +81,7 @@ function world(on: On, initial: Record<string, string>, placed = { is: true }, r
     const script = (argv[1] ?? '').split('/').pop()
     let exitCode = 0, stdout = '', stderr = ''
     if (script === 'tokentab.py') stdout = argv.includes('--status') ? STATUS + '\n' : argv.includes('--report') ? JSON.stringify(report.value) + '\n' : argv.includes('--once') ? ONCE : ''
+    else if (script === 'guard.py' && argv.includes('--idle')) stdout = JSON.stringify(ui.idle) + '\n'
     else if (script === 'sankey.py') stdout = argv.includes('--out') ? argv[argv.indexOf('--out') + 1] + '\n' : ''
     else if (script === 'budget.py') {
       if (argv[argv.length - 1] === 'bad') { exitCode = 1; stderr = `${argv[3]}: a number is needed, not 'bad'\n` }
@@ -961,4 +967,54 @@ test('an empty prompt is never held', async ($, on) => {
   const seen = coldWorld(on, COLD)
   expect(await $.prompt.submit({ text: ' ', wait: false, origin: { kind: 'sdk' } })).toEqual({ text: ' ' })
   expect(seen.confirms).toBe(0)
+})
+
+// A 300K-token context on a 1-hour cache: a read $0.06, a re-write $2.40.
+const IDLE: Idle = { started: 0, ctx: 300_000, model: 'claude-opus-5-5', ttl: '1h', ttl_seconds: 3600, read_usd: 0.06, rewrite_usd: 2.4 }
+const MIN = 60_000
+
+test('keep-warm: wait until shortly before expiry, hand off once, ping up to the spend cap, then stop', () => {
+  const cfg = KEEP_WARM_DEFAULTS
+  const fresh = { since: 0, spent: 0, handedOff: false }
+  expect(warmStep(cfg, IDLE, fresh, 10 * MIN)).toEqual({ kind: 'wait', ms: 40 * MIN })
+  expect(warmStep(cfg, IDLE, fresh, 50 * MIN)).toEqual({ kind: 'handoff' })
+  expect(warmStep(cfg, IDLE, { ...fresh, handedOff: true, spent: 0.06 }, 50 * MIN)).toEqual({ kind: 'ping' })
+  // a fork restarts the clock: the next ping waits for its own 50 minutes
+  expect(warmStep(cfg, IDLE, { ...fresh, handedOff: true, lastFork: 50 * MIN }, 51 * MIN)).toEqual({ kind: 'wait', ms: 49 * MIN })
+  // half a re-write is $1.20: twenty reads at $0.06
+  expect(warmStep(cfg, IDLE, { ...fresh, handedOff: true, spent: 1.2 }, 50 * MIN)).toEqual({ kind: 'stop', why: 'cap' })
+  expect(warmStep({ ...cfg, max_hours: 0.5 }, IDLE, { ...fresh, handedOff: true }, 50 * MIN)).toEqual({ kind: 'stop', why: 'hours' })
+  expect(warmStep({ ...cfg, enabled: false }, IDLE, { ...fresh, handedOff: true }, 50 * MIN)).toEqual({ kind: 'stop', why: 'off' })
+  expect(warmStep(cfg, IDLE, fresh, 61 * MIN)).toEqual({ kind: 'stop', why: 'cold' })
+  expect(warmStep(cfg, { ...IDLE, ctx: 50_000 }, fresh, 50 * MIN)).toEqual({ kind: 'stop', why: 'small' })
+  expect(warmStep(cfg, undefined, fresh, 50 * MIN)).toEqual({ kind: 'stop', why: 'small' })
+  // on a 5-minute cache the ping comes at 3 minutes; set past expiry, 30 s before it
+  const five: Idle = { ...IDLE, ttl: '5m', ttl_seconds: 300 }
+  expect(warmStep(cfg, five, fresh, MIN)).toEqual({ kind: 'wait', ms: 2 * MIN })
+  expect(warmStep({ ...cfg, ping_at_minutes_5m: 9 }, five, fresh, MIN)).toEqual({ kind: 'wait', ms: 3.5 * MIN })
+})
+
+test('keep-warm: after a turn the timer writes the handoff note, pings, and a new turn stops it', async ($, on) => {
+  const clock = mock.clock(on, { now: T0 })
+  const { fs, ui } = world(on, { 'tokentab/prices.json': JSON.stringify(PRICES), 'tokentab/budget.json': '{}' })
+  ui.surfaces = ['terminal']
+  mock.env(on, { HOME: '/home/t' })
+  ui.idle = { ...IDLE, started: T0 / 1000 }
+  on('turn.complete', ($, e) => ({ text: e.answer } as never))
+  on('turn.start', ($, e) => ({ turnId: e.turnId }))
+  await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  await $.turn.complete({ turnId: 't1', reason: 'answer', answer: 'done' } as never)
+  await clock.advance(50 * MIN)
+  await clock.settle()
+  expect(ui.forks).toEqual([HANDOFF_PROMPT])
+  expect(fs.get(`${DATA}/handoff/${SID}.md`)).toContain('next: tests')
+  expect(ui.notes[0]).toContain('handoff')
+  await clock.advance(50 * MIN)
+  await clock.settle()
+  expect(ui.forks).toEqual([HANDOFF_PROMPT, PING_PROMPT])
+  await $.turn.start({ turnId: 't2', text: 'back' } as never)
+  await clock.advance(120 * MIN)
+  await clock.settle()
+  expect(ui.forks.length).toBe(2)
 })
