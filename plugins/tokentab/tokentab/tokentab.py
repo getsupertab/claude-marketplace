@@ -61,12 +61,6 @@ def rate(prices, model, key):
         m = prices.get("default", {})
     return float(m.get(key, 0.0))
 
-def weighted(prices, model, i, w5, w1, r, o):
-    """Tokens as budget.json counts them, same rule as guard.py: cache reads
-    at their price relative to fresh input for that model."""
-    ri = rate(prices, model, "input")
-    return i + w5 + w1 + o + (int(r * rate(prices, model, "cache_read") / ri) if ri else r)
-
 # ---------- accumulation ----------
 
 RATES = ("input", "cache_write_5m", "cache_write_1h", "cache_read", "output", "thinking")
@@ -215,11 +209,10 @@ def tool_totals(tools):
 
 class Bucket:
     __slots__ = ("inp","cw5","cw1h","cr","out","think","cost","msgs","models","first","last",
-                 "tools","parts","overhead","threads","cost_by","cost_bm","by_source","wtok","ctx","ctx_model","ttl","calls",
+                 "tools","parts","overhead","threads","cost_by","cost_bm","by_source","ctx","ctx_model","ttl","calls",
                  "series","_open")
     def __init__(self):
         self.inp = self.cw5 = self.cw1h = self.cr = self.out = self.think = 0
-        self.wtok = 0         # budget tokens, weighted like guard.py (see weighted())
         self.ctx, self.ctx_model, self.ttl = 0, None, "1h"   # the latest call
         self.cost = 0.0
         self.msgs = 0
@@ -371,7 +364,6 @@ class Bucket:
 
         self.inp += i; self.cw5 += w5; self.cw1h += w1; self.cr += r
         self.out += o; self.think += th; self.msgs += 0 if dup else 1
-        self.wtok += weighted(prices, model, i, w5, w1, r, o)
         # One series entry per call: a later log line of the same call (dup) adds to the
         # entry its first line opened, so the chart counts calls, not log lines. Helpers'
         # files are read one after another, so that entry need not be the latest one.
@@ -561,7 +553,7 @@ class Store:
             sid = o.get("sessionId") or "unknown"
             ts = parse_ts(o.get("timestamp"))
             b = self.sessions.setdefault(sid, Bucket())
-            before, wbefore = b.cost, b.wtok
+            before, tbefore = b.cost, b.tokens
             b.add(u, msg.get("model") or "unknown", self.prices, ts, msg.get("content") or [], dup,
                   key=key, agent=thread_of(o))
             if ts and ts >= b.last:
@@ -573,7 +565,7 @@ class Store:
                 b.ttl = "1h" if w1 or not full.get("cache_creation_input_tokens") else "5m"
             self.proj_of[sid] = proj
             t = (ts or datetime.now(timezone.utc)).timestamp()
-            self.events.append((t, b.cost - before, b.wtok - wbefore))
+            self.events.append((t, b.cost - before, b.tokens - tbefore))
             b.calls.append((t, b.cost - before))
 
     def _prompt(self, o):
@@ -671,7 +663,7 @@ class LedgerStore:
                      "cache_creation": {"ephemeral_1h_input_tokens": t.get("cache_write")}}
                 ts = parse_ts(e.get("ts"))
                 b = self.sessions.setdefault(e.get("session_id") or "unknown", Bucket())
-                before, wbefore = b.cost, b.wtok
+                before, tbefore = b.cost, b.tokens
                 src = e.get("query_source") or "unknown"
                 b.add(u, e.get("model") or "unknown", self.prices, ts, source=src)
                 if e.get("request_id"):
@@ -682,7 +674,7 @@ class LedgerStore:
                     b.fee(e.get("model") or "unknown", f)
                     b.by_source[src][1] += f
                 t = (ts or datetime.now(timezone.utc)).timestamp()
-                self.events.append((t, b.cost - before, b.wtok - wbefore))
+                self.events.append((t, b.cost - before, b.tokens - tbefore))
                 b.calls.append((t, b.cost - before))
 
     def window_cost(self, seconds):
@@ -696,7 +688,9 @@ class LedgerStore:
 def requests(calls, prompts):
     """Cost of each request: one prompt and every call until the next prompt.
     That includes the prompt suggestion Claude Code makes after the reply.
-    Returns [(start_epoch, USD, calls)], oldest first."""
+    Returns [(start_epoch, USD, calls)], oldest first, one per prompt (the chart marks
+    every prompt), so a prompt that never reached the API is there with 0 calls: see
+    made_calls()."""
     starts = sorted(prompts)
     out = [[t, 0.0, 0] for t in starts]
     for t, c in calls:
@@ -707,8 +701,15 @@ def requests(calls, prompts):
     return [tuple(x) for x in out]
 
 
+def made_calls(reqs):
+    """The requests that reached the API. A local slash command (/tokentab:status) or a
+    prompt the expired-cache check held back is a prompt with no call: not a request for
+    latest, previous, the average or the count."""
+    return [r for r in reqs if r[2]]
+
+
 def day_total(events):
-    """(USD, budget tokens) spent today, local time, across every session."""
+    """(USD, tokens) spent today, local time, across every session."""
     today = datetime.now().astimezone().date()
     c = t = 0
     for ts, dc, dt in events:
@@ -910,7 +911,7 @@ def report(store, sid, prices, budget, show_all, led=None):
     R["unmatched"] = led.unmatched(sid, store) if led else 0
     R["total"] = {"tokens": b.tokens, "cost": b.cost, "msgs": b.msgs}
     R["prompts"] = store.prompts.get(sid, [])
-    reqs = requests(b.calls, R["prompts"])
+    reqs = made_calls(requests(b.calls, R["prompts"]))
     R["requests"] = reqs and {"latest": reqs[-1], "previous": reqs[-2] if len(reqs) > 1 else None,
                               "average": sum(r[1] for r in reqs) / len(reqs), "count": len(reqs)}
     R["by_source"] = [(nm, calls, c, (c / b.cost) if b.cost else 0)
@@ -1075,7 +1076,7 @@ def snapshot(store, sid, prices, led=None):
         "all_sessions_cost_usd": round(sum(x.cost for x in src.sessions.values()), 6),
         "requests": [{"start": datetime.fromtimestamp(t, timezone.utc).isoformat(),
                       "cost_usd": round(c, 6), "calls": n}
-                     for t, c, n in requests(b.calls, store.prompts.get(sid, []))[-5:]],
+                     for t, c, n in made_calls(requests(b.calls, store.prompts.get(sid, [])))[-5:]],
     }
 
 
@@ -1098,7 +1099,7 @@ def pane_report(store, sid, prices, budget, led=None, windows=None):
     plan_windows = [{"scope": r["scope"], "used": r["used"], "limit": r["limit"], "frac": r["frac"], "resets": r["resets"]}
                     for r in rows if r["scope"] in windows] if on and unit == "percent" else []
     out["session"] = {
-        "title": R["session"]["title"], "cost": b.cost, "tokens": b.wtok, "msgs": b.msgs,
+        "title": R["session"]["title"], "cost": b.cost, "tokens": b.tokens, "msgs": b.msgs,
         "minutes": round((b.last - b.first).total_seconds() / 60) if b.first and b.last else 0,
         "limits_on": on, "unit": unit, "plan": bool(windows), "windows": plan_windows,
         "limit": None if not row else row["parts"][0] if unit == "usd"

@@ -11,7 +11,7 @@ No dependencies, no pytest; run from anywhere, exits non-zero on a failure:
 
   python3 plugins/tokentab/tests/test_accounting.py
 """
-import json, os, sys, tempfile
+import html, itertools, json, os, re, sys, tempfile
 from xml.dom import minidom
 
 PLUGIN = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -193,6 +193,9 @@ def main():
     errs += utf8_case(root, prices)
     errs += locked_page_case(root)
     errs += names_case(prices)
+    errs += tokens_case()
+    errs += page_case(store, prices)
+    errs += requests_case(store, prices)
     for err in errs:
         print("  " + err)
     print("ALL OK" if not errs else f"{len(errs)} FAILURES")
@@ -381,6 +384,29 @@ def locked_page_case(root):
     return errs
 
 
+def tokens_case():
+    """hooks/tokens.ts reads as JSON for the page, every token is a [light, dark] pair of
+    colours, and the page and its Sankey draw from them, not from colours of their own."""
+    errs = []
+    hexc = re.compile(r"^#[0-9a-fA-F]{6}$")
+    t = sankey.load_tokens()
+    for group in ("series", "surface"):
+        for k, v in t[group].items():
+            if not (isinstance(v, list) and len(v) == 2 and all(hexc.match(c) for c in v)):
+                errs.append(f"tokens: {group}.{k} is not a [light, dark] pair of colours: {v}")
+    page = sankey.page("<p>x</p>")
+    for k, (light, dark) in t["surface"].items():
+        if f"--{k.replace('_', '-')}:{light}" not in page or f"--{k.replace('_', '-')}:{dark}" not in page:
+            errs.append(f"tokens: surface.{k} is missing from the page's CSS")
+    allowed = {v[0] for v in t["series"].values()}
+    stray = {c for c in sankey.COLOR.values() if c not in allowed and c != sankey.NEUTRAL}
+    stray |= {c for c in sankey.TOOL_COLORS + sankey.MODEL_COLORS if c not in allowed}
+    if stray:
+        errs.append(f"tokens: the Sankey uses colours outside the tokens: {sorted(stray)}")
+    print("[tokens] " + ("OK" if not errs else "FAIL"))
+    return errs
+
+
 def names_case(prices):
     """The sessions list names an untitled session by its project, keeps the short id
     beside it, and marks a session whose transcript is gone as deleted."""
@@ -432,6 +458,128 @@ def series_check(b, label, store):
         errs.append(f"{label}: chart is not well-formed: {e}")
     if out.count("<svg") != 2 or 'class="ln"' not in out:
         errs.append(f"{label}: chart is missing an axis or its lines")
+    return errs
+
+
+def page_case(store, prices):
+    """The status page draws the pane's report: its first tile leads with the pane's figure
+    (the plan window under percent, else this session's dollars), a session over its limit
+    gets a banner, every tool and layer of the pane's tree is on the page with where it comes
+    from, and the Sankey ends in the pane's three parts and balances with any set of columns
+    hidden."""
+    errs = []
+    budget = {"budgets_on": True, "session_limit_usd": 0.0001, "warn_at_percent": 70,
+              "five_hour_limit_percent": 80, "weekly_limit_percent": 50}
+    b = store.sessions["fx"]
+    R = kt.report(store, "fx", prices, budget, True)
+    windows = {"five_hour": {"kind": "five_hour", "percentUsed": 40, "resetsAt": "2999-01-01T00:00:00Z"}}
+    for win, want in (({}, sankey.usd(b.cost)), (windows, "40%")):
+        R["pane"] = P = kt.pane_report(store, "fx", prices, budget, windows=win)
+        p = sankey.parts(R)
+        if f"<b>{want}</b>" not in p["hero"]:
+            errs.append(f"page: hero does not lead with {want}: {p['hero'][:200]}")
+        names, stack = [], list(P["tools"])
+        while stack:
+            t = stack.pop()
+            names.append(t["name"]); stack += t["children"]
+        missing = [n for n in names if f">{html.escape(n)}</span>" not in p["status"]]
+        if missing:
+            errs.append(f"page: tools of the pane's report missing from the page: {missing}")
+        try:
+            minidom.parseString(f"<div>{p['hero']}{p['chart']}{p['status']}</div>")
+        except Exception as e:
+            errs.append(f"page: sections are not well-formed: {e}")
+        # in dollars the session is far over its limit (budget above): a banner says so and what
+        # TokenTab does about it; under percent the window is at half its limit: no banner
+        if ('class="alert error"' in p["hero"]) != (not win) or (not win and "TokenTab only warns" not in p["hero"]):
+            errs.append(f"page: over-limit banner wrong with windows {win}")
+    if '"plan usage"' in p["hero"] or "plan usage" not in p["hero"] or "at API rates" not in p["hero"]:
+        errs.append("page: under percent the hero is not plan usage with dollars at API rates")
+    tags = {n: sankey.source_tag(n) for n in ("Bash", "mcp__claude_ai_Figma__use_figma", "mcp__Claude_Browser__navigate",
+                                                "mcp__40a9e9ea-a265-43ac-9423-5f01011bcd27__get_screenshot")}
+    if tags != {"Bash": "built-in", "mcp__claude_ai_Figma__use_figma": "claude ai Figma",
+                "mcp__Claude_Browser__navigate": "Claude Browser",
+                "mcp__40a9e9ea-a265-43ac-9423-5f01011bcd27__get_screenshot": "MCP"}:
+        errs.append(f"page: tool source tags: {tags}")
+    sinks = {n for nodes, _ in sankey.flows(b)[0] for n in nodes[-1:]}
+    if "tools" in sinks or not sinks <= {sankey.ASKING, sankey.INTO_CTX, sankey.ANSWERS_REREAD, sankey.REREADS, sankey.PROMPTS, sankey.OVERHEAD}:
+        errs.append(f"page: Sankey sinks are not the pane's parts: {sinks}")
+    keys = [k for k, _, _ in sankey.COLUMNS]
+    for n in range(len(keys) + 1):
+        for hide in itertools.combinations(keys, n):
+            sankey.HIDE = frozenset(hide)
+            try:
+                cols, links, _, _ = sankey.graph(b)
+                bad = [i for i, c in enumerate(cols) if abs(sum(c.values()) - b.cost) > 1e-6 and i in (0, len(cols) - 1)]
+                if bad:
+                    errs.append(f"page: Sankey with {hide or 'nothing'} hidden does not balance in columns {bad}")
+                # every node is as tall as the ribbons arriving at it, so none spills past it
+                w, pos = sankey.layout(cols, links)
+                into = {}
+                for (src, dst, _), width in zip(links, w):
+                    into[dst] = into.get(dst, 0.0) + width
+                spill = [d for d, h in into.items() if abs(pos[d][2] - h) > 0.01]
+                if spill:
+                    errs.append(f"page: Sankey with {hide or 'nothing'} hidden: ribbons spill past {spill}")
+            finally:
+                sankey.HIDE = frozenset()
+    print("[page] " + ("OK" if not errs else "FAIL"))
+    return errs
+
+
+def requests_case(store, prices):
+    """A prompt that never reached the API (a local slash command such as /tokentab:status,
+    or one the expired-cache check held back) is not a request: latest, previous, average
+    and count cover only prompts that made a call, in the terminal view, on the page and in
+    --json alike. A session whose prompts made no call has no Requests card at all."""
+    errs = []
+    b = store.sessions["fx"]
+    saved = store.prompts.get("fx")
+    first, last = b.calls[0][0], b.calls[-1][0]
+    spent = sum(c for _, c in b.calls)
+    budget = {}
+    card = "<h2>Requests</h2>"
+
+    def page(R):
+        R["pane"] = kt.pane_report(store, "fx", prices, budget, windows={})
+        return sankey.parts(R)["status"]
+
+    try:
+        # two prompts that set off the calls, then two that made none after them
+        store.prompts["fx"] = [first - 1, last - 0.5, last + 10, last + 20]
+        R = kt.report(store, "fx", prices, budget, True)
+        q = R["requests"]
+        if not q or q["count"] != 2:
+            errs.append(f"requests: prompts without a call are counted: {q and q['count']} requests, want 2")
+        else:
+            if q["latest"][0] != last - 0.5 or q["latest"][2] < 1:
+                errs.append(f"requests: latest is a prompt without a call: {q['latest']}")
+            if not q["previous"] or q["previous"][0] != first - 1 or q["previous"][2] < 1:
+                errs.append(f"requests: previous is a prompt without a call: {q['previous']}")
+            if abs(q["average"] - spent / 2) > 1e-9:
+                errs.append(f"requests: average {q['average']:.6f} is not over the 2 requests ({spent / 2:.6f})")
+        if re.search(r"(?<!\d)0 calls · ", page(R)):
+            errs.append("requests: the page's Requests card shows a request with 0 calls")
+        if re.search(r"(?<!\d)0 calls · ", kt.render(store, "fx", prices, budget, True)):
+            errs.append("requests: the terminal view shows a request with 0 calls")
+        snap = kt.snapshot(store, "fx", prices)["requests"]
+        if len(snap) != 2 or any(r["calls"] < 1 for r in snap):
+            errs.append(f"requests: --json lists prompts without a call: {snap}")
+        # every prompt of the session made no call: no card, not a $0 average
+        store.prompts["fx"] = [last + 10, last + 20]
+        R = kt.report(store, "fx", prices, budget, True)
+        if R["requests"]:
+            errs.append(f"requests: a session whose prompts made no call has requests: {R['requests']}")
+        if card in page(R):
+            errs.append("requests: the page shows a Requests card for a session whose prompts made no call")
+        if kt.snapshot(store, "fx", prices)["requests"]:
+            errs.append("requests: --json lists requests for a session whose prompts made no call")
+    finally:
+        if saved is None:
+            store.prompts.pop("fx", None)
+        else:
+            store.prompts["fx"] = saved
+    print("[requests] " + ("OK" if not errs else "FAIL"))
     return errs
 
 

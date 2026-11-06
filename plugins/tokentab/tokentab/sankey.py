@@ -16,8 +16,9 @@ report underneath. Renderers only; nothing here serves HTTP.
                             for the pane beside the chat (an Svg there is 128 KB at most)
 
 Flow, left to right:  session total → model → kind (context / generation / fees) → rate
-→ tool → where it went: tools, TokenTab overhead, prompts & replies, context re-reads (the
-last two are what no tool or hook accounts for). Every ribbon is built from the per-model
+→ tool → where it went, in the pane's terms: tool asks, answers into context, answers
+re-read (a tool's three parts), then what no tool or hook accounts for: context re-reads,
+prompts & replies; and TokenTab overhead. Every ribbon is built from the per-model
 bookkeeping, so hovering a model lights exactly its slices downstream and hovering a tool
 exactly the models that paid for it. Plain SVG computed here in Python. Every column but
 the session can be hidden (--hide model,kind,...); its flows are summed over it. Colours follow the system's light or dark setting.
@@ -42,23 +43,42 @@ COLUMNS = [
     ("kind", "kind", "context · generation · fees"),
     ("rate", "rate", "cache read and write, input, output, thinking"),
     ("tool", "tool", "the tool a slice went to"),
-    ("sink", "where it went", "tools · TokenTab overhead · prompts & replies · context re-reads"),
+    ("sink", "where it went", "tool asks · answers into context · answers re-read · context re-reads · prompts & replies · TokenTab overhead"),
 ]
 ROLES = ("session", "model", "kind", "rate", "tool", "sink")   # a path's nodes; non-tool paths skip "tool"
 
-# HA energy palette: one colour per leaf, parents take a neutral tone.
+TOKENS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "hooks", "tokens.ts")
+
+
+def load_tokens(path=TOKENS_PATH):
+    """The pane's design tokens (hooks/tokens.ts): the object after `TOKENS ... =` is strict
+    JSON, so the page and the pane draw from the same colours, grounds and fonts."""
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    start = text.index("= {", text.index("export const TOKENS")) + 2
+    return json.loads(text[start:text.rindex("}") + 1])
+
+
+TOKENS = load_tokens()
+# The light value of each series: a mid tone that reads on both grounds, as the pane's dots
+# take it. The Sankey and the chart colour inline, so they cannot switch with the scheme.
+SERIES = {k: v[0] for k, v in TOKENS["series"].items()}
+NEUTRAL = TOKENS["surface"]["dim"][0]
+
+# One colour per leaf, as the pane colours its rates; the session and the kinds above the
+# rates take a neutral tone, so the colour starts where the pane's colours do.
 COLOR = {
-    "session":        "#8a94a6",
-    "context":        "#4f8fdb",
-    "generation":     "#f0a040",
-    "fees":           "#9e9e9e",
-    "cache_read":     "#22b8a8",
-    "cache_write_1h": "#5c6bc0",
-    "cache_write_5m": "#7e57c2",
-    "input":          "#43a047",
-    "output":         "#fb8c00",
-    "thinking":       "#ab47bc",
-    "fees_leaf":      "#bdbdbd",
+    "session":        NEUTRAL,
+    "context":        NEUTRAL,
+    "generation":     NEUTRAL,
+    "fees":           NEUTRAL,
+    "cache_read":     SERIES["cache_read"],
+    "cache_write_1h": SERIES["cache_write_1h"],
+    "cache_write_5m": SERIES["cache_write_5m"],
+    "input":          SERIES["input"],
+    "output":         SERIES["output"],
+    "thinking":       SERIES["thinking"],
+    "fees_leaf":      SERIES["fees"],
 }
 LABEL = {
     "session": "session", "context": "context", "generation": "generation", "fees": "fees",
@@ -117,14 +137,23 @@ def node(u, v, h, color, label, value, right):
 
 
 OVERHEAD, PROMPTS, REREADS = "TokenTab overhead", "prompts & replies", "context re-reads"
-COLOR.update({OVERHEAD: "#e57373", PROMPTS: "#5c6f82", REREADS: "#3f7f7a"})
-LABEL.update({k: k for k in (OVERHEAD, PROMPTS, REREADS)})
+ASKING, INTO_CTX, ANSWERS_REREAD = "tool asks", "answers into context", "answers re-read"
+# Where a tool's money went, in the pane's three parts (its Tools bars): asking for the call,
+# the answer written into context, re-reading that answer later. What no tool accounts for
+# goes past the tool column: re-reading the rest of the context, and prompts & replies. A
+# sink takes paths through a tool or past it, never both, so its node is as tall as its ribbons.
+TOOL_SINK = {"ask": ASKING, "think": ASKING, "result_1h": INTO_CTX, "result_5m": INTO_CTX, "read": ANSWERS_REREAD}
+COLOR.update({ASKING: SERIES["ask"], INTO_CTX: SERIES["ctx"], ANSWERS_REREAD: SERIES["read"],
+              REREADS: SERIES["read"], PROMPTS: SERIES["input"], OVERHEAD: SERIES["fees"]})
+LABEL.update({k: k for k in (ASKING, INTO_CTX, ANSWERS_REREAD, REREADS, PROMPTS, OVERHEAD)})
+OTHER_COLOR = SERIES["session_other"]
 
-TOOL_COLORS = ["#26a69a", "#ec407a", "#ffca28", "#42a5f5", "#8d6e63", "#66bb6a", "#ff7043", "#78909c"]
-MODEL_COLORS = ["#d4a63a", "#4db6ac", "#ba68c8", "#7cb342", "#f06292", "#90a4ae"]
+# tools and models take the pane's categorical series, costliest first
+TOOL_COLORS = [SERIES[f"session_{i}"] for i in range(1, 11)]
+MODEL_COLORS = [SERIES[f"model_{i}"] for i in range(1, 6)]
 # fixed display order for the named nodes; models and tools sort by cost inside their column
 RANK = {n: i for i, n in enumerate(["session"] + list(TREE) + [l for ls in TREE.values() for l in ls]
-                                   + ["tools", OVERHEAD, PROMPTS, REREADS])}
+                                   + [ASKING, INTO_CTX, ANSWERS_REREAD, REREADS, PROMPTS, OVERHEAD])}
 
 
 def slug(n):
@@ -134,21 +163,23 @@ def slug(n):
 
 def fold_tools(paths, colors, labels, keep):
     """The tool paths beyond the `keep` costliest tools, folded into one "other tools" node,
-    for the compact drawing. Paths with the same nodes are summed."""
+    for the compact drawing. Paths with the same nodes are summed. Only for an unhidden
+    drawing, where a tool path is the full length (its tool second to last)."""
     OTHER = "other tools"
+    via_tool = lambda nodes: len(nodes) == len(ROLES)
     cost = {}
     for nodes, v in paths:
-        if len(nodes) >= 2 and nodes[-1] == "tools":
+        if via_tool(nodes):
             cost[nodes[-2]] = cost.get(nodes[-2], 0.0) + v
     top = {n for n, _ in sorted(cost.items(), key=lambda kv: -kv[1])[:keep]}
     if len(cost) <= keep + 1:
         return paths, colors, labels
     merged = {}
     for nodes, v in paths:
-        if len(nodes) >= 2 and nodes[-1] == "tools" and nodes[-2] not in top:
-            nodes = nodes[:-2] + (OTHER, "tools")
+        if via_tool(nodes) and nodes[-2] not in top:
+            nodes = nodes[:-2] + (OTHER, nodes[-1])
         merged[nodes] = merged.get(nodes, 0.0) + v
-    colors = dict(colors, **{OTHER: "#9e9e9e"})
+    colors = dict(colors, **{OTHER: OTHER_COLOR})
     labels = dict(labels, **{OTHER: f"{len(cost) - len(top)} other tools"})
     return list(merged.items()), colors, labels
 
@@ -191,7 +222,7 @@ def flows(b, tb=None):
                     if r == rate and f.get(field, 0) > 0:
                         v = min(f[field], leaf - taken)
                         if v > 0:   # keeps the per-tool split by rate visible
-                            out.append((head + ((OVERHEAD,) if name == OVERHEAD else (name, "tools")), v))
+                            out.append((head + ((OVERHEAD,) if name == OVERHEAD else (name, TOOL_SINK[field])), v))
                             taken += v
             if leaf - taken > 0:
                 out.append((head + (REREADS if rate == "cache_read" else PROMPTS,), leaf - taken))
@@ -202,22 +233,22 @@ def flows(b, tb=None):
             merged[k] = merged.get(k, 0.0) + v
         out = list(merged.items())
     colors, labels = dict(COLOR), dict(LABEL)
-    colors["tools"], labels["tools"] = "#f5b041", "tools"
     for i, (name, _) in enumerate(tools):
         colors[name] = TOOL_COLORS[i % len(TOOL_COLORS)]; labels[name] = name
-    for i, m in enumerate(models):
-        colors[m] = MODEL_COLORS[i % len(MODEL_COLORS)]; labels[m] = short_model(m)
+    for i, m in enumerate(models):   # any past the fifth share the last, as in the pane
+        colors[m] = MODEL_COLORS[min(i, len(MODEL_COLORS) - 1)]; labels[m] = short_model(m)
     return out, colors, labels
 
 
 def visible(nodes):
-    """A path without the nodes of hidden columns. Every path keeps its sink, so hiding
-    "where it went" only drops the "tools" node behind the tools; with the tool column
-    hidden too, "tools" stays as the tool paths' sink."""
+    """A path without the nodes of hidden columns. A path that runs past no tool keeps its
+    sink, so hiding "where it went" only drops the sink behind a tool (the tool then ends
+    the path); with the tool column hidden too, every path keeps its sink."""
     roles = ROLES[:len(nodes) - 1] + ("sink",)
+    via_tool = "tool" in roles
     keep = []
     for n, r in zip(nodes, roles):
-        if r == "sink" and not (n == "tools" and "sink" in HIDE and "tool" not in HIDE) \
+        if r == "sink" and not ("sink" in HIDE and via_tool and "tool" not in HIDE) \
                 or r != "sink" and r not in HIDE:
             keep.append(n)
     return tuple(keep)
@@ -436,8 +467,9 @@ def svg(b, tb=None, traces=True, keep_tools=None):
 # where that is too small to read, "open in browser" shows the page.
 FLOW_W, FLOW_H, FLOW_PAD, FLOW_FONT, FLOW_LABEL, FLOW_TOOLS = W, H, 110, 8, 30, 12
 FLOW_HIDE = ()
-FLOW_STYLE = ("text{font:8px -apple-system,system-ui,sans-serif;fill:#d4d4d4}.v{fill:#9a9a9a}"
-              "@media(prefers-color-scheme:light){text{fill:#1f1f1f}.v{fill:#6b6b6b}}")
+_S = TOKENS["surface"]
+FLOW_STYLE = (f"text{{font:8px {TOKENS['font']['sans']};fill:{_S['text'][1]}}}.v{{fill:{_S['dim'][1]}}}"
+              f"@media(prefers-color-scheme:light){{text{{fill:{_S['text'][0]}}}.v{{fill:{_S['dim'][0]}}}}}")
 
 
 def flow_svg(R, keep_tools=FLOW_TOOLS, hide=FLOW_HIDE):
@@ -460,112 +492,288 @@ def flow_svg(R, keep_tools=FLOW_TOOLS, hide=FLOW_HIDE):
     return s.replace("<defs>", f"<style>{FLOW_STYLE}</style><defs>", 1)
 
 
-def tools_table(R):
-    """Every tool, with the same split the terminal shows (ask · answer into context ·
-    re-reads) and, with several models, what each model paid for it."""
-    b = R["transcript"]
-    rows = R["tools"]
-    if not rows:
-        return ""
-    models = sorted({m for by in b.tools.values() for m in by}, key=lambda m: -sum(b.cost_bm.get(m, {}).values()))
-    if len(models) < 2 or not MODELS:
-        models = []   # a single model adds nothing to the cost column
-    per = lambda name, m: sum(b.tools[name].get(m, {}).get(f, 0.0) for f in kt.TOOL_DRAWS)
-    th = "".join(f'<th class="n">{esc(short_model(m))}</th>' for m in models)
-    tr = "".join(f'<tr><td>{esc(k)}</td><td class="n">{v["calls"]}</td><td class="n">{kt.money(v["cost"])}</td>'
-                 + "".join(f'<td class="n">{kt.money(per(k, m))}</td>' for m in models)
-                 + f'<td class="n">{kt.money(v["ask"] + v["think"])}</td><td class="n">{kt.money(v["result"])}</td>'
-                   f'<td class="n m">{kt.num(v["rtokens"])}</td><td class="n">{kt.money(v["read"])}</td></tr>'
-                 for k, v in rows)
-    o = R["overhead"]
-    if o["cost"]:
-        tr += (f'<tr class="m"><td>TokenTab overhead</td><td></td><td class="n">{kt.money(o["cost"])}</td>'
-               + "<td></td>" * len(models) + f'<td></td><td class="n">{kt.money(o["cost"] - o["read"])}</td>'
-               f'<td class="n">{kt.num(o["rtokens"])}</td><td class="n">{kt.money(o["read"])}</td></tr>')
-    return (f'<section class="wide"><h2>tools <span>asking + answer into context + re-reading it (estimates)</span></h2>'
-            f'<table><tr><th>tool</th><th class="n">calls</th><th class="n">cost</th>{th}<th class="n">ask</th>'
-            f'<th class="n">into context</th><th class="n">tok</th><th class="n">re-read</th></tr>{tr}</table></section>')
-
-
 esc = html.escape
 
+# The page's figures follow the pane's: dollars with 2 places for the big figures, 4 in the
+# tables; shares as whole percents; plan windows to a tenth. Words follow the pane's too:
+# "messages" are API calls, "calls" are tool calls. Where the pane shortens a word for its
+# width ("tok", "msgs"), the page has room and spells it out.
+usd = lambda x, d=2: f"${x:,.{d}f}"
+pct = lambda share: f"{round(share * 100)}%"
+percent = lambda n: f"{round(n * 10) / 10:g}%"
+big = lambda x: usd(x, 2 if x >= 0.01 or x == 0 else 4)     # a big figure, unless it would read $0.00
+WINDOW_SHORT = {"five_hour": "5-hour", "seven_day": "week"}
+SESSIONS_COLOURED = 10
 
-def meter(frac):
-    level = "ok" if frac < 0.7 else ("warn" if frac < 1.0 else "over")
-    return (f'<span class="meter {level}"><i style="width:{min(frac, 1) * 100:.1f}%"></i></span>'
-            f'<span class="pct {level}">{frac * 100:.0f}%</span>')
+# What each rate is, under its name in "Where the money went"
+RATE_NOTE = {"input": "new input, not cached", "cache_write_1h": "saving context to the cache for 1 hour",
+             "cache_write_5m": "saving context to the cache for 5 minutes", "cache_read": "re-reading cached context on each call",
+             "output": "Claude's replies and tool inputs", "thinking": "extended thinking", "fees": "web searches"}
+UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
+
+
+def tone(frac, warn_at):
+    """How close a scope is to its limit, as the pane's toneOf: over at 100%, warning from warn_at."""
+    return "error" if frac >= 1 else ("warning" if frac * 100 >= warn_at else "success")
+
+
+def dot(series):
+    return f'<i class="sd" style="background:var(--s-{series})"></i>'
+
+
+def sbar(parts, cls="sbar", title=""):
+    """A stacked bar like the pane's: [(series, fraction of the width)], left to right on a track."""
+    segs = "".join(f'<i style="width:{max(0.0, min(f, 1)) * 100:.2f}%;background:var(--s-{s})"></i>'
+                   for s, f in parts if f > 0)
+    tip = f' title="{esc(title)}"' if title else ""
+    return f'<div class="{cls}"{tip}>{segs}</div>'
+
+
+def label(text, note=""):
+    """A card's title, with a dim note beside it."""
+    return f'<h2>{esc(text)}' + (f' <span>{esc(note)}</span>' if note else "") + "</h2>"
+
+
+def source_tag(name):
+    """Where a tool comes from, from its full name: an MCP server (mcp__<server>__<tool>) or
+    Claude Code itself. A connector's server is an id, not a name, so it reads "MCP"."""
+    if not name.startswith("mcp__"):
+        return "built-in"
+    server = name.split("__")[1] if name.count("__") >= 2 else ""
+    return "MCP" if not server or UUID.match(server) else server.replace("_", " ")
+
+
+def lead(P):
+    """(scope row or None, its fraction, the worst fraction over every window): what the
+    first tile leads with, as the pane's hero: under percent the first plan window."""
+    s = P["session"]
+    windows = s["windows"] if s["unit"] == "percent" else []
+    first = windows[0] if windows else None
+    frac = first["frac"] if first else s["frac"]
+    worst = max(w["frac"] for w in windows) if first else frac
+    return first, frac, worst
+
+
+def spend_tile(P, R):
+    """The first tile, the pane's Spend hero: plan usage under percent (dollars at API rates
+    move below), else this session's dollars; the badge and the bar in the limit's tone, the
+    other windows or limits, and how the limits behave."""
+    s = P["session"]
+    first, frac, worst = lead(P)
+    api = " at API rates" if s["plan"] else ""
+    badge = ""
+    if worst is not None:
+        t = tone(worst, s["warn_at"])
+        badge = (f'<span class="chip {t}">' + ("Over · " if t == "error" else "Warning · " if t == "warning" else "")
+                 + pct(worst) + ("" if t != "success" else " used") + "</span>")
+    resets = lambda w: f' · resets {w["resets"]}' if w.get("resets") else ""
+    lines = []
+    if first:
+        figure = percent(first["used"])
+        lines.append(f'of the {kt.WINDOW_NAMES[first["scope"]]} · limit {percent(first["limit"])}{resets(first)}')
+        lines += [f'{WINDOW_SHORT[w["scope"]]} {percent(w["used"])}, limit {percent(w["limit"])}{resets(w)}'
+                  for w in s["windows"][1:]]
+        lines.append(f'{big(s["cost"])}{api}')
+    else:
+        figure = big(s["cost"])
+        if s["limit"]:
+            lines.append(s["limit"] + api)
+        elif api:
+            lines.append(api.strip())
+        bg = R.get("budget") or {}
+        lines += [f'{r["name"]} {r["parts"][0]}' for r in bg.get("lines") or []
+                  if r["scope"] != "session" and bg.get("unit") == "usd"]
+    lines.append(f'{"hard stop" if s["hard_stop"] else "warn only"} · warns at {s["warn_at"]}%' if frac is not None
+                 else "limits off" if not s["limits_on"]
+                 else "no window limit set or no reading yet" if s["unit"] == "percent" else "no session limit set")
+    meter = (f'<div class="sbar hbar"><i style="width:{min(frac, 1) * 100:.2f}%;background:var(--s-{tone(frac, s["warn_at"])})"></i></div>'
+             if frac is not None else "")
+    small = "".join(f'<div class="m">{esc(x)}</div>' for x in lines)
+    return (f'<div class="kpi lead"><div class="kl"><span>{"plan usage" if first else "session spend"}</span>{badge}</div>'
+            f'<b>{esc(figure)}</b>{meter}{small}</div>')
+
+
+def tile(name, figure, note="", cls=""):
+    return (f'<div class="kpi"><div class="kl"><span>{esc(name)}</span></div><b class="{cls}">{esc(figure)}</b>'
+            + (f'<div class="m">{esc(note)}</div>' if note else "") + "</div>")
+
+
+def kpis(P, R):
+    """The summary: the first tile (the pane's hero), then tokens, messages, a request's average
+    cost and the context, and a banner for anything that needs attention now."""
+    s = P["session"]
+    if not s:
+        return '<div class="card empty">No API call in this session yet; its spend shows from the first one.</div>'
+    api = " at API rates" if s["plan"] else ""
+    total = (P.get("total") or {}).get("tokens") or 0
+    read = sum(r["tokens"] for r in P.get("rates") or [] if r["key"] == "cache_read")
+    calls = sum(t["calls"] for t in P.get("tools") or [])
+    q = R.get("requests")
+    ctx = (R.get("budget") or {}).get("context")
+    tiles = [spend_tile(P, R),
+             tile("tokens", kt.num(total), f"{pct(read / total)} cache read" if total else ""),
+             tile("messages", kt.num(s["msgs"]), f"{calls} tool {'call' if calls == 1 else 'calls'}"),
+             tile("average per request", big(q["average"]) if q else "–",
+                  f'of {q["count"]} {"request" if q["count"] == 1 else "requests"}{api}' if q else ""),
+             tile("context", f'{kt.num(ctx["tokens"])} tokens' if ctx else "–",
+                  f'{usd(ctx["per_call"], 4)}/call to re-read{api}' if ctx else "", ctx["level"] if ctx else "")]
+    alerts = []
+    first, frac, worst = lead(P)
+    if worst is not None and worst >= 1:
+        what = f'the {kt.WINDOW_NAMES[max(s["windows"], key=lambda w: w["frac"])["scope"]]}' if first else "this session"
+        alerts.append(("error", f"Over the limit of {what} ({pct(worst)}). "
+                       + ("Hard stop is on: TokenTab blocks tool calls." if s["hard_stop"] else "TokenTab only warns: hard stop is off.")))
+    if ctx and ctx["cold"]:
+        alerts.append(("warning", f'Cache is cold. The next prompt re-writes the context ({kt.num(ctx["tokens"])} tokens), '
+                       f'about {big(ctx["rewrite"])}{api}.'))
+    if not P.get("prices_verified", True):
+        alerts.append(("warning", "Prices unverified: the figures are estimates at the default rates."))
+    banners = "".join(f'<div class="alert {t}"><i></i>{esc(x)}</div>' for t, x in alerts)
+    return f'<div class="kpis">{"".join(tiles)}</div>' + (f'<div class="alerts">{banners}</div>' if banners else "")
+
+
+def rates_card(P):
+    """Where the money went: this session by rate, a bar and a table, each rate saying what it is."""
+    s, rates = P["session"], P.get("rates") or []
+    series = lambda k: k if k in SERIES else "input"
+    rows = "".join(f'<tr><td><div class="rl"><span class="dl">{dot(series(r["key"]))}</span><div><div>{esc(r["label"])}</div>'
+                   f'<div class="m">{esc(RATE_NOTE.get(r["key"], ""))}</div></div></div></td><td class="n">{kt.num(r["tokens"])}</td>'
+                   f'<td class="n">{usd(r["cost"], 4)}</td><td class="n m">{pct(r["share"])}</td></tr>' for r in rates)
+    t = P.get("total") or {"tokens": 0, "cost": s["cost"]}
+    rows += (f'<tr class="tot"><td>total{" at API rates" if s["plan"] else ""}</td><td class="n">{kt.num(t["tokens"])}</td>'
+             f'<td class="n">{usd(t["cost"], 4)}</td><td></td></tr>')
+    foot = (f'<p class="m">{kt.num(P["unmatched"])} output tokens have no transcript line. Any thinking is counted in output.</p>'
+            if P.get("unmatched") else "")
+    return (f'<section class="card">{label("Where the money went", "by rate" + (" at API rates" if s["plan"] else ""))}'
+            f'{sbar([(series(r["key"]), r["share"]) for r in rates], "sbar big")}<table class="rates">'
+            f'<tr><th>rate</th><th class="n">tokens</th><th class="n">cost</th><th class="n">share</th></tr>{rows}</table>{foot}</section>')
+
+
+def list_rows(rows):
+    """A side card's rows: name on the left, a dim note and a figure on the right."""
+    return "".join(f'<div class="li{" " + cls if cls else ""}"><span class="nm">{nm}</span><span class="m">{esc(note)}</span>'
+                   f'<span class="n">{esc(fig)}</span></div>' for nm, note, fig, cls in rows)
+
+
+def requests_card(R):
+    q = R.get("requests")
+    if not q:
+        return ""
+    rows = []
+    for name in ("latest", "previous"):
+        r = q[name]
+        if r:
+            at = time.strftime("%H:%M", time.localtime(r[0]))
+            rows.append((name, f'{r[2]} {"message" if r[2] == 1 else "messages"} · {at}', usd(r[1], 4), ""))
+    rows.append(("average", f'of {q["count"]} {"request" if q["count"] == 1 else "requests"}', usd(q["average"], 4), "dim"))
+    return f'<section class="card">{label("Requests")}{list_rows(rows)}</section>'
+
+
+def share_card(title, items, series):
+    """A side card of shares (call source, models): a row each, then a bar of the shares."""
+    if not items:
+        return ""
+    rows = [(esc(nm), f'{kt.num(msgs)} {"message" if msgs == 1 else "messages"} · {pct(share)}', usd(cost, 4), "")
+            for nm, msgs, cost, share in items]
+    return (f'<section class="card">{label(title)}{list_rows(rows)}'
+            f'{sbar([(series(i), x[3]) for i, x in enumerate(items)], "sbar foot")}</section>')
+
+
+def sessions_card(P):
+    """The pane's ALL SESSIONS: today and this month over every session, then this month's
+    sessions (this one in bold), opening like a tool row."""
+    rows = [("today", "", usd(P["today"]), ""), ("this month", "", usd(P["month"]), "")]
+    sessions = P.get("sessions") or []
+    body = list_rows(rows)
+    if sessions:
+        series = lambda rank: f"session_{rank + 1}" if rank < SESSIONS_COLOURED else "session_other"
+        others = sum(x["share"] for x in sessions[SESSIONS_COLOURED:])
+        parts = [(series(i), x["share"]) for i, x in enumerate(sessions[:SESSIONS_COLOURED])] + ([("session_other", others)] if others else [])
+        items = list_rows((f'{dot(series(i))}{esc(x["name"])}', pct(x["share"]), usd(x["cost"]),
+                           "me" if x["sid"] == P["sid"] else "") for i, x in enumerate(sessions))
+        n = len(sessions)
+        body += (f'<details data-path="~sessions"><summary class="li"><span class="nm">{n} {"session" if n == 1 else "sessions"} this month</span>'
+                 f'<span></span><span></span></summary>{sbar(parts, "sbar foot")}{items}</details>')
+    return f'<section class="card sessions">{label("All sessions")}{body}</section>'
+
+
+def tool_rows(t, path, top, depth, tag=""):
+    """One tool, or one layer of its breakdown, as the pane draws it: name, calls, cost and a
+    bar of asking / answer into context / re-reading against the costliest sibling (the
+    dollars on hover), and the tokens its answers put into context. A row with a breakdown is
+    a <details> that opens its layers beneath it."""
+    kids = t.get("children") or []
+    tip = f'ask {usd(t["ask"], 4)} · into context {usd(t["ctx"], 4)} · re-read {usd(t["read"], 4)}'
+    bar = sbar([("ask", t["ask"] / top), ("ctx", t["ctx"] / top), ("read", t["read"] / top)], "sbar tb", tip)
+    chip = f'<em class="tag">{esc(tag)}</em>' if tag else ""
+    cells = (f'<span class="tn" style="padding-left:{depth * 18}px"><span class="nm">{esc(t["name"])}</span>{chip}</span>'
+             f'<span class="n m">{t["calls"]}</span><span class="n">{usd(t["cost"], 4)}</span>{bar}'
+             f'<span class="n m">{kt.num(t["ctx_tokens"])}</span>')
+    cls = "tr top" if depth == 0 else "tr"
+    if not kids:
+        return f'<div class="{cls} leaf">{cells}</div>'
+    kid_top = max([k["cost"] for k in kids] + [1e-9])
+    inner = "".join(tool_rows(k, f'{path}/{k["name"]}', kid_top, depth + 1) for k in kids)
+    return f'<details data-path="{esc(path)}"><summary class="{cls}">{cells}</summary>{inner}</details>'
+
+
+def tools_card(P, R):
+    """Every tool (the pane shows the costliest few), each opening into its layers, and
+    TokenTab's own overhead last."""
+    tools = P.get("tools") or []
+    if not tools and not P.get("overhead"):
+        return ""
+    tags = [source_tag(nm) for nm, _ in R.get("tools") or []]
+    calls = sum(t["calls"] for t in tools)
+    top = max([t["cost"] for t in tools] + [1e-9])
+    head = ('<div class="tr th"><span>tool</span><span class="n">calls</span><span class="n">cost</span>'
+            '<span>ask · into context · re-read</span><span class="n" title="tokens its answers put into context">tokens</span></div>')
+    body = "".join(tool_rows(t, t["name"], top, 0, tags[i] if i < len(tags) else "") for i, t in enumerate(tools))
+    o = R.get("overhead") or {}
+    if P.get("overhead"):
+        ask, ctx, read = o.get("ask", 0) + o.get("think", 0), o.get("result", 0), o.get("read", 0)
+        tip = f'into context {usd(ctx, 4)} · re-read {usd(read, 4)}'
+        body += (f'<div class="tr top leaf over"><span class="tn"><span class="nm">TokenTab overhead</span></span><span></span>'
+                 f'<span class="n">{usd(P["overhead"], 4)}</span>'
+                 f'{sbar([("ask", ask / top), ("ctx", ctx / top), ("read", read / top)], "sbar tb", tip)}'
+                 f'<span class="n m">{kt.num(o.get("rtokens", 0))}</span></div>')
+    legend = "".join(f'<span>{dot(k)}{n}</span>' for k, n in (("ask", "ask"), ("ctx", "into context"), ("read", "re-read")))
+    note = f'{len(tools)} {"tool" if len(tools) == 1 else "tools"} · {calls} {"call" if calls == 1 else "calls"} · cost = asking + answer into context + re-reading it (estimates)'
+    return (f'<section class="card tools" id="tools">{label("Tools", note)}'
+            f'<div class="scroll"><div class="tt">{head}{body}</div></div><div class="legend">{legend}</div></section>')
 
 
 def status_html(R):
-    """The terminal's live view (tokentab.py render()) as panels: same report, same numbers."""
-    out = []
-    t = R["total"]
-    rows = "".join(f'<tr><td>{esc(r["label"])}</td><td class="n">{kt.num(r["tokens"])}</td>'
-                   f'<td class="n">{kt.money(r["cost"])}</td><td class="n m">{r["share"] * 100:.0f}%</td></tr>'
-                   for r in R["rates"])
-    if R["unmatched"]:
-        rows += (f'<tr class="m"><td colspan="4">{kt.num(R["unmatched"])} output tok without a transcript line: '
-                 'any thinking is in output text</td></tr>')
-    rows += (f'<tr class="tot"><td>total</td><td class="n">{kt.num(t["tokens"])}</td>'
-             f'<td class="n">{kt.money(t["cost"])}</td><td class="n m">{t["msgs"]} msgs</td></tr>')
-    out.append(f'<section><h2>by rate</h2><table>{rows}</table></section>')
-
-    q = R["requests"]
-    if q:
-        rows = ""
-        for label in ("latest", "previous"):
-            r = q[label]
-            if r:
-                at = time.strftime("%H:%M", time.localtime(r[0]))
-                rows += (f'<tr><td>{label}</td><td class="n">{kt.money(r[1])}</td>'
-                         f'<td class="m">{r[2]} calls · {at}</td></tr>')
-        rows += (f'<tr class="m"><td>average</td><td class="n">{kt.money(q["average"])}</td>'
-                 f'<td>of {q["count"]} requests</td></tr>')
-        out.append(f'<section><h2>requests <span>one prompt and everything it set off</span></h2><table>{rows}</table></section>')
-
-    if R["by_source"]:
-        rows = "".join(f'<tr><td>{esc(nm)}</td><td class="n">{calls}</td><td class="m">calls</td>'
-                       f'<td class="n">{kt.money(c)}</td><td class="n m">{share * 100:.0f}%</td></tr>'
-                       for nm, calls, c, share in R["by_source"])
-        out.append(f'<section><h2>by call source <span>what in Claude Code made the call</span></h2><table>{rows}</table></section>')
-
-    bg = R["budget"]
-    if bg and (bg["lines"] or bg["context"]):
-        rows = "".join(f'<tr><td>{esc(r["name"])}</td><td>{meter(r["frac"])}</td>'
-                       f'<td class="m">{esc(" · ".join(r["parts"]))}'
-                       + (' <b class="over">OVER</b>' if r["frac"] >= 1 else "") + "</td></tr>"
-                       for r in bg["lines"])
-        c = bg["context"]
-        if c:
-            cache = (f'<span class="over">cache COLD</span>: next prompt re-writes it, ~{kt.money(c["rewrite"])}'
-                     if c["cold"] else f'cache warm, {c["minutes_left"]}m left')
-            rows += (f'<tr><td>context</td><td class="{c["level"]}">{kt.num(c["tokens"])} tok</td>'
-                     f'<td class="m">{kt.money(c["per_call"])}/call to re-read · {cache}</td></tr>')
-        mode = ((f'{"hard stop" if bg["hard_stop"] else "warn only"} · warns at {bg["warn_at"]}%')
-                if bg["on"] else "off · /tokentab:budget turns budgets on")
-        out.append(f'<section class="wrap"><h2>budget <span>{esc(mode)}</span></h2><table>{rows}</table></section>')
-
-    w, tt = R["window"], R["totals"]
-    rows = (f'<tr><td>all sessions · last 5 min</td><td class="n">{kt.money(w["5m"])}</td></tr>'
-            f'<tr><td>all sessions · last hour</td><td class="n">{kt.money(w["1h"])}</td></tr>')
-    if tt:
-        rows += (f'<tr><td>today, all sessions</td><td class="n">{kt.money(tt["today"])}</td></tr>'
-                 f'<tr><td>all sessions, all time</td><td class="n">{kt.money(tt["all"])}</td>'
-                 f'<td class="m">{tt["sessions"]} sessions</td></tr>')
-    out.append(f'<section><h2>totals</h2><table>{rows}</table></section>')
-    return f'<div class="grid">{"".join(out)}{tools_table(R)}</div>'
+    """The cards under the charts, from the pane's report (`R["pane"]`, the same pane_report()
+    the pane draws) and what the pane has no room for: where the money went beside the
+    requests, the call sources, the models and all sessions; then every tool."""
+    P = R["pane"]
+    model_series = lambda rank: f"model_{min(rank + 1, 5)}"
+    source_series = lambda rank: f"session_{rank + 1}" if rank < SESSIONS_COLOURED else "session_other"
+    side = (requests_card(R)
+            + share_card("By call source",
+                         [(nm, calls, c, share) for nm, calls, c, share in R["by_source"]], source_series)
+            + share_card("Models",
+                         [(re.sub("^claude-", "", m["name"]), m["msgs"], m["cost"], m["share"]) for m in P.get("models") or []],
+                         model_series)
+            + sessions_card(P))
+    return f'<div class="row2">{rates_card(P)}<div class="side">{side}</div></div>{tools_card(P, R)}'
 
 
 def report(live, sid=None):
-    """kt.report() for one session from a Live's stores (rescanned first). Without sid:
-    the most recently active session."""
+    """kt.report() for one session from a Live's stores (rescanned first), with the pane's
+    report of it (kt.pane_report(), what `tokentab.py --report` prints) as R["pane"]: the page
+    draws its figures from the same data as the pane. Without sid: the most recently active
+    session."""
     live.scan()
     sid = sid or live.store.newest_session()
     try:
         budget = json.load(open(kt.BUDGET_PATH, encoding="utf-8"))
     except (OSError, ValueError):
         budget = {}
-    return kt.report(live.store, sid, live.prices, budget, True, live.led)
+    R = kt.report(live.store, sid, live.prices, budget, True, live.led)
+    R["pane"] = kt.pane_report(live.store, sid, live.prices, budget, live.led)
+    return R
 
 
 class Live:
@@ -702,11 +910,16 @@ def timeline(R):
 
     seg = ('<span class="seg"><button data-x="time" onclick="kx(\'time\')">time</button>'
            '<button data-x="calls" onclick="kx(\'calls\')">calls</button></span>')
-    return (f'<section class="chart"><h2>cost over time <span>cumulative by rate · '
+    s = (R.get("pane") or {}).get("session") or {}
+    api = " at API rates" if s.get("plan") else ""   # a subscription pays its plan, not these dollars
+    return (f'<section class="card chart"><h2>Cost over time <span>cumulative by rate{api} · '
             f'dashed: your prompts</span>{seg}</h2>{draw("time")}{draw("calls")}</section>')
 
 
-PARTS = ("head", "kpi", "flow", "chart", "status")
+# Page order, "summary first" (Figma "TokenTab browser / A summary first v2"): the tiles and
+# banners, the cost flow, cost over time across the full width, where the money went beside
+# the smaller cards, then every tool.
+PARTS = ("head", "hero", "flow", "chart", "status")
 
 
 def parts(R, direction="ltr", models=True, hide=()):
@@ -719,21 +932,16 @@ def parts(R, direction="ltr", models=True, hide=()):
     HIDE = frozenset(hide) & {k for k, _, _ in COLUMNS} | (set() if models else {"model"})
     MODELS = "model" not in HIDE
     s, b, tb = R["session"], R["bucket"], R["transcript"]
+    P = R.get("pane")
     if not s:
         head = f'<div class="sub">session {esc(R["sid"] or "?")} · waiting for activity…</div>'
-        return {"head": head, "kpi": "", "flow": "", "chart": "", "status": ""}
+        status = f'<div class="row2"><div></div><div class="side">{sessions_card(P)}</div></div>' if P else ""
+        return {"head": head, "hero": kpis(P, R) if P else "", "flow": "", "chart": "", "status": status}
     since = s["since"].strftime("%H:%M") if s["since"] else "?"
-    name = f'<b title="{esc(R["sid"])}">{esc(s["title"])}</b>' if s["title"] else f'session {esc(R["sid"][:8])}'
-    head = (f'<div class="sub">{name} · {esc(", ".join(s["models"]))} · since {since}'
-            f' · updated {R["now"].strftime("%H:%M:%S")}</div>'
-            f'<div class="src">{esc(s["source"])}</div>'
-            + ("" if R["prices_verified"] else '<div class="src warn">prices unverified</div>'))
-    t = R["total"]
-    kpi = (f'<div class="kpi"><div><b>{kt.money(t["cost"])}</b><span>this session</span></div>'
-           f'<div><b>{kt.num(t["tokens"])}</b><span>tokens</span></div>'
-           f'<div><b>{t["msgs"]}</b><span>messages</span></div></div>')
-    flow = svg(b, tb) if b and b.cost > 0 else "<p>no usage for this session yet.</p>"
-    return {"head": head, "kpi": kpi, "flow": flow, "chart": timeline(R), "status": status_html(R)}
+    head = f'<div class="sub">since {since} · updated {R["now"].strftime("%H:%M:%S")}</div>'
+    flow = (f'<section class="card flow">{label("Cost flow", "session → model → context / generation → rate → where it went")}'
+            + (svg(b, tb) if b and b.cost > 0 else '<p class="m">No usage for this session yet.</p>') + "</section>")
+    return {"head": head, "hero": kpis(P, R), "flow": flow, "chart": timeline(R) or "", "status": status_html(R)}
 
 
 def body(R, direction="ltr", models=True, hide=()):
@@ -750,51 +958,122 @@ def push_js(R, direction="ltr", models=True, hide=()):
     return "window.__tokentab && window.__tokentab(" + json.dumps(data, ensure_ascii=False) + ");\n"
 
 
-CSS = """
-:root{color-scheme:light dark;--bg:#f6f7f9;--fg:#1d2330;--muted:#5d6676;--line:#dde1e7;--panel:#fff;
- --ok:#2e7d32;--warn:#a86b00;--over:#c62828;--track:#e6e9ee}
-@media (prefers-color-scheme:dark){:root{--bg:#111318;--fg:#e3e6ec;--muted:#9aa3b2;--line:#262a33;--panel:#181b22;
- --ok:#66bb6a;--warn:#ffca28;--over:#ef5350;--track:#2a2f39}}
-body{margin:0;padding:24px;background:var(--bg);color:var(--fg);font:14px/1.4 -apple-system,system-ui,sans-serif}
-h1{font-size:18px;font-weight:600;margin:0 0 4px;display:flex;align-items:center;gap:10px}
-h2{font-size:13px;margin:0 0 8px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
-h2 span{text-transform:none;letter-spacing:0;font-weight:400}
-.sub{color:var(--muted);margin-bottom:6px}.sub b{color:var(--fg);font-weight:600}
-.src{font-size:13px;margin-bottom:4px}.src.ok{color:var(--ok)}.src.warn,.warn{color:var(--warn)}.over{color:var(--over)}
-.kpi{display:flex;gap:28px;margin:14px 0 4px}.kpi b{font-size:22px;font-weight:600;font-variant-numeric:tabular-nums;display:block}
-.kpi span{color:var(--muted);font-size:12px}
-svg{max-width:SVGWpx;display:block}svg text{fill:var(--fg);font-size:13px}svg .v{fill:var(--muted)}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:16px;margin-top:20px;max-width:SVGWpx}
-section{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto}
-section.wide{grid-column:1/-1}.wrap td:last-child{white-space:normal}
-table{border-collapse:collapse;width:100%}td,th{text-align:left;padding:3px 12px 3px 0;white-space:nowrap}
-th{color:var(--muted);font-weight:500}.n{text-align:right;font-variant-numeric:tabular-nums}.m,.m td{color:var(--muted)}
-tr.tot td{border-top:1px solid var(--line);font-weight:600;padding-top:6px}
-.meter{display:inline-block;width:120px;height:8px;border-radius:4px;background:var(--track);vertical-align:middle;overflow:hidden}
-.meter i{display:block;height:100%;background:var(--ok)}.meter.warn i{background:var(--warn)}.meter.over i{background:var(--over)}
-.pct{display:inline-block;width:44px;text-align:right;font-variant-numeric:tabular-nums}.pct.ok{color:var(--fg)}
-.dot{font-size:12px;font-weight:400;color:var(--muted);display:inline-flex;align-items:center;gap:6px}
-.dot::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--muted)}
-#pick{font:inherit;font-size:13px;color:var(--fg);background:var(--panel);border:1px solid var(--line);
- border-radius:6px;padding:3px 6px;margin:4px 0 6px;max-width:100%}
-.dot.on::before{background:var(--ok)}.dot.off::before{background:var(--over)}
-section.chart{margin-top:20px;max-width:SVGWpx}section.chart h2{display:flex;align-items:center;gap:8px}
-.seg{margin-left:auto;display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
-.seg button{font:inherit;font-size:12px;text-transform:none;letter-spacing:0;color:var(--muted);background:none;
- border:0;padding:2px 10px;cursor:pointer}
-html:not([data-x=calls]) .seg [data-x=time],html[data-x=calls] .seg [data-x=calls]{background:var(--track);color:var(--fg)}
+def css_vars():
+    """The tokens as CSS custom properties, light on :root and dark under prefers-color-scheme:
+    every surface token as --<name>, every series as --s-<name> (the HTML bars and dots, which
+    switch with the scheme as the pane's Svg bars do), and the tones the page uses (--ok,
+    --warn, --over, --track) from the series."""
+    pairs = {k.replace("_", "-"): v for k, v in TOKENS["surface"].items()}
+    s = TOKENS["series"]
+    pairs.update({f"s-{k}": v for k, v in s.items()})
+    pairs.update({"ok": s["success"], "warn": s["warning"], "over": s["error"], "track": s["track"]})
+    side = lambda i: ";".join(f"--{k}:{v[i]}" for k, v in pairs.items())
+    f = TOKENS["font"]
+    return (f":root{{color-scheme:light dark;--sans:{f['sans']};--mono:{f['mono']};{side(0)}}}\n"
+            f"@media (prefers-color-scheme:dark){{:root{{{side(1)}}}}}")
+
+
+# The pane's design language (Figma "TokenTab UI") in the page's layout (Figma "TokenTab
+# browser / A summary first v2"): Inter for words, mono for figures, white cards on a warm
+# ground with hairline borders, a row of summary tiles, bars on a track.
+CSS = css_vars() + """
+*{box-sizing:border-box}
+body{margin:0;padding:32px 40px 48px;background:var(--bg);color:var(--text);font:13px/1.45 var(--sans)}
+#app{max-width:1360px}
+header{max-width:1360px}
+h1{font-size:20px;line-height:28px;font-weight:600;margin:0 0 4px;display:flex;align-items:center;gap:10px}
+h2{font-size:15px;line-height:22px;margin:0 0 14px;font-weight:600;display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+h2 span{font-size:12px;font-weight:400;color:var(--dim)}
+.sub{color:var(--dim);font-size:12px}
+.m{color:var(--dim);font-size:12px}.warn{color:var(--warn)}.over{color:var(--over)}
+a{color:inherit}
+#app>div{margin-bottom:20px}#app>div:empty{display:none}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:22px;min-width:0}
+.card.empty{color:var(--dim)}
+.row2{display:grid;grid-template-columns:minmax(0,2.2fr) minmax(0,1fr);gap:20px;align-items:stretch}
+.side{display:flex;flex-direction:column;gap:20px}
+.row2+.card{margin-top:20px}
+/* the summary tiles: one card, split by hairlines */
+.kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));background:var(--panel);border:1px solid var(--line);border-radius:12px}
+.kpi{padding:18px 22px;border-left:1px solid var(--line);display:flex;flex-direction:column;gap:2px;min-width:0}
+.kpi:first-child{border-left:0}
+.kl{display:flex;justify-content:space-between;align-items:center;gap:8px;min-height:20px}
+.kl span{font-size:11px;line-height:16px;font-weight:500;color:var(--dim);text-transform:uppercase;letter-spacing:.06em}
+.kpi b{font-size:20px;line-height:28px;font-weight:600;font-variant-numeric:tabular-nums}
+.kpi.lead b{font-size:30px;line-height:40px}
+.kpi b.warn{color:var(--warn)}.kpi b.over{color:var(--over)}
+.kpi .hbar{margin:6px 0 4px}
+.chip{font:600 11px/16px var(--sans);border-radius:10px;padding:2px 8px;white-space:nowrap}
+.chip.error{background:var(--error-soft);color:var(--over)}.chip.warning{color:var(--warn)}.chip.success{color:var(--ok)}
+.alert{display:flex;align-items:center;gap:12px;border-radius:12px;padding:14px 18px;margin-top:20px;font-size:13px;
+ border:1px solid color-mix(in srgb,var(--warn) 35%,var(--panel));background:color-mix(in srgb,var(--warn) 10%,var(--panel))}
+.alert i{flex:none;width:10px;height:10px;border-radius:50%;background:var(--warn)}
+.alert.error{border-color:color-mix(in srgb,var(--over) 35%,var(--panel));background:var(--error-soft)}.alert.error i{background:var(--over)}
+/* bars */
+.sbar{display:flex;gap:2px;height:8px;border-radius:4px;background:var(--track);overflow:hidden}
+.sbar i{display:block;height:100%}.hbar i{border-radius:4px}
+.sbar.big{height:12px;border-radius:6px;margin-bottom:14px}
+.sbar.foot{margin-top:12px}
+.sbar.tb{height:8px;border-radius:2px;background:none;align-self:center}.sbar.tb i{border-radius:2px}
+.sd{display:inline-block;width:8px;height:8px;border-radius:50%;flex:none}
+/* side card rows: name, a dim note, a figure */
+.li{display:grid;grid-template-columns:minmax(0,1fr) auto 76px;gap:8px;align-items:baseline;padding:6px 0}
+.li .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:flex;align-items:center;gap:8px}
+.li .n,.n{text-align:right;font:13px var(--mono);font-variant-numeric:tabular-nums}
+.li .m.n{font:12px var(--sans)}
+th.n,.tr.th .n{font:11px var(--sans)}
+.li.dim .nm,.li.dim .n{color:var(--dim)}.li.me .nm,.li.me .n{font-weight:700}
+.sessions details>summary.li{cursor:pointer;list-style:none;color:var(--secondary)}
+.sessions summary::-webkit-details-marker{display:none}
+.sessions summary .nm::before{content:"▸";color:var(--dim)}.sessions details[open]>summary .nm::before{content:"▾"}
+.sessions details .li .nm{font-size:12px}
+/* where the money went */
+table{border-collapse:collapse;width:100%}
+th{font-size:11px;font-weight:400;color:var(--dim);text-align:left;padding:0 0 6px}
+td{padding:9px 0;border-top:1px solid var(--line);vertical-align:middle}
+th.n,td.n{padding-left:16px;white-space:nowrap}
+.rl{display:flex;gap:10px}.rl .m{font-size:12px}
+/* the dot sits on the middle of the first line (the rate's name), not the top of the row */
+.dl{display:flex;align-items:center;height:1.45em}
+tr.tot td{font-weight:700;font-family:var(--sans)}tr.tot td.n{font-family:var(--mono)}
+.card>p.m{margin:12px 0 0}
+/* every tool */
+.scroll{overflow-x:auto}.tt{min-width:720px}
+.tr{display:grid;grid-template-columns:minmax(200px,1fr) 60px 90px 220px 80px;gap:0 16px;align-items:center;padding:8px 0;border-top:1px solid var(--line)}
+.tr.th{border-top:0;padding:0 0 6px;font-size:11px;color:var(--dim)}
+details details .tr,details .tr.leaf{border-top:0;padding:4px 0}
+.tn{display:flex;align-items:center;gap:8px;min-width:0}
+.tn .nm{font:13px var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tr.top>.tn .nm{font-weight:500}.tr.over .nm{color:var(--dim)}
+.tag{font:400 11px/16px var(--sans);font-style:normal;color:var(--secondary);background:var(--bg);border-radius:6px;padding:1px 7px;white-space:nowrap}
+summary.tr{cursor:pointer;list-style:none}summary.tr::-webkit-details-marker{display:none}
+summary.tr .tn::before{content:"▸";color:var(--dim);width:10px;flex:none}details[open]>summary.tr .tn::before{content:"▾"}
+.tr.leaf .tn::before{content:"";width:10px;flex:none}
+summary.tr:hover,summary.li:hover{background:var(--hover)}
+.legend{display:flex;gap:16px;margin-top:14px;font-size:12px;color:var(--dim)}.legend span{display:flex;align-items:center;gap:6px}
+/* charts */
+svg{display:block;width:100%;height:auto}svg text{fill:var(--text);font-family:var(--sans);font-size:13px}svg .v{fill:var(--dim)}
+.flow svg{max-width:100%}
+html[data-state=stale] #p-hero{opacity:.55}
+html[data-state=stale] #p-hero::after{content:"These figures stopped updating: the session may have ended.";display:block;margin-top:8px;font-size:12px;color:var(--dim)}
+.chart h2{align-items:center}
+.seg{margin-left:auto;display:inline-flex;gap:2px;padding:2px;border-radius:8px;background:var(--bg)}
+.seg button{font:12px/17px var(--sans);color:var(--dim);background:none;border:0;border-radius:6px;padding:4px 10px;cursor:pointer}
+.seg button:hover{color:var(--text)}
+html:not([data-x=calls]) .seg [data-x=time],html[data-x=calls] .seg [data-x=calls]{background:var(--panel);color:var(--text);font-weight:500;
+ box-shadow:0 0 0 1px var(--line)}
 html:not([data-x=calls]) svg.xc,html[data-x=calls] svg.xt{display:none}
-.chart .g{stroke:var(--line)}.chart .a{stroke:var(--muted);stroke-opacity:.5}
+.chart svg text{font-size:12px}.chart .g{stroke:var(--line)}.chart .a{stroke:var(--dim);stroke-opacity:.5}
 .chart .ln{fill:none;stroke-width:2;stroke-linejoin:round}.chart .ln:hover{stroke-width:3.5}
-.pm line{stroke:var(--muted);stroke-opacity:.35;stroke-dasharray:3 4}.pm .hit{stroke:#000;stroke-opacity:0;stroke-width:9;stroke-dasharray:none}
+.pm line{stroke:var(--dim);stroke-opacity:.4;stroke-dasharray:3 4}.pm .hit{stroke:#000;stroke-opacity:0;stroke-width:9;stroke-dasharray:none}
 .pm:hover line:first-child{stroke-opacity:.9}
-.cols{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:14px 0 4px;font-size:12px;color:var(--muted)}
-.cols>span{text-transform:uppercase;letter-spacing:.04em;font-weight:600;margin-right:4px}
-.cols button{font:inherit;color:var(--fg);background:var(--track);border:1px solid var(--line);border-radius:999px;
- padding:2px 11px;cursor:pointer;transition:background .15s,color .15s}
-.cols button[aria-pressed=false]{background:none;color:var(--muted);text-decoration:line-through;border-style:dashed}
-.cols button.all{background:none;border-color:transparent;color:var(--muted);text-decoration:underline}
-@media (max-width:600px){body{padding:16px}}
+/* narrower windows: tiles wrap, the side column moves under the main one */
+@media (max-width:1200px){.kpis{grid-template-columns:repeat(3,minmax(0,1fr))}.kpi{border-top:1px solid var(--line)}
+ .kpi:nth-child(-n+3){border-top:0}.kpi:nth-child(3n+1){border-left:0}}
+@media (max-width:1000px){.row2{grid-template-columns:minmax(0,1fr)}}
+@media (max-width:640px){body{padding:16px}.card{padding:16px}.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .kpis .kpi{border-left:0;border-top:1px solid var(--line)}.kpis .kpi.lead{grid-column:1/-1;border-top:0}
+ .kpis .kpi:nth-child(odd):not(.lead){border-left:1px solid var(--line)}}
 """
 
 # Which x-axis the cost-over-time chart shows. Kept on <html>, outside the body the live
@@ -808,11 +1087,11 @@ try { const m = localStorage.getItem("tokentab-x"); if (m) document.documentElem
 # Keeps the page current from its data file (`--push`): every few seconds a script tag
 # loads `<name>.js` beside the page (a cache-busting query on it), which calls
 # `__tokentab` with the parts; only a part whose markup changed is swapped, in place, so
-# the Sankey's hover, the scroll position and the chart's axis survive. The dot says
-# whether a push arrived in the last 15 s.
+# the Sankey's hover, the scroll position, the chart's axis and the opened tool rows survive. <html>'s data-state says
+# whether a push arrived in the last 15 s; a stale page dims its tiles.
 LIVE = """<script>
 (function () {
-  var src = SRC, last = {}, seen = 0, at = "", dot = document.getElementById("dot");
+  var src = SRC, last = {}, seen = 0, at = "";
   window.__tokentab = function (d) {
     seen = Date.now();
     if (d.at === at) return;
@@ -820,7 +1099,14 @@ LIVE = """<script>
     for (var k in d.parts) {
       if (last[k] === d.parts[k]) continue;
       var el = document.getElementById("p-" + k);
-      if (el) el.innerHTML = d.parts[k];
+      if (el) {
+        // a tool row the reader opened stays open across the swap
+        var open = Array.prototype.map.call(el.querySelectorAll("details[open]"), function (x) { return x.dataset.path; });
+        el.innerHTML = d.parts[k];
+        open.forEach(function (p) {
+          Array.prototype.forEach.call(el.querySelectorAll("details"), function (x) { if (x.dataset.path === p) x.open = true; });
+        });
+      }
       last[k] = d.parts[k];
     }
   };
@@ -833,8 +1119,7 @@ LIVE = """<script>
   setInterval(poll, 3000);
   setInterval(function () {
     var ok = Date.now() - seen < 15000;
-    dot.className = "dot " + (ok ? "on" : "off");
-    dot.textContent = ok ? "live" : (seen ? "stale" : "snapshot");
+    document.documentElement.dataset.state = ok ? "live" : (seen ? "stale" : "snapshot");
   }, 1000);
   poll();
 })();
@@ -849,7 +1134,7 @@ def page(content, data_src=None):
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>TokenTab status</title>
 <style>{CSS.replace("SVGW", str(size()[0]))}</style></head><body>
-<h1>TokenTab · status <span class="dot" id="dot">snapshot</span></h1>
+<header><h1>TokenTab status</h1></header>
 <div id="app">{content}</div>
 {AXIS}{live}</body></html>"""
 

@@ -1,8 +1,22 @@
-# claude-marketplace
+# Supertab's Claude Code plugins
 
-Supertab's plugin marketplace for Claude Code. Marketplace name: `supertab`.
+Plugins from [Supertab](https://supertab.co) for Claude Code. Marketplace name:
+`supertab`.
 
-## Plugins
+## TokenTab: see what Claude Code is spending
+
+Ever wondered why one prompt cost so much more than the last? TokenTab prices every API
+call as it happens and shows you where the money went, tool by tool, with optional
+budgets that warn you before you overspend. Free, open source, and nothing leaves your
+machine.
+
+```
+/plugin install tokentab --marketplace getsupertab/claude-marketplace
+```
+
+**[Read more about TokenTab →](plugins/tokentab/README.md)**
+
+## All plugins
 
 | Plugin | Install id | What it does |
 |---|---|---|
@@ -19,19 +33,20 @@ The repo is public, so no git credentials are needed. In Claude Code:
 /plugin install <plugin>@supertab
 ```
 
-or from a shell: `claude plugin marketplace add getsupertab/claude-marketplace`, then
-`claude plugin install <plugin>@supertab`. Each plugin's README covers what
-happens after install.
+or from a shell:
+
+```bash
+claude plugin marketplace add getsupertab/claude-marketplace
+```
+
+```bash
+claude plugin install <plugin>@supertab
+```
 
 Claude Code v2.1.275 or later can do both in one step, inside a session:
 `/plugin install <plugin> --marketplace getsupertab/claude-marketplace`.
 
 ## Updates
-
-Plugins here set no `version`, so every commit to `main` is a new version, and the
-version string is the commit sha (`~/.claude/plugins/cache/supertab/<plugin>/<sha>/`).
-Reinstalling the same commit lands in the same folder; it is not a way to get a fresh
-state (uninstalling deletes a plugin's data, see Remove). To pull a new version:
 
 ```bash
 claude plugin marketplace update supertab
@@ -41,19 +56,17 @@ claude plugin marketplace update supertab
 claude plugin update <plugin>@supertab
 ```
 
-The marketplace update alone already reinstalls plugins at the new commit; the second
-command confirms it. Then start a new session (or run `/reload-plugins`).
+Then start a new session (or run `/reload-plugins`). Sessions already open keep the old
+version until they end.
 
-Automatic updates are off by default for custom marketplaces. To turn them on: `/plugin`
-→ Marketplaces → supertab → Enable auto-update. Claude Code then checks
-at startup, and an update applies from the next session.
+To update automatically: `/plugin` → Marketplaces → supertab → Enable auto-update.
+Claude Code then checks at startup, and an update applies from the next session.
 
 **Not from the Claude Desktop app.** Desktop starts its bundled `claude` with
 `DISABLE_AUTOUPDATER=1` (the app updates that binary itself), and Claude Code skips
 plugin and marketplace auto-update behind the same flag (`Plugin autoupdate: skipped
-(auto-updater disabled)` in `~/.claude/debug/`). Auto-update only runs in sessions
-started from the terminal CLI. From Desktop, pull updates by hand with the two commands
-above.
+(auto-updater disabled)` in `~/.claude/debug/`). From Desktop, pull updates by hand with
+the two commands above.
 
 ## Remove
 
@@ -78,7 +91,11 @@ to undo that. Do it before uninstalling.
    `{"name": "<name>", "source": "./plugins/<name>", "description": "..."}`.
 3. Add a row to the table above.
 4. Check it: `claude plugin validate .`
+5. Give it a `version` in `plugin.json` and raise it with every change, or installed
+   copies never update.
 
 Data a plugin must keep across updates belongs in `${CLAUDE_PLUGIN_DATA}`, or in its own
 folder under the user's home. Never inside the plugin folder, which is replaced on every
 update.
+
+See [AGENTS.md](AGENTS.md) for the edit-and-reload loop and the checks.
