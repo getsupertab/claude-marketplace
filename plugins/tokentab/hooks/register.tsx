@@ -1,4 +1,4 @@
-import type { EngineInterface, PluginOptions, PromptSubmitInput, Register, RenderChildren, TelemetryRecordEntry, Timer, UiOpenResult } from 'claude-code'
+import type { EngineInterface, ModelUsage, PluginOptions, PromptSubmitInput, Register, RenderChildren, TelemetryRecordEntry, Timer, UiOpenResult } from 'claude-code'
 import { TOKENS } from './tokens'
 
 // TokenTab's hooks module, three parts:
@@ -235,20 +235,29 @@ export type KeepWarm = {
 /** guard.py --idle: the last call's cache. `started` is epoch seconds. */
 export type Idle = { started: number; ctx: number; model: string; ttl: '1h' | '5m'; ttl_seconds: number; read_usd: number; rewrite_usd: number }
 /** One idle stretch, from a turn's end to the next turn's start. Times in ms. */
-export type Stretch = { since: number; spent: number; handedOff: boolean; lastFork?: number }
+export type Stretch = { since: number; spent: number; handedOff: boolean; lastFork?: number; lastPing?: number }
 export type WarmStep = { kind: 'wait'; ms: number } | { kind: 'handoff' } | { kind: 'ping' } | { kind: 'stop'; why: 'small' | 'cold' | 'off' | 'cap' | 'hours' }
 
 export const KEEP_WARM_DEFAULTS: KeepWarm = {
   enabled: true, handoff: true, min_context_tokens: 100_000,
   ping_at_minutes_1h: 50, ping_at_minutes_5m: 3, max_share_of_rewrite: 0.5, max_hours: 8,
 }
-export const PING_PROMPT = 'Reply with the single word ok.'
+export const PING_PROMPT = 'Reply with the single word ok, nothing else.'
 export const HANDOFF_PROMPT = 'The user has stepped away and this conversation\'s prompt cache is about to expire. '
   + 'Write a handoff note a fresh session can start from without this conversation, in Markdown, under 400 words: '
   + 'the goal; what is done (files changed, commits, branch); decisions made and why; what is in progress and the exact next steps; '
   + 'open questions for the user. Only facts from this conversation. Reply with the note alone.'
 const EXPIRY_MARGIN_MS = 30_000          // a ping set later than this before expiry fires this early instead
 const SETTLE_MS = 5_000                  // after a turn ends, its last ledger line has landed
+
+/** What a fork cost at the plugin's prices, from the usage its reply reports. */
+export function forkCost(prices: Prices, model: string, usage: Partial<ModelUsage> | undefined): number | undefined {
+  if (!usage) return undefined
+  return price(prices, model, {
+    input: num(usage.input_tokens), output: num(usage.output_tokens),
+    cache_read: num(usage.cache_read_input_tokens), cache_write: num(usage.cache_creation_input_tokens),
+  })
+}
 
 /** The timer's next move for an idle stretch at `now`. */
 export function warmStep(cfg: KeepWarm, idle: Idle | undefined, stretch: Stretch, now: number): WarmStep {
@@ -260,7 +269,8 @@ export function warmStep(cfg: KeepWarm, idle: Idle | undefined, stretch: Stretch
   if (now < at) return { kind: 'wait', ms: at - now }
   if (cfg.handoff && !stretch.handedOff) return { kind: 'handoff' }
   if (!cfg.enabled) return { kind: 'stop', why: 'off' }
-  if (stretch.spent + idle.read_usd > cfg.max_share_of_rewrite * idle.rewrite_usd) return { kind: 'stop', why: 'cap' }
+  // the last ping's real price stands in for the next one's: its output and thinking too
+  if (stretch.spent + (stretch.lastPing ?? idle.read_usd) > cfg.max_share_of_rewrite * idle.rewrite_usd) return { kind: 'stop', why: 'cap' }
   if (now - stretch.since > cfg.max_hours * 3_600_000) return { kind: 'stop', why: 'hours' }
   return { kind: 'ping' }
 }
@@ -321,7 +331,9 @@ async function warm($: EngineInterface): Promise<void> {
     if (stretch !== s) return
     if (!reply.isAnswered) { stopWarm(); return }
     s.lastFork = forkedAt
-    s.spent += idle!.read_usd
+    const cost = forkCost(await loadPrices($), idle!.model, reply.usage) ?? idle!.read_usd
+    s.spent += cost
+    if (step.kind === 'ping') s.lastPing = cost
     if (step.kind === 'handoff') {
       const path = handoffPath(await home($), await sid($))
       await $.fs.write(path, `<!-- TokenTab handoff, ${new Date(forkedAt).toISOString()} -->\n${reply.text.trim()}\n`)

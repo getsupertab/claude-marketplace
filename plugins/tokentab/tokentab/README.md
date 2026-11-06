@@ -118,14 +118,15 @@ call. On a context of `min_context_tokens` or more it forks the conversation onc
 (`$.model.fork`): the fork re-sends the cached prefix, billed as a cache read, and that
 restarts the cache's clock. The first fork asks for a handoff note (`handoff: false`
 skips it) and writes it to `handoff/<session>.md`; later ones ask for one word. Pings
-stop when their reads would pass `max_share_of_rewrite` (0.5) of one re-write, or after
+stop when the next would pass `max_share_of_rewrite` (0.5) of one re-write, each fork
+priced from the usage it reports (output and thinking too), or after
 `max_hours` (8); then the cache goes cold, and the expired-cache question names the
 handoff note. A prompt of yours ends the stretch. `enabled: false` keeps the handoff
 note and sends no pings.
 
 On Opus 5.5 (reads at 0.05× input), a 1-hour cache reaches `max_hours` first, after
-about 10 pings; a 5-minute cache reaches the spend cap after about 12, roughly 36 minutes. The spend counted is the read alone; the
-reply's few output tokens (a few hundred for the note) are not. A computer that sleeps
+about 10 pings; a 5-minute cache reaches the spend cap after about 12, roughly 36 minutes.
+A computer that sleeps
 stops the timer, and an agent waiting on a permission prompt is mid-turn, so no timer
 runs then.
 

@@ -1,7 +1,7 @@
 import { test, expect, mock } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On, RenderElement, RenderNode } from 'claude-code'
-import { at, barCells, HANDOFF_PROMPT, KEEP_WARM_DEFAULTS, PING_PROMPT, warmStep, barSvg, dataDir, inUnit, int, liveLines, pct, SECTIONS, SERIES, shareCard, shareCardSvg, shareLinks, sharePageHtml, shareText, shown, stripAnsi, toneOf, unitOf, usd, withNewKeys, wrapWords } from './register'
+import { at, barCells, forkCost, HANDOFF_PROMPT, KEEP_WARM_DEFAULTS, PING_PROMPT, warmStep, barSvg, dataDir, inUnit, int, liveLines, pct, SECTIONS, SERIES, shareCard, shareCardSvg, shareLinks, sharePageHtml, shareText, shown, stripAnsi, toneOf, unitOf, usd, withNewKeys, wrapWords } from './register'
 import type { Idle, Report } from './register'
 
 // The world beneath the plugin: `$.fs` reaches nothing under `claude plugin test`, and
@@ -40,7 +40,7 @@ function world(on: On, initial: Record<string, string>, placed = { is: true }, r
     uname: 'Darwin', openers: { open: 0, 'xdg-open': 0, 'explorer.exe': 1 },
     idle: {}, forks: [], notes: [],
   }
-  on('model.fork', ($, e) => { ui.forks.push(e.prompt); return { value: { isAnswered: true as const, text: e.prompt === HANDOFF_PROMPT ? '# Handoff\nnext: tests' : 'ok', usage: {} } as never } })
+  on('model.fork', ($, e) => { ui.forks.push(e.prompt); return { value: { isAnswered: true as const, text: e.prompt === HANDOFF_PROMPT ? '# Handoff\nnext: tests' : 'ok', usage: { input_tokens: 16, output_tokens: 250, cache_read_input_tokens: 158_000, cache_creation_input_tokens: 0 } } as never } })
   on('ui.notify', ($, e) => { ui.notes.push(e.text); return { value: {} as never } })
   on('session.surfaces', () => ({ value: ui.surfaces }))
   on('session.attach', ($, e) => ({ clientId: e.clientId }))
@@ -983,6 +983,9 @@ test('keep-warm: wait until shortly before expiry, hand off once, ping up to the
   expect(warmStep(cfg, IDLE, { ...fresh, handedOff: true, lastFork: 50 * MIN }, 51 * MIN)).toEqual({ kind: 'wait', ms: 49 * MIN })
   // half a re-write is $1.20: twenty reads at $0.06
   expect(warmStep(cfg, IDLE, { ...fresh, handedOff: true, spent: 1.2 }, 50 * MIN)).toEqual({ kind: 'stop', why: 'cap' })
+  // the last ping's real price, output included, is what the next one is expected to cost
+  expect(warmStep(cfg, IDLE, { ...fresh, handedOff: true, spent: 1.1, lastPing: 0.06 }, 50 * MIN)).toEqual({ kind: 'ping' })
+  expect(warmStep(cfg, IDLE, { ...fresh, handedOff: true, spent: 1.1, lastPing: 0.11 }, 50 * MIN)).toEqual({ kind: 'stop', why: 'cap' })
   expect(warmStep({ ...cfg, max_hours: 0.5 }, IDLE, { ...fresh, handedOff: true }, 50 * MIN)).toEqual({ kind: 'stop', why: 'hours' })
   expect(warmStep({ ...cfg, enabled: false }, IDLE, { ...fresh, handedOff: true }, 50 * MIN)).toEqual({ kind: 'stop', why: 'off' })
   expect(warmStep(cfg, IDLE, fresh, 61 * MIN)).toEqual({ kind: 'stop', why: 'cold' })
@@ -1017,4 +1020,10 @@ test('keep-warm: after a turn the timer writes the handoff note, pings, and a ne
   await clock.advance(120 * MIN)
   await clock.settle()
   expect(ui.forks.length).toBe(2)
+})
+
+test('keep-warm: a fork is priced from its usage, output included', () => {
+  const prices = { models: { m: { input: 4, output: 20, cache_read: 0.2, cache_write_1h: 8 } } }
+  expect(Math.round(forkCost(prices, 'm', { input_tokens: 16, output_tokens: 250, cache_read_input_tokens: 158_000, cache_creation_input_tokens: 0 })! * 1e6)).toBe(36_664)
+  expect(forkCost(prices, 'm', undefined)).toBeUndefined()
 })
