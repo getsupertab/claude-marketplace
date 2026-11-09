@@ -200,6 +200,22 @@ clear about what TokenTab does:
   folder. Uninstalling leaves that folder; delete it to remove the data.
 - **It's open source** (Apache 2.0), so you don't have to take our word for any of this.
 
+### The telemetry hook
+
+To see every API call, TokenTab hooks Claude Code's `telemetry.log` event with the
+matcher `{ to: 'collector' }` (`hooks/register.tsx`). That hook sees every record
+addressed to the telemetry collector, with or without telemetry switched on. This is
+what it does with them:
+
+- **It passes every record on first, unchanged.** It never drops, delays, edits or
+  denies one, and a failure in TokenTab never touches the record.
+- **It reads only `api_request` records** and ignores every other kind.
+- **From an `api_request` it keeps** the model, the four token counts, Claude Code's
+  `cost_usd`, `query_source`, `request_id`, `duration_ms` and the session id, prices
+  them, and appends one line to the local ledger (see below). Every other attribute of
+  the record is ignored and not stored.
+- **It sends nothing anywhere.** The ledger stays in TokenTab's data folder.
+
 ## Tell us what you think
 
 TokenTab is early, and we'd love to hear from you:
