@@ -1122,9 +1122,9 @@ function budgetTab($: EngineInterface, e: RenderEvent): RenderChildren {
   const column = (ctl: RenderChildren, stretch = false) => (
     <Box width={16} flexShrink={0} flexDirection="column" alignItems={stretch ? 'stretch' : 'flex-start'}>{ctl}</Box>
   )
-  const toggle = (key: string, on: boolean, onPress: () => void): RenderChildren => mobile
-    ? <Text size="footnote" mono weight="semibold">{on ? 'on' : 'off'}</Text>
-    : <Button key={key} label={on ? 'on' : 'off'} variant={on ? 'primary' : 'secondary'} onPress={onPress} />
+  const toggle = (key: string, isOn: boolean, onPress: () => void): RenderChildren => mobile
+    ? <Text size="footnote" mono weight="semibold">{isOn ? 'on' : 'off'}</Text>
+    : <Button key={key} label={isOn ? 'on' : 'off'} variant={isOn ? 'primary' : 'secondary'} onPress={onPress} />
   const unit = unitOf(o?.windows ?? [])
   const control = (s: Setting): RenderChildren => {
     const v = at(o?.budget, s.key)
