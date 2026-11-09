@@ -711,13 +711,13 @@ test('the Budget tab: auto-open through the config menu, the limits through the 
   const tree = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   const t = texts(tree)
   expect(t.some(x => x.text === 'Open pane at session start')).toBe(true)
-  expect(t.filter(x => /^[A-Z][A-Z ]+$/.test(x.text) && x.props.dimColor).map(x => x.text)).toEqual(['OPTIONS', 'LIMITS'])
+  expect(t.filter(x => /^[A-Z][A-Z ]+$/.test(x.text) && x.props.dimColor).map(x => x.text)).toEqual(['OPTIONS', 'LIMITS', 'KEEP CACHE WARM'])
   // the units are in the names
-  expect(t.filter(x => x.text.endsWith(')')).map(x => x.text)).toEqual(['This session (USD)', 'Today (USD)', 'Warn at (%)'])
+  expect(t.filter(x => x.text.endsWith(')')).map(x => x.text)).toEqual(['This session (USD)', 'Today (USD)', 'Warn at (%)', 'Stop after (hours)'])
   expect(elements(tree, 'Button').find(b => b.key === 'auto-open')?.label).toBe('on')
   // the fields hold budget.json's values, "off" for null, grouped tokens
   const inputs = elements(tree, 'Input')
-  expect(inputs.map(i => i.key)).toEqual(['b-session_limit_usd', 'b-daily_limit_usd', 'b-warn_at_percent'])
+  expect(inputs.map(i => i.key)).toEqual(['b-session_limit_usd', 'b-daily_limit_usd', 'b-warn_at_percent', 'b-keep_warm.max_hours'])
   expect(inputs.find(i => i.key === 'b-daily_limit_usd')?.value).toBe('40')
   expect(inputs.find(i => i.key === 'b-session_limit_usd')?.value).toBe('off')
   expect(elements(tree, 'Button').find(b => b.key === 'b-budgets_on')?.label).toBe('off')
@@ -773,7 +773,7 @@ test('session.measure records the usage windows; the Budget tab then shows the p
   await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   await $.ui.press(press('tab-budget'))
   const tree = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
-  expect(elements(tree, 'Input').map(i => i.key)).toEqual(['b-five_hour_limit_percent', 'b-weekly_limit_percent', 'b-warn_at_percent'])
+  expect(elements(tree, 'Input').map(i => i.key)).toEqual(['b-five_hour_limit_percent', 'b-weekly_limit_percent', 'b-warn_at_percent', 'b-keep_warm.max_hours'])
   expect(elements(tree, 'Button').some(b => b.key === 'b-limit_unit')).toBe(false)
 })
 
@@ -1026,4 +1026,9 @@ test('keep-warm: a fork is priced from its usage, output included', () => {
   const prices = { models: { m: { input: 4, output: 20, cache_read: 0.2, cache_write_1h: 8 } } }
   expect(Math.round(forkCost(prices, 'm', { input_tokens: 16, output_tokens: 250, cache_read_input_tokens: 158_000, cache_creation_input_tokens: 0 })! * 1e6)).toBe(36_664)
   expect(forkCost(prices, 'm', undefined)).toBeUndefined()
+})
+
+test('the Budget tab carries the keep-warm switch, the handoff switch and its time limit', () => {
+  const warm = SECTIONS.find(section => section.toggle?.key === 'keep_warm.enabled')!
+  expect(warm.rows.map(row => row.key)).toEqual(['keep_warm.handoff', 'keep_warm.max_hours'])
 })

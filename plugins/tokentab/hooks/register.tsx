@@ -485,6 +485,10 @@ export const SECTIONS: { title: string; toggle?: Setting; rows: Setting[] }[] = 
     { key: 'warn_at_percent', label: 'Warn at', unit: '%', kind: 'limit' },
     { key: 'hard_stop', label: 'Hard stop at 100%', kind: 'switch' },
   ] },
+  { title: 'keep cache warm', toggle: { key: 'keep_warm.enabled', label: 'keep the cache warm while idle', kind: 'switch' }, rows: [
+    { key: 'keep_warm.handoff', label: 'Handoff note before it expires', kind: 'switch' },
+    { key: 'keep_warm.max_hours', label: 'Stop after', unit: 'hours', kind: 'limit' },
+  ] },
 ]
 
 type Json = Record<string, unknown>

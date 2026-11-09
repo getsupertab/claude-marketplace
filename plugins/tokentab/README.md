@@ -173,7 +173,8 @@ The limits are off, but these checks run from the start. Each one is set in
   cached context and restarts its clock. The first of these asks Claude for a handoff
   note, saved as `handoff/<session>.md` in the data folder; you get a notification. The
   pings stop once they have cost half of one re-write, or after 8 hours. The session must
-  stay open and the computer awake. Tune or turn off under `keep_warm`.
+  stay open and the computer awake. Turn it off, or the note, on the pane's Budget tab
+  (KEEP CACHE WARM), or tune it under `keep_warm`.
 - **Helpers can't start helpers.** A helper agent that tries to start or message another
   agent is stopped. Set `helpers_may_delegate` to `true` to allow it.
 - **Notes to Claude.** When a session's context passes 200k and again 350k tokens, Claude
