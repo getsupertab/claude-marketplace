@@ -133,7 +133,7 @@ async function loadPrices($: EngineInterface): Promise<Prices> {
   return prices
 }
 
-async function home($: EngineInterface): Promise<string> {
+async function dataRoot($: EngineInterface): Promise<string> {
   return dataDir(await $.env.get('CLAUDE_CONFIG_DIR'), await $.env.get('USERPROFILE'), await $.env.get('HOME'))
 }
 
@@ -458,7 +458,7 @@ async function loginAccount($: EngineInterface): Promise<string | null> {
 
 /** This session's usage windows; before its first reading, the last one written, only if it was this login's. */
 async function readWindows($: EngineInterface): Promise<{ kind: string }[]> {
-  const data = await home($)
+  const data = await dataRoot($)
   let doc: Json
   try {
     doc = JSON.parse(await $.fs.read(`${data}/state/windows/${await sid($)}.json`)) as Json
@@ -471,7 +471,7 @@ async function readWindows($: EngineInterface): Promise<{ kind: string }[]> {
 }
 
 async function readBudget($: EngineInterface): Promise<void> {
-  const path = `${await home($)}/budget.json`
+  const path = `${await dataRoot($)}/budget.json`
   const errors = options?.errors ?? {}
   const windows = await readWindows($)
   try {
@@ -494,7 +494,7 @@ async function refreshNow($: EngineInterface): Promise<void> {
     } else {
       $.ui.status((await python($, 'tokentab.py', ['--status', '--session', id])).trim())
     }
-    if (await pageIsOpen($)) await python($, 'sankey.py', ['--session', id, '--push', pushPath(await home($), id)])
+    if (await pageIsOpen($)) await python($, 'sankey.py', ['--session', id, '--push', pushPath(await dataRoot($), id)])
     error = undefined
   } catch (err) {
     error = String(err instanceof Error ? err.message : err)
@@ -559,7 +559,7 @@ async function openSnapshot($: EngineInterface): Promise<void> {
   let written: string | undefined   // the page, once sankey.py wrote it: a failed open names it
   try {
     const id = await sid($)
-    const path = pagePath(await home($), id)
+    const path = pagePath(await dataRoot($), id)
     await python($, 'sankey.py', ['--session', id, '--out', path])
     written = path
     const { argv, checkExit } = await opener($, path)
@@ -640,7 +640,7 @@ export const register: Register = (on, pluginOptions) => {
   on('session.start', async ($, e, next) => {
     const r = await next(e)
     try {
-      const data = await home($)
+      const data = await dataRoot($)
       // The loaded marker: scripts/loaded-check.sh looks for it on the first prompt.
       await $.fs.write(`${data}/state/loaded/${await $.session.id()}`, new Date(await $.clock.now()).toISOString() + '\n')
       // First run: the shipped limits become the user's budget.json. After that only keys
@@ -769,7 +769,7 @@ export const register: Register = (on, pluginOptions) => {
       measured = true
       try {
         const windows = e.rateLimits.map(w => ({ kind: w.kind, percentUsed: w.percentUsed, resetsAt: w.resetsAt ?? null }))
-        const data = await home($), at = new Date(await $.clock.now()).toISOString()
+        const data = await dataRoot($), at = new Date(await $.clock.now()).toISOString()
         await $.fs.write(`${data}/state/windows/${await sid($)}.json`, JSON.stringify({ at, windows }) + '\n')
         await $.fs.write(`${data}/state/rate_limits.json`,
           JSON.stringify({ at, account: await loginAccount($), windows }) + '\n')
@@ -786,7 +786,7 @@ export const register: Register = (on, pluginOptions) => {
       try {
         const id = str(e.attributes['session.id']) ?? await $.session.id()
         const ts = e.loggedAt || new Date(await $.clock.now()).toISOString()
-        await append($, await home($), toLine(e, await loadPrices($), id, ts))
+        await append($, await dataRoot($), toLine(e, await loadPrices($), id, ts))
         if (tick !== undefined) stale = true   // the clock's next beat redraws, see startClock
       } catch { /* see above */ }
     }
@@ -1324,14 +1324,14 @@ button.primary{background:var(--primary);color:var(--on-primary)}
 </div></div></main>
 <script>
 const DATA = ${data};
-const $ = id => document.getElementById(id);
-const current = () => DATA.variants[$('desc').checked ? 0 : 1];
-const say = text => { $('status').textContent = text; };
+const byId = id => document.getElementById(id);
+const current = () => DATA.variants[byId('desc').checked ? 0 : 1];
+const say = text => { byId('status').textContent = text; };
 function draw() {
   const v = current();
-  $('card').innerHTML = v.svg;
-  $('x').href = v.links.x;
-  $('linkedin').href = v.links.linkedin;
+  byId('card').innerHTML = v.svg;
+  byId('x').href = v.links.x;
+  byId('linkedin').href = v.links.linkedin;
 }
 function png() {
   const svg = current().svg;
@@ -1347,18 +1347,18 @@ function png() {
     img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
   });
 }
-$('desc').addEventListener('change', draw);
+byId('desc').addEventListener('change', draw);
 // A promise in the ClipboardItem keeps Safari's user gesture alive while the PNG renders
 const copyImage = () => navigator.clipboard.write([new ClipboardItem({ 'image/png': png() })]);
-$('copy-image').addEventListener('click', async () => {
+byId('copy-image').addEventListener('click', async () => {
   try { await copyImage(); say('Image copied.'); }
   catch (err) { say('Not copied: ' + err.message + '. Use Download PNG instead.'); }
 });
 // Post links take only text, so the image goes on the clipboard first, to paste into the post
 for (const [id, name] of [['x', 'X'], ['linkedin', 'LinkedIn']]) {
-  $(id).addEventListener('click', async event => {
+  byId(id).addEventListener('click', async event => {
     event.preventDefault();
-    const href = $(id).href;
+    const href = byId(id).href;
     let copied = true;
     try { await copyImage(); } catch { copied = false; }
     const tab = window.open(href, '_blank', 'noopener');
@@ -1370,16 +1370,16 @@ for (const [id, name] of [['x', 'X'], ['linkedin', 'LinkedIn']]) {
 let file;
 const prepare = () => { file = undefined; return png().then(blob => { file = new File([blob], DATA.file, { type: 'image/png' }); }, () => { file = undefined; }); };
 if (navigator.canShare && navigator.canShare({ files: [new File([''], DATA.file, { type: 'image/png' })] })) {
-  $('native').hidden = false;
-  $('desc').addEventListener('change', prepare);
+  byId('native').hidden = false;
+  byId('desc').addEventListener('change', prepare);
   prepare();
-  $('native').addEventListener('click', async () => {
+  byId('native').addEventListener('click', async () => {
     if (!file) { say('Still preparing the image; try again.'); return; }
     try { await navigator.share({ files: [file], text: current().text }); }
     catch (err) { if (err.name !== 'AbortError') say('Not shared: ' + err.message); }
   });
 }
-$('download').addEventListener('click', async () => {
+byId('download').addEventListener('click', async () => {
   try {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(await png()); a.download = DATA.file; a.click();
@@ -1387,7 +1387,7 @@ $('download').addEventListener('click', async () => {
     say('PNG downloaded.');
   } catch (err) { say('Not downloaded: ' + err.message); }
 });
-$('copy-text').addEventListener('click', async () => {
+byId('copy-text').addEventListener('click', async () => {
   try { await navigator.clipboard.writeText(current().text); say('Text copied.'); }
   catch (err) { say('Not copied: ' + err.message); }
 });
@@ -1401,7 +1401,7 @@ async function openSharePage($: EngineInterface, r: Report): Promise<void> {
   let written: string | undefined
   try {
     const now = new Date()
-    const path = `${await home($)}/share/${(await sid($)).slice(0, 8)}.html`
+    const path = `${await dataRoot($)}/share/${(await sid($)).slice(0, 8)}.html`
     await $.fs.write(path, sharePageHtml(shareCard(r, now, true)!, shareCard(r, now, false)!, r.session?.title ?? r.sid.slice(0, 8)))
     written = path
     const { argv, checkExit } = await opener($, path)
