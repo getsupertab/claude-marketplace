@@ -1233,7 +1233,7 @@ html:not([data-x=calls]) svg.xc,html[data-x=calls] svg.xt{display:none}
 @media (max-width:1200px){.kpis{grid-template-columns:repeat(3,minmax(0,1fr))}.kpi{border-top:1px solid var(--line)}
  .kpi:nth-child(-n+3){border-top:0}.kpi:nth-child(3n+1){border-left:0}}
 @media (max-width:1000px){.row2{grid-template-columns:minmax(0,1fr)}}
-@media (max-width:1100px){.cf{grid-template-columns:minmax(0,1fr)}
+@media (max-width:1100px){.cf{grid-template-columns:minmax(0,1fr)}.cc{position:static}
  .cl{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px 28px;align-items:start}.g+.g{margin-top:0}}
 @media (max-width:640px){body{padding:16px}.card{padding:16px}.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
  .kpis .kpi{border-left:0;border-top:1px solid var(--line)}.kpis .kpi.lead{grid-column:1/-1;border-top:0}
