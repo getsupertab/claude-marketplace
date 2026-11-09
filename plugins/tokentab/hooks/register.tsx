@@ -591,7 +591,7 @@ async function setAutoOpen($: EngineInterface, value: boolean): Promise<void> {
     }
     const stored = autoOpenHere
     await $.store.delete(AUTO_OPEN)
-    const r = await $.config.set({ key: 'tokentab.autoOpen', value })
+    const r = await $.config.set({ key: 'tokentab.autoOpen', value: value })
     if ('deny' in r && r.deny !== undefined) {
       if (stored !== undefined) await $.store.set(AUTO_OPEN, stored)
       $.ui.toast(`TokenTab: auto-open not changed: ${r.deny}`)
