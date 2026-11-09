@@ -145,8 +145,10 @@ def check(b, label, tb=None):
         if o_ and abs(o_ - v) > 1e-9: errs.append(f"node {n}: out {o_} != {v}")
     if any(v < -1e-12 for _, _, v in links):
         errs.append("negative link")
-    # the SVG parses
+    errs += hover_list_check(b, tb)
+    # the SVG parses, the pane's and the page's
     minidom.parseString(sankey.svg(b, tb))
+    minidom.parseString(sankey.page_svg(b, tb))
     print(f"[{label}] cost ${b.cost:.6f}  " + ("OK" if not errs else "FAIL"))
     for e in errs:
         print("   ", e)
@@ -179,6 +181,41 @@ def verified_case(prices):
     if kt.prices_verified(prices, b):
         errs.append("a bucket with drift reads as verified")
     print("[verified] " + ("OK" if not errs else "FAIL"))
+    return errs
+
+
+def hover_list_check(b, tb=None):
+    """The list beside the page's Sankey, in its hover state: for every target (a node, a
+    ribbon), each column's slices sum to the target's total, except the tool column, which
+    sums to the part of it that passes a tool (the rest runs past the tool column); every
+    slice is in the list's markup, and the markup parses."""
+    errs = []
+    paths, _, _ = sankey.flows(b, tb)
+    _, links = sankey.columns(paths)
+    lid = {(s, d): i for i, (s, d, _) in enumerate(links)}
+    models = set(b.cost_bm)
+    on = lambda t, nodes: (t[1:] in {sankey.slug(n) for n in nodes} if t.startswith("n")
+                           else int(t[1:]) in {lid[e] for e in zip(nodes, nodes[1:])})
+    html = sankey.cost_list(b, tb)
+    minidom.parseString(html)
+    targets = sankey.hover_slices(paths, links)
+    if len(targets) != len({n for p, _ in paths for n in p}) + len(links):
+        errs.append(f"hover list: {len(targets)} targets, not one per node and ribbon")
+    for t, (tot, sl) in targets.items():
+        want = sum(v for nodes, v in paths if on(t, nodes))
+        via_tool = sum(v for nodes, v in paths if on(t, nodes) and any(sankey.role(n, models) == "tool" for n in nodes))
+        if abs(tot - want) > 1e-9:
+            errs.append(f"hover {t}: total {tot:.6f} != {want:.6f}")
+        for r in ("model", "kind", "rate", "tool", "sink"):
+            got = sum(v for n, v in sl.items() if sankey.role(n, models) == r)
+            if abs(got - (via_tool if r == "tool" else tot)) > 1e-9:
+                errs.append(f"hover {t}: {r} slices sum to {got:.6f}, not {via_tool if r == 'tool' else tot:.6f}")
+        for n, v in sl.items():
+            if n != "session" and f"--v{t}:'{sankey.usd(v, 4)}'" not in html:
+                errs.append(f"hover {t}: the row of {n} lacks its slice {sankey.usd(v, 4)}")
+        if f".cf:has({sankey.hover_sel(t, True)}){{--h0:'{sankey.usd(tot, 4)}'" not in html:
+            errs.append(f"hover {t}: the first header does not show {sankey.usd(tot, 4)}")
+    print(f"    hover list: {len(targets)} targets checked")
     return errs
 
 

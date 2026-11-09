@@ -120,11 +120,14 @@ def ribbon(u0, v0, h0, u1, v1, h1, color, bend_to=None):
 
 
 def node(u, v, h, color, label, value, right):
+    """A bar and its label; value None leaves the figure out (the page's list beside the
+    chart carries it)."""
     u = flip(u)
     fs = max(7, min(FONT_MAX, h + 1))   # font follows the node height, down to a readable floor
     if LABEL_MAX and len(label) > LABEL_MAX:
         label = label[:LABEL_MAX - 1] + "…"
-    text = f'<tspan font-size="{fs:.0f}">{html.escape(label)} <tspan class="v">{kt.money(value)}</tspan></tspan>'
+    fig = "" if value is None else f' <tspan class="v">{kt.money(value)}</tspan>'
+    text = f'<tspan font-size="{fs:.0f}">{html.escape(label)}{fig}</tspan>'
     if DIR == "ltr":
         tx = u + NODE_W + 8 if right else u - 8
         return (f'<rect x="{u}" y="{v:.1f}" width="{NODE_W}" height="{h:.1f}" fill="{color}"/>'
@@ -369,9 +372,14 @@ def bar(u, v, h, color, cls=""):
     return f'<rect class="{cls}" x="{v:.1f}" y="{u}" width="{h:.1f}" height="{NODE_W}" fill="{color}"/>'
 
 
-def svg(b, tb=None, traces=True, keep_tools=None):
+def svg(b, tb=None, traces=True, keep_tools=None, page=False, where=None):
     """The Sankey. traces=False leaves out the hover tracing layers and hit boxes (the bulk
-    of the markup); keep_tools folds the long tail of tools into one node."""
+    of the markup); keep_tools folds the long tail of tools into one node. page: drawn for
+    the status page beside cost_list(): labels without figures, and the hover rules scoped
+    to the card (.cf), so a row of the list lights the chart as its node does. where: a dict
+    to receive each node's place along its column (name -> start), for the list's order."""
+    tg = ' class="tg"' if page else ""   # .tg: a hover target, for the list's hover state
+    scope = ".cf" if page else "svg"
     all_paths, colors, labels = flows(b, tb)
     if keep_tools is not None:
         all_paths, colors, labels = fold_tools(all_paths, colors, labels, keep_tools)
@@ -382,7 +390,7 @@ def svg(b, tb=None, traces=True, keep_tools=None):
     # session node and every slice still adds up
     # room for the last column's labels (left to right only: elsewhere they sit under the
     # bars), estimated at 0.6em a character at the largest label size, so none is cut off
-    rpad = max(PAD, 12 + 13 * 0.6 * max(len(f"{labels[n]} {kt.money(v)}") for n, v in cols[-1].items())) \
+    rpad = max(PAD, 12 + 13 * 0.6 * max(len(labels[n] if page else f"{labels[n]} {kt.money(v)}") for n, v in cols[-1].items())) \
         if DIR == "ltr" else PAD
     w0, _ = layout(cols, links, rpad)
     floor = MIN_PX / (w0[0] / links[0][2])
@@ -391,6 +399,8 @@ def svg(b, tb=None, traces=True, keep_tools=None):
     links = [(s_, d, sum(v for _, idx, v in all_paths if i in idx)) for i, (s_, d, _) in enumerate(links)]
     cols = [{n: sum(v for nodes, _, v in all_paths if n in nodes) for n in col} for col in cols]
     w, pos = layout(cols, links, rpad)
+    if where is not None:
+        where.update({n: p[1] for n, p in pos.items()})
     val = {n: v for col in cols for n, v in col.items()}
     nid = {n: "n" + slug(n) for n in val}
     scale = w[0] / links[0][2]
@@ -415,18 +425,18 @@ def svg(b, tb=None, traces=True, keep_tools=None):
         # an invisible 6px-stroked copy makes hairline ribbons hoverable without changing the drawing
         rb = ribbon(geom[i][0], geom[i][1], w[i], geom[i][2], geom[i][3], w[i], f"url(#g{i})", bend_to=geom[i][4])
         hit = rb.replace(f'fill="url(#g{i})" fill-opacity="0.45"', 'class="h" fill="none" stroke="#000" stroke-opacity="0" stroke-width="6" pointer-events="stroke"') if traces else ""
-        parts.append(f'<g id="l{i}">{rb}{hit}</g>')
+        parts.append(f'<g id="l{i}"{tg}>{rb}{hit}</g>')
         out_off[src] += w[i]; in_off[dst] += w[i]
     # bars go under the trace layers, labels above everything; a label is a hover target too
     texts = []
     for ci, col in enumerate(cols):
         for n in col:
             u, v, h = pos[n]
-            rect, text = node(u, v, h, colors[n], labels[n], true_val[n], right=ci > 0).split("<text", 1)
+            rect, text = node(u, v, h, colors[n], labels[n], None if page else true_val[n], right=ci > 0).split("<text", 1)
             hh = max(h, HIT_H)   # transparent hit box so hairline nodes can be hovered
             hit = bar(u, v + h / 2 - hh / 2, hh, "none", "h").replace('<rect class="h"', '<rect class="h" pointer-events="all"') if traces else ""
-            parts.append(f'<g id="{nid[n]}">{rect}{hit}</g>')
-            texts.append(f'<g id="k{nid[n][1:]}"><text{text}</g>')
+            parts.append(f'<g id="{nid[n]}"{tg}>{rect}{hit}</g>')
+            texts.append(f'<g id="k{nid[n][1:]}"{tg}><text{text}</g>')
     pw, ph = size()
     if not traces:
         return f'<svg viewBox="0 0 {pw} {ph}" width="100%" xmlns="http://www.w3.org/2000/svg"><defs>{defs}</defs>{"".join(parts + texts)}</svg>'
@@ -452,14 +462,142 @@ def svg(b, tb=None, traces=True, keep_tools=None):
                 items.append(ribbon(geom[i][0], pos[src][1] + so * scale, v * scale, geom[i][2], pos[dst][1] + do * scale,
                                     v * scale, f"url(#g{i})", bend_to=geom[i][4]).replace("<path ", '<path class="t" ', 1))
         layers.append(f'<g id="t{h}" class="tl">{"".join(items)}</g>')
-    all_traces = targets
     style = ("path{transition:fill-opacity .15s}rect{transition:opacity .15s}"
              ".tl{display:none;pointer-events:none}.t{fill-opacity:.9}"
-             + "".join(f"svg:has({sel}) path:not(.t){{fill-opacity:.12}}svg:has({sel}) rect:not(.t){{opacity:.3}}"
-                       f"svg:has({sel}) #t{h}{{display:block}}"
-                       for h in all_traces for sel in [f"#{h}:hover" + (f",#k{h[1:]}:hover" if h.startswith("n") else "")]))
+             + "".join(f"{scope}:has({sel}) path:not(.t){{fill-opacity:.12}}{scope}:has({sel}) rect:not(.t){{opacity:.3}}"
+                       f"{scope}:has({sel}) #t{h}{{display:block}}"
+                       for h in targets for sel in [hover_sel(h, page)]))
     parts.insert(0, f"<style>{style}</style><defs>{defs}</defs>")
     return f'<svg viewBox="0 0 {pw} {ph}" width="100%" xmlns="http://www.w3.org/2000/svg">{"".join(parts + layers + texts)}</svg>'
+
+
+def hover_sel(h, page=False):
+    """The elements whose hover means target h: a ribbon (l<i>) alone; a node (n<slug>) by
+    its bar, its label and, on the page, its row in the list (r<slug>)."""
+    if not h.startswith("n"):
+        return f"#{h}:hover"
+    return f"#{h}:hover,#k{h[1:]}:hover" + (f",#r{h[1:]}:hover" if page else "")
+
+
+SINKS = (ASKING, INTO_CTX, ANSWERS_REREAD, REREADS, PROMPTS, OVERHEAD)
+
+
+def role(n, models):
+    """A node's column by its name (ROLES): models are the bucket's, the named nodes fixed,
+    every other node a tool."""
+    if n in models:
+        return "model"
+    if n == "session" or n in TREE:
+        return "session" if n == "session" else "kind"
+    if n in RANK:
+        return "sink" if n in SINKS else "rate"
+    return "tool"
+
+
+def hover_slices(paths, links):
+    """What the list shows while a target of the Sankey is hovered: for every target (a
+    node's n<slug>, a ribbon's l<i>, the ids svg() gives them), the sum of the paths through
+    it and, per node on those paths, the part of that sum passing the node (its slice).
+    paths: (nodes, value) at true values; links: columns(paths)'s, whose order numbers the
+    ribbons. Returns {target: (total, {node: slice})}."""
+    lid = {(s_, d): i for i, (s_, d, _) in enumerate(links)}
+    out = {}
+    for nodes, v in paths:
+        for t in {"n" + slug(n) for n in nodes} | {f"l{lid[e]}" for e in zip(nodes, nodes[1:])}:
+            tot, sl = out.setdefault(t, [0.0, {}])
+            out[t][0] = tot + v
+            for n in nodes:
+                sl[n] = sl.get(n, 0.0) + v
+    return {t: (tot, sl) for t, (tot, sl) in out.items()}
+
+
+# The list beside the page's Sankey (Kate's design): every node with its cost, grouped by
+# column, a column's total in its group's header. Hovering a node, a ribbon or a row puts
+# the list in the hover state: the rows on the hovered target's paths show their slice of
+# it, the others a dash, and each header the target's part in that column.
+LIST_GROUPS = (("model", "kind"), ("rate",), ("tool",), ("sink",))
+GROUP_NAME = {"model": "Model", "kind": "Context / Generation", "rate": "Rate", "tool": "Tool", "sink": "Where it went"}
+DASH = "–"
+
+
+def tool_sub(name):
+    """The line under an MCP tool's name in the list: mcp · <server>."""
+    if not name.startswith("mcp__"):
+        return ""
+    server = name.split("__")[1] if name.count("__") >= 2 else ""
+    return "mcp" + (f" · {server}" if server and not UUID.match(server) else "")
+
+
+def css_str(s):
+    return "'" + s.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
+def cost_list(b, tb=None, where=None):
+    """The list beside the page's Sankey and its hover rules, both computed here: every
+    target's figures are precomputed (as custom properties on the rows) and switched by
+    :has() rules like the chart's trace layers, so it needs no script and survives a push.
+    Figures are the true values, not the drawing's MIN_PX-bumped ones. where: the chart's
+    node places (svg()'s), so each column's rows run in the chart's order, top to bottom."""
+    paths, colors, labels = flows(b, tb)
+    cols, links = columns(paths)
+    models = set(b.cost_bm)
+    val = {n: v for col in cols for n, v in col.items()}
+    by_role = {}
+    for col in cols:
+        for n in sorted(col, key=lambda n: (where or {}).get(n, 0)):   # stable: cols' order without where
+            by_role.setdefault(role(n, models), []).append(n)
+    sl = hover_slices(paths, links)
+    groups = [[n for r in rs for n in by_role.get(r, [])] for rs in LIST_GROUPS]
+    first = [by_role.get(next((r for r in rs if r in by_role), ""), []) for rs in LIST_GROUPS]
+    # per row, its slice of every target it lies on: --v<target>:'$…'
+    on = {n: [] for n in val}
+    for t, (_, s) in sl.items():
+        for n, v in s.items():
+            on[n].append(f"--v{t}:{css_str(usd(v, 4))}")
+    out = []
+    for gi, (rs, ns) in enumerate(zip(LIST_GROUPS, groups)):
+        if not ns:
+            continue
+        name = " · ".join(GROUP_NAME[r] for r in rs if r in by_role)
+        total = sum(val[n] for n in first[gi])
+        rows = []
+        for n in ns:
+            sid = slug(n)
+            sub = tool_sub(n) if role(n, models) == "tool" else ""
+            nm = esc(n.split("__")[-1] if sub else labels[n])
+            brk = " br" if rs == ("model", "kind") and role(n, models) == "kind" and n == by_role["kind"][0] and "model" in by_role else ""
+            rows.append(f'<div class="r tg{brk}" id="r{sid}" style="{";".join(on[n])}"><i class="sw" style="background:{colors[n]}"></i>'
+                        f'<span class="nm"><span>{nm}</span>' + (f'<small>{esc(sub)}</small>' if sub else "")
+                        + f'</span><span class="n"><span class="t">{usd(val[n], 4)}</span></span></div>')
+        out.append(f'<div class="g"><div class="gh" style="--h:var(--h{gi})"><span>{esc(name)}</span>'
+                   f'<span class="n"><span class="t">{usd(total, 4)}</span></span></div>{"".join(rows)}</div>')
+    rules = []
+    for t, (tot, s) in sl.items():
+        sel = hover_sel(t, True)
+        heads = ";".join(f"--h{gi}:{css_str(usd(x, 4) if x > 0 else DASH)}"
+                         for gi, ns in enumerate(first) if ns for x in [sum(s.get(n, 0.0) for n in ns)])
+        lit = ",".join(f"#r{slug(n)}" for n in s if n in val and role(n, models) != "session")
+        rules.append(f".cf:has({sel}){{{heads}}}.cf:has({sel}) .r{{--v:var(--v{t},'{DASH}')}}"
+                     + (f".cf:has({sel}) :is({lit}){{--a:1}}" if lit else "")
+                     + (f".cf:has({sel}) #r{t[1:]}{{background:var(--hover)}}" if t.startswith("n") else ""))
+    return f'<div class="cl"><style>{"".join(rules)}</style>{"".join(out)}</div>'
+
+
+# The page's drawing shares the card with the list, so it is narrower than the pane's: at
+# about 1000 px wide on a 1440 px window its labels keep their size. Only "session" sits
+# left of its bar, so the left margin is smaller too.
+PAGE_W, PAGE_PAD = 1000, 80
+
+
+def page_svg(b, tb=None, where=None):
+    """The Sankey for the status page, beside cost_list()."""
+    global W, PAD
+    saved = W, PAD
+    W, PAD = PAGE_W, PAGE_PAD
+    try:
+        return svg(b, tb, page=True, where=where)
+    finally:
+        W, PAD = saved
 
 
 # The pane's drawing is the page's Sankey in miniature: the same page size and columns,
@@ -942,8 +1080,10 @@ def parts(R, direction="ltr", models=True, hide=()):
         return {"head": head, "hero": kpis(P, R) if P else "", "flow": "", "chart": "", "status": status}
     since = s["since"].strftime("%H:%M") if s["since"] else "?"
     head = f'<div class="sub">since {since} · updated {R["now"].strftime("%H:%M:%S")}</div>'
+    where = {}
     flow = (f'<section class="card flow">{label("Cost flow", "session → model → context / generation → rate → where it went")}'
-            + (svg(b, tb) if b and b.cost > 0 else '<p class="m">No usage for this session yet.</p>') + "</section>")
+            + (f'<div class="cf"><div class="cc">{page_svg(b, tb, where)}</div>{cost_list(b, tb, where)}</div>'
+               if b and b.cost > 0 else '<p class="m">No usage for this session yet.</p>') + "</section>")
     return {"head": head, "hero": kpis(P, R), "flow": flow, "chart": timeline(R) or "", "status": status_html(R)}
 
 
@@ -1057,6 +1197,25 @@ summary.tr:hover,summary.li:hover{background:var(--hover)}
 /* charts */
 svg{display:block;width:100%;height:auto}svg text{fill:var(--text);font-family:var(--sans);font-size:13px}svg .v{fill:var(--dim)}
 .flow svg{max-width:100%}
+/* the cost flow: the chart, and beside it (under it on narrow windows) every node with its
+   cost, grouped by column. While a target is hovered (.tg), the rows on its paths show their
+   slice (--v, from cost_list()'s rules) at full contrast (--a:1), the others a dim dash. */
+.cf{display:grid;grid-template-columns:minmax(0,1fr) 290px;gap:28px;align-items:start}
+.cc{min-width:0;position:sticky;top:16px}
+.g+.g{margin-top:16px}
+.gh{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:0 8px 6px;margin-bottom:2px;border-bottom:1px solid var(--line)}
+.gh>span:first-child{font-size:11px;line-height:16px;font-weight:500;color:var(--dim);text-transform:uppercase;letter-spacing:.06em}
+.gh .n{font-size:12px;color:var(--secondary)}
+.r{display:grid;grid-template-columns:10px minmax(0,1fr) auto;gap:10px;align-items:center;padding:3px 8px;border-radius:6px;
+ color:color-mix(in srgb,var(--text) calc(var(--a,1) * 100%),var(--dim));transition:background-color .15s}
+.r.br{margin-top:6px}
+.sw{width:10px;height:10px;border-radius:3px;opacity:calc(.3 + .7 * var(--a,1))}
+.r .nm{display:flex;flex-direction:column;min-width:0;line-height:18px}
+.r .nm>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.r small{font-size:11px;line-height:14px;color:var(--dim)}
+.r .n::after{content:var(--v)}.gh .n::after{content:var(--h)}
+.cf:has(.tg:hover) .cl .t{display:none}
+.cf:has(.tg:hover) .r{--a:0}
 html[data-state=stale] #p-hero{opacity:.55}
 html[data-state=stale] #p-hero::after{content:"These figures stopped updating: the session may have ended.";display:block;margin-top:8px;font-size:12px;color:var(--dim)}
 .chart h2{align-items:center}
@@ -1074,6 +1233,8 @@ html:not([data-x=calls]) svg.xc,html[data-x=calls] svg.xt{display:none}
 @media (max-width:1200px){.kpis{grid-template-columns:repeat(3,minmax(0,1fr))}.kpi{border-top:1px solid var(--line)}
  .kpi:nth-child(-n+3){border-top:0}.kpi:nth-child(3n+1){border-left:0}}
 @media (max-width:1000px){.row2{grid-template-columns:minmax(0,1fr)}}
+@media (max-width:1100px){.cf{grid-template-columns:minmax(0,1fr)}
+ .cl{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px 28px;align-items:start}.g+.g{margin-top:0}}
 @media (max-width:640px){body{padding:16px}.card{padding:16px}.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
  .kpis .kpi{border-left:0;border-top:1px solid var(--line)}.kpis .kpi.lead{grid-column:1/-1;border-top:0}
  .kpis .kpi:nth-child(odd):not(.lead){border-left:1px solid var(--line)}}
