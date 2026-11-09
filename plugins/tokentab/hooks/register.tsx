@@ -574,32 +574,7 @@ async function openSnapshot($: EngineInterface): Promise<void> {
   }
 }
 
-const AUTO_OPEN_KEY = 'tokentab.autoOpen'   // the /config key; config.set needs it as fixed text in the call
-
-/** The auto-open switch is the manifest's `userConfig` field: written as the config menu
- *  would, so the menu, the install screen and the pane show one value. The write reloads
- *  the module with the new options; `session.start` then runs again and is idempotent.
- *  Where /config has no row for it (an SDK host), it is kept in `$.store` instead. A stored
- *  value is cleared before the /config write, so the reload cannot read it back. */
-async function setAutoOpen($: EngineInterface, value: boolean): Promise<void> {
-  try {
-    if (!(await $.config.list()).some(row => row.key === AUTO_OPEN_KEY)) {
-      autoOpenHere = value
-      await $.store.set(AUTO_OPEN, value)
-      $.ui.invalidate('ui.render')
-      return
-    }
-    const stored = autoOpenHere
-    await $.store.delete(AUTO_OPEN)
-    const r = await $.config.set({ key: 'tokentab.autoOpen', value })
-    if ('deny' in r && r.deny !== undefined) {
-      if (stored !== undefined) await $.store.set(AUTO_OPEN, stored)
-      $.ui.toast(`TokenTab: auto-open not changed: ${r.deny}`)
-    }
-  } catch (err) {
-    $.ui.toast(`TokenTab: auto-open not changed: ${err instanceof Error ? err.message : String(err)}`)
-  }
-}
+const AUTO_OPEN_KEY = 'tokentab.autoOpen'   // the /config key
 
 /** One limit through the validator; a refused value is shown under its field, unwritten. */
 async function setBudget($: EngineInterface, key: string, value: string): Promise<void> {
@@ -735,6 +710,34 @@ export const register: Register = (on, pluginOptions) => {
       : `The TokenTab pane is not placed here (${opened.reason}).`
     return { text: `${status}\n${where}`, context: figures === '' ? undefined : [`TokenTab, this session's figures as of now:\n${figures}`] }
   }).catch(() => ({ text: 'TokenTab: the status command failed' }))
+
+  // The Budget tab's auto-open switch is the manifest's `userConfig` field: written as the
+  // config menu would, so the menu, the install screen and the pane show one value. The
+  // write reloads the module; `session.start` then runs again and is idempotent. Where
+  // /config has no row for it (an SDK host), it is kept in `$.store` instead. A stored
+  // value is cleared before the /config write, so the reload cannot read it back.
+  // Answered here, not in the Button's closure: the directory reads config.set only on a hook's own `$`.
+  on('ui.press', { element: 'auto-open', requestId: PANE }, async ($, e) => {
+    const value = !autoOpen()
+    try {
+      if (!(await $.config.list()).some(row => row.key === AUTO_OPEN_KEY)) {
+        autoOpenHere = value
+        await $.store.set(AUTO_OPEN, value)
+        $.ui.invalidate('ui.render')
+        return { element: e.element }
+      }
+      const stored = autoOpenHere
+      await $.store.delete(AUTO_OPEN)
+      const r = await $.config.set({ key: 'tokentab.autoOpen', value: value })
+      if ('deny' in r && r.deny !== undefined) {
+        if (stored !== undefined) await $.store.set(AUTO_OPEN, stored)
+        $.ui.toast(`TokenTab: auto-open not changed: ${r.deny}`)
+      }
+    } catch (err) {
+      $.ui.toast(`TokenTab: auto-open not changed: ${err instanceof Error ? err.message : String(err)}`)
+    }
+    return { element: e.element }
+  })
 
   // The person's change to the switch in /config: it stands over a value the Budget tab
   // kept in `$.store` where /config had no row. Cleared before the write, which reloads
@@ -1155,7 +1158,7 @@ function budgetTab($: EngineInterface, e: RenderEvent): RenderChildren {
   return (
     <Box flexDirection="column" gap={1}>
       {section('options', undefined, [
-        row('auto-open', 'Open pane at session start', column(toggle('auto-open', autoOpen(), () => { void setAutoOpen($, !autoOpen()) }))),
+        row('auto-open', 'Open pane at session start', column(toggle('auto-open', autoOpen(), () => {}))),
       ])}
       {o?.error !== undefined && <Text size="footnote" color="error">{o.error}</Text>}
       {SECTIONS.flatMap(sec => [
