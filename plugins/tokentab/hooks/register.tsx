@@ -574,15 +574,16 @@ async function openSnapshot($: EngineInterface): Promise<void> {
   }
 }
 
+const AUTO_OPEN_KEY = 'tokentab.autoOpen'   // the /config key; config.set needs it as fixed text in the call
+
 /** The auto-open switch is the manifest's `userConfig` field: written as the config menu
  *  would, so the menu, the install screen and the pane show one value. The write reloads
  *  the module with the new options; `session.start` then runs again and is idempotent.
  *  Where /config has no row for it (an SDK host), it is kept in `$.store` instead. A stored
  *  value is cleared before the /config write, so the reload cannot read it back. */
 async function setAutoOpen($: EngineInterface, value: boolean): Promise<void> {
-  const key = `${$.plugin.name}.autoOpen`
   try {
-    if (!(await $.config.list()).some(row => row.key === key)) {
+    if (!(await $.config.list()).some(row => row.key === AUTO_OPEN_KEY)) {
       autoOpenHere = value
       await $.store.set(AUTO_OPEN, value)
       $.ui.invalidate('ui.render')
@@ -590,7 +591,7 @@ async function setAutoOpen($: EngineInterface, value: boolean): Promise<void> {
     }
     const stored = autoOpenHere
     await $.store.delete(AUTO_OPEN)
-    const r = await $.config.set({ key, value })
+    const r = await $.config.set({ key: 'tokentab.autoOpen', value })
     if ('deny' in r && r.deny !== undefined) {
       if (stored !== undefined) await $.store.set(AUTO_OPEN, stored)
       $.ui.toast(`TokenTab: auto-open not changed: ${r.deny}`)
@@ -739,7 +740,7 @@ export const register: Register = (on, pluginOptions) => {
   // kept in `$.store` where /config had no row. Cleared before the write, which reloads
   // the module (this module's own `$.config.set` does not come through here).
   on('config.set', async ($, e, next) => {
-    if (e.key === `${$.plugin.name}.autoOpen`) {
+    if (e.key === AUTO_OPEN_KEY) {
       autoOpenHere = undefined
       await $.store.delete(AUTO_OPEN)
     }
