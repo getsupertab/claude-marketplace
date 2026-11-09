@@ -433,7 +433,7 @@ def svg(b, tb=None, traces=True, keep_tools=None, page=False, where=None):
     for ci, col in enumerate(cols):
         for n in col:
             u, v, h = pos[n]
-            rect, text = node(u, v, h, colors[n], labels[n], None if page else true_val[n], right=ci > 0).split("<text", 1)
+            rect, text = node(u, v, h, colors[n], labels[n], None if page else true_val[n], right=page or ci > 0).split("<text", 1)
             hh = max(h, HIT_H)   # transparent hit box so hairline nodes can be hovered
             hit = bar(u, v + h / 2 - hh / 2, hh, "none", "h").replace('<rect class="h"', '<rect class="h" pointer-events="all"') if traces else ""
             parts.append(f'<g id="{nid[n]}"{tg}>{rect}{hit}</g>')
@@ -593,9 +593,9 @@ def cost_list(b, tb=None, where=None):
     return f'<div class="{cls}"{style}><style>{"".join(rules)}</style>{"".join(out)}</div>'
 
 
-# The page's drawing spans the card, the list under it. Only "session" sits left of its
-# bar, so the left margin is smaller than the pane's.
-PAGE_PAD = 80
+# The page's drawing spans the card, the list under it. Every label sits right of its bar,
+# "session" included, so the drawing starts at the card's left edge.
+PAGE_PAD = 0
 
 
 def page_svg(b, tb=None, where=None):
