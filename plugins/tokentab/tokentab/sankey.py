@@ -377,7 +377,8 @@ def svg(b, tb=None, traces=True, keep_tools=None, page=False, where=None):
     of the markup); keep_tools folds the long tail of tools into one node. page: drawn for
     the status page beside cost_list(): labels without figures, and the hover rules scoped
     to the card (.cf), so a row of the list lights the chart as its node does. where: a dict
-    to receive each node's place along its column (name -> start), for the list's order."""
+    to receive the drawing's width ("width") and each node's place ("pos": name -> (x, y)
+    of its bar, left to right), for the list's order and alignment."""
     tg = ' class="tg"' if page else ""   # .tg: a hover target, for the list's hover state
     scope = ".cf" if page else "svg"
     all_paths, colors, labels = flows(b, tb)
@@ -400,7 +401,7 @@ def svg(b, tb=None, traces=True, keep_tools=None, page=False, where=None):
     cols = [{n: sum(v for nodes, _, v in all_paths if n in nodes) for n in col} for col in cols]
     w, pos = layout(cols, links, rpad)
     if where is not None:
-        where.update({n: p[1] for n, p in pos.items()})
+        where.update(pos={n: (flip(p[0]), p[1]) for n, p in pos.items()}, width=size()[0])
     val = {n: v for col in cols for n, v in col.items()}
     nid = {n: "n" + slug(n) for n in val}
     scale = w[0] / links[0][2]
@@ -511,12 +512,14 @@ def hover_slices(paths, links):
     return {t: (tot, sl) for t, (tot, sl) in out.items()}
 
 
-# The list beside the page's Sankey (Kate's design): every node with its cost, grouped by
-# column, a column's total in its group's header. Hovering a node, a ribbon or a row puts
-# the list in the hover state: the rows on the hovered target's paths show their slice of
-# it, the others a dash, and each header the target's part in that column.
-LIST_GROUPS = (("model", "kind"), ("rate",), ("tool",), ("sink",))
-GROUP_NAME = {"model": "Model", "kind": "Context / Generation", "rate": "Rate", "tool": "Tool", "sink": "Where it went"}
+# The list with the page's Sankey (Kate's design): every node with its cost, one group per
+# column, a column's total in its group's header. On a wide window the list runs under the
+# chart, each group under its column's bars; narrower, the groups wrap. Hovering a node, a
+# ribbon or a row puts the list in the hover state: the rows on the hovered target's paths
+# show their slice of it, the others a dash, and each header the target's part in that column.
+LIST_GROUPS = ("session", "model", "kind", "rate", "tool", "sink")
+GROUP_NAME = {"session": "Session", "model": "Model", "kind": "Context / Generation", "rate": "Rate",
+              "tool": "Tool", "sink": "Where it went"}
 DASH = "–"
 
 
@@ -533,71 +536,77 @@ def css_str(s):
 
 
 def cost_list(b, tb=None, where=None):
-    """The list beside the page's Sankey and its hover rules, both computed here: every
+    """The list with the page's Sankey and its hover rules, both computed here: every
     target's figures are precomputed (as custom properties on the rows) and switched by
     :has() rules like the chart's trace layers, so it needs no script and survives a push.
-    Figures are the true values, not the drawing's MIN_PX-bumped ones. where: the chart's
-    node places (svg()'s), so each column's rows run in the chart's order, top to bottom."""
+    Figures are the true values, not the drawing's MIN_PX-bumped ones. where: svg()'s node
+    places and drawing width, so each column's rows run in the chart's order, top to
+    bottom, and (left to right only) each group can sit under its column. The session's
+    group has no rows: only its header, under the session bar, in the aligned layout."""
     paths, colors, labels = flows(b, tb)
     cols, links = columns(paths)
     models = set(b.cost_bm)
     val = {n: v for col in cols for n, v in col.items()}
+    pos = (where or {}).get("pos", {})
     by_role = {}
     for col in cols:
-        for n in sorted(col, key=lambda n: (where or {}).get(n, 0)):   # stable: cols' order without where
+        for n in sorted(col, key=lambda n: pos.get(n, (0, 0))[1]):   # stable: cols' order without where
             by_role.setdefault(role(n, models), []).append(n)
     sl = hover_slices(paths, links)
-    groups = [[n for r in rs for n in by_role.get(r, [])] for rs in LIST_GROUPS]
-    first = [by_role.get(next((r for r in rs if r in by_role), ""), []) for rs in LIST_GROUPS]
+    groups = [(r, by_role[r]) for r in LIST_GROUPS if r in by_role]
+    # the aligned layout's tracks: a lead-in to the first column, then one per group from its
+    # bars to the next group's, as shares of the drawing's width (the list is as wide)
+    xs = [pos[ns[0]][0] for _, ns in groups] if DIR == "ltr" and pos else []
+    # (two groups in one column, as tools and sinks with "where it went" hidden: no alignment)
+    aligned = len(xs) == len(groups) and all(a < b_ for a, b_ in zip(xs, xs[1:]))
+    tracks = ""
+    if aligned:
+        w = where["width"]
+        tracks = " ".join(f"{(b_ - a) / w * 100:.3f}%" for a, b_ in zip([0] + xs, xs + [w]))
     # per row, its slice of every target it lies on: --v<target>:'$…'
     on = {n: [] for n in val}
     for t, (_, s) in sl.items():
         for n, v in s.items():
             on[n].append(f"--v{t}:{css_str(usd(v, 4))}")
     out = []
-    for gi, (rs, ns) in enumerate(zip(LIST_GROUPS, groups)):
-        if not ns:
-            continue
-        name = " · ".join(GROUP_NAME[r] for r in rs if r in by_role)
-        total = sum(val[n] for n in first[gi])
+    for gi, (r, ns) in enumerate(groups):
         rows = []
-        for n in ns:
-            sid = slug(n)
-            sub = tool_sub(n) if role(n, models) == "tool" else ""
+        for n in ns if r != "session" else []:
+            sub = tool_sub(n) if r == "tool" else ""
             nm = esc(n.split("__")[-1] if sub else labels[n])
-            brk = " br" if rs == ("model", "kind") and role(n, models) == "kind" and n == by_role["kind"][0] and "model" in by_role else ""
-            rows.append(f'<div class="r tg{brk}" id="r{sid}" style="{";".join(on[n])}"><i class="sw" style="background:{colors[n]}"></i>'
+            rows.append(f'<div class="r tg" id="r{slug(n)}" style="{";".join(on[n])}"><i class="sw" style="background:{colors[n]}"></i>'
                         f'<span class="nm"><span>{nm}</span>' + (f'<small>{esc(sub)}</small>' if sub else "")
                         + f'</span><span class="n"><span class="t">{usd(val[n], 4)}</span></span></div>')
-        out.append(f'<div class="g"><div class="gh" style="--h:var(--h{gi})"><span>{esc(name)}</span>'
-                   f'<span class="n"><span class="t">{usd(total, 4)}</span></span></div>{"".join(rows)}</div>')
+        out.append(f'<div class="g{" gs" if r == "session" else ""}" style="--c:{gi + 2}"><div class="gh" style="--h:var(--h{gi})">'
+                   f'<span>{esc(GROUP_NAME[r])}</span><span class="n"><span class="t">{usd(sum(val[n] for n in ns), 4)}</span></span>'
+                   f'</div>{"".join(rows)}</div>')
     rules = []
     for t, (tot, s) in sl.items():
         sel = hover_sel(t, True)
         heads = ";".join(f"--h{gi}:{css_str(usd(x, 4) if x > 0 else DASH)}"
-                         for gi, ns in enumerate(first) if ns for x in [sum(s.get(n, 0.0) for n in ns)])
+                         for gi, (_, ns) in enumerate(groups) for x in [sum(s.get(n, 0.0) for n in ns)])
         lit = ",".join(f"#r{slug(n)}" for n in s if n in val and role(n, models) != "session")
         rules.append(f".cf:has({sel}){{{heads}}}.cf:has({sel}) .r{{--v:var(--v{t},'{DASH}')}}"
                      + (f".cf:has({sel}) :is({lit}){{--a:1}}" if lit else "")
                      + (f".cf:has({sel}) #r{t[1:]}{{background:var(--hover)}}" if t.startswith("n") else ""))
-    return f'<div class="cl"><style>{"".join(rules)}</style>{"".join(out)}</div>'
+    cls, style = ("cl al", f' style="--cols:{tracks}"') if aligned else ("cl", "")
+    return f'<div class="{cls}"{style}><style>{"".join(rules)}</style>{"".join(out)}</div>'
 
 
-# The page's drawing shares the card with the list, so it is narrower than the pane's: at
-# about 1000 px wide on a 1440 px window its labels keep their size. Only "session" sits
-# left of its bar, so the left margin is smaller too.
-PAGE_W, PAGE_PAD = 1000, 80
+# The page's drawing spans the card, the list under it. Only "session" sits left of its
+# bar, so the left margin is smaller than the pane's.
+PAGE_PAD = 80
 
 
 def page_svg(b, tb=None, where=None):
-    """The Sankey for the status page, beside cost_list()."""
-    global W, PAD
-    saved = W, PAD
-    W, PAD = PAGE_W, PAGE_PAD
+    """The Sankey for the status page, above cost_list()."""
+    global PAD
+    saved = PAD
+    PAD = PAGE_PAD
     try:
         return svg(b, tb, page=True, where=where)
     finally:
-        W, PAD = saved
+        PAD = saved
 
 
 # The pane's drawing is the page's Sankey in miniature: the same page size and columns,
@@ -1197,18 +1206,21 @@ summary.tr:hover,summary.li:hover{background:var(--hover)}
 /* charts */
 svg{display:block;width:100%;height:auto}svg text{fill:var(--text);font-family:var(--sans);font-size:13px}svg .v{fill:var(--dim)}
 .flow svg{max-width:100%}
-/* the cost flow: the chart, and beside it (under it on narrow windows) every node with its
-   cost, grouped by column. While a target is hovered (.tg), the rows on its paths show their
-   slice (--v, from cost_list()'s rules) at full contrast (--a:1), the others a dim dash. */
-.cf{display:grid;grid-template-columns:minmax(0,1fr) 290px;gap:28px;align-items:start}
-.cc{min-width:0;position:sticky;top:16px}
-.g+.g{margin-top:16px}
+/* the cost flow: the chart, and under it every node with its cost, a group per column. On a
+   wide window (.al) each group sits under its column's bars (--cols: the tracks, --c: the
+   group's), the session's header under the session bar; narrower, the groups wrap. While a
+   target is hovered (.tg), the rows on its paths show their slice (--v, from cost_list()'s
+   rules) at full contrast (--a:1), the others a dim dash. */
+.cl{margin-top:18px;display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:16px 28px;align-items:start}
+.gs{display:none}
+@media (min-width:1200px){.cl.al{grid-template-columns:var(--cols);gap:0}
+ .cl.al .g{grid-column:var(--c);grid-row:1;margin-left:-8px;padding-right:12px;min-width:0}.cl.al .gs{display:block}
+ .cl.al .r{gap:8px}.cl.al .n{font-size:12px}.cl.al .r .nm>span{white-space:normal}}
 .gh{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:0 8px 6px;margin-bottom:2px;border-bottom:1px solid var(--line)}
 .gh>span:first-child{font-size:11px;line-height:16px;font-weight:500;color:var(--dim);text-transform:uppercase;letter-spacing:.06em}
 .gh .n{font-size:12px;color:var(--secondary)}
 .r{display:grid;grid-template-columns:10px minmax(0,1fr) auto;gap:10px;align-items:center;padding:3px 8px;border-radius:6px;
  color:color-mix(in srgb,var(--text) calc(var(--a,1) * 100%),var(--dim));transition:background-color .15s}
-.r.br{margin-top:6px}
 .sw{width:10px;height:10px;border-radius:3px;opacity:calc(.3 + .7 * var(--a,1))}
 .r .nm{display:flex;flex-direction:column;min-width:0;line-height:18px}
 .r .nm>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -1233,8 +1245,6 @@ html:not([data-x=calls]) svg.xc,html[data-x=calls] svg.xt{display:none}
 @media (max-width:1200px){.kpis{grid-template-columns:repeat(3,minmax(0,1fr))}.kpi{border-top:1px solid var(--line)}
  .kpi:nth-child(-n+3){border-top:0}.kpi:nth-child(3n+1){border-left:0}}
 @media (max-width:1000px){.row2{grid-template-columns:minmax(0,1fr)}}
-@media (max-width:1100px){.cf{grid-template-columns:minmax(0,1fr)}.cc{position:static}
- .cl{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px 28px;align-items:start}.g+.g{margin-top:0}}
 @media (max-width:640px){body{padding:16px}.card{padding:16px}.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
  .kpis .kpi{border-left:0;border-top:1px solid var(--line)}.kpis .kpi.lead{grid-column:1/-1;border-top:0}
  .kpis .kpi:nth-child(odd):not(.lead){border-left:1px solid var(--line)}}

@@ -129,7 +129,7 @@ The pane has two tabs:
 shows, from the same report and in your plan's unit, with room for more. It leads with a
 summary: the session against its limit, tokens, msgs, a request's average cost and the
 context, plus a banner when you're over a limit or the cache has gone cold. Below that come
-a flow diagram of where the money went, with every step's cost listed beside it
+a flow diagram of where the money went, with every step's cost listed under it
 (hover a step, a band or a row to see only the money that passed through it), cost over
 time, the cost by rate,
 by call source and by model, this month's sessions, and every tool with its breakdown
