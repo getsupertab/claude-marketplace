@@ -233,6 +233,17 @@ For a reviewer reading `hooks/register.tsx`, each kind of call it makes and why:
   to find the config folder and the platform.
 - **What it sends out.** Nothing. The values it reads go into the local files above, the
   pane, the status line and, for `/tokentab:status`, the command's answer in your session.
+  Two web addresses appear in the code, and neither is a way out:
+  - `http://www.w3.org/2000/svg` is the SVG namespace in the pane's bars and the share
+    card (`barSvg`, `shareCardSvg`). It is an identifier, never fetched; an SVG drawn as an
+    image does not render without it.
+  - `https://x.com/intent/post` and `https://www.linkedin.com/feed/` are the share page's
+    "Share on X" and "Share on LinkedIn" links (`shareLinks`, asserted in
+    `register.test.tsx`). Your browser opens one only when you click it, with the card's
+    text and nothing else.
+
+  The environment variables it reads are folder paths and the platform name, never a key
+  or token.
 - **Configuration it sets (`$.config.set`).** Only `tokentab.autoOpen`, its own option,
   when you flip "Open at session start" in the Budget tab. It sets no environment variable
   and no other setting, and it does not hook `config.set`.
