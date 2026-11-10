@@ -72,8 +72,8 @@ where TokenTab comes in.
   tool calls if you ask them to. On Pro or Max they count in percent of your plan's
   5-hour and weekly windows; on the API they count in dollars. Your account decides,
   even when you switch between them. Off until you turn them on.
-- **Heads-ups that save money.** A warning before an expensive resend after the cache
-  goes cold, and a nudge to start fresh once a new session would be cheaper than carrying
+- **Heads-ups that save money.** A warm cache while you step away, a handoff note
+  written before it can expire, a warning before an expensive resend after it goes cold, and a nudge to start fresh once a new session would be cheaper than carrying
   on.
 - **A card to share** what a session cost, if you're proud of it (or horrified).
 
@@ -172,6 +172,13 @@ The limits are off, but these checks run from the start. Each one is set in
   and asks above the prompt box before sending, with what it will cost: **Continue**
   sends it for you (shown as sent through TokenTab). Where nothing can be shown (`claude -p`), it blocks once; sending again within two minutes goes through. Nothing has been sent at that point, so holding it back costs nothing.
   Turn it off by removing `cold_resume`.
+- **Keeping the cache warm.** When a long session sits idle between turns, TokenTab
+  sends one cheap request shortly before its cache would expire, which re-reads the
+  cached context and restarts its clock. The first of these asks Claude for a handoff
+  note, saved as `handoff/<session>.md` in the data folder; you get a notification. The
+  pings stop once they have cost half of one re-write, or after 8 hours. The session must
+  stay open and the computer awake. Turn it off, or the note, on the pane's Budget tab
+  (KEEP CACHE WARM), or tune it under `keep_warm`.
 - **Helpers can't start helpers.** A helper agent that tries to start or message another
   agent is stopped. Set `helpers_may_delegate` to `true` to allow it.
 - **Notes to Claude.** When a session's context passes 200k and again 350k tokens, Claude

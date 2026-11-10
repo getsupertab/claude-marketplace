@@ -1,4 +1,4 @@
-import type { EngineInterface, PluginOptions, PromptSubmitInput, Register, RenderChildren, TelemetryRecordEntry, Timer, UiOpenResult } from 'claude-code'
+import type { EngineInterface, ModelUsage, PluginOptions, PromptSubmitInput, Register, RenderChildren, TelemetryRecordEntry, Timer, UiOpenResult } from 'claude-code'
 import { TOKENS } from './tokens'
 
 // TokenTab's hooks module, three parts:
@@ -168,7 +168,7 @@ export const HELD = 'TokenTab: held back, the prompt cache has expired. Continue
 
 // The held prompt the band above the prompt box asks about. A hook may not wait on the
 // person (its 10 s budget runs on), so the prompt is dropped and Continue sends it again.
-type ColdAsk = { text: string, prompt: string, attachments: PromptSubmitInput['attachments'], failed?: string }
+type ColdAsk = { text: string, prompt: string, attachments: PromptSubmitInput['attachments'], failed?: string, handoff?: string }
 let coldAsk: ColdAsk | undefined
 // Continue's resend passes unchecked: Desktop hands it back as typed, not as the plugin's.
 let resending = false
@@ -206,6 +206,135 @@ async function sentAgain($: EngineInterface): Promise<void> {
   coldAsk = undefined
   $.ui.invalidate('ui.render')
   try { await python($, 'guard.py', ['--cold-confirm', await sid($)]) } catch { /* the guard then blocks once */ }
+}
+
+// ---------- keeping the cache warm ----------
+// Between turns, a timer fires shortly before the prompt cache would expire. The first
+// fire asks a fork for a handoff note, later ones for one word: each fork re-reads the
+// cached prefix, which restarts its clock. Pings stop at a share of one re-write's cost.
+
+export type KeepWarm = {
+  enabled: boolean; handoff: boolean; min_context_tokens: number
+  ping_at_minutes_1h: number; ping_at_minutes_5m: number; max_share_of_rewrite: number; max_hours: number
+}
+/** guard.py --idle: the last call's cache. `started` is epoch seconds. */
+export type Idle = { started: number; ctx: number; model: string; ttl: '1h' | '5m'; ttl_seconds: number; read_usd: number; rewrite_usd: number }
+/** One idle stretch, from a turn's end to the next turn's start. Times in ms. */
+export type Stretch = { since: number; spent: number; handedOff: boolean; lastFork?: number; lastPing?: number }
+export type WarmStep = { kind: 'wait'; ms: number } | { kind: 'handoff' } | { kind: 'ping' } | { kind: 'stop'; why: 'small' | 'cold' | 'off' | 'cap' | 'hours' }
+
+export const KEEP_WARM_DEFAULTS: KeepWarm = {
+  enabled: true, handoff: true, min_context_tokens: 100_000,
+  ping_at_minutes_1h: 50, ping_at_minutes_5m: 3, max_share_of_rewrite: 0.5, max_hours: 8,
+}
+export const PING_PROMPT = 'Reply with the single word ok, nothing else.'
+export const HANDOFF_PROMPT = 'The user has stepped away and this conversation\'s prompt cache is about to expire. '
+  + 'Write a handoff note a fresh session can start from without this conversation, in Markdown, under 400 words: '
+  + 'the goal; what is done (files changed, commits, branch); decisions made and why; what is in progress and the exact next steps; '
+  + 'open questions for the user. Only facts from this conversation. Reply with the note alone.'
+const EXPIRY_MARGIN_MS = 30_000          // a ping set later than this before expiry fires this early instead
+const SETTLE_MS = 5_000                  // after a turn ends, its last ledger line has landed
+
+/** What a fork cost at the plugin's prices, from the usage its reply reports. */
+export function forkCost(prices: Prices, model: string, usage: Partial<ModelUsage> | undefined): number | undefined {
+  if (!usage) return undefined
+  return price(prices, model, {
+    input: num(usage.input_tokens), output: num(usage.output_tokens),
+    cache_read: num(usage.cache_read_input_tokens), cache_write: num(usage.cache_creation_input_tokens),
+  })
+}
+
+/** The timer's next move for an idle stretch at `now`. */
+export function warmStep(cfg: KeepWarm, idle: Idle | undefined, stretch: Stretch, now: number): WarmStep {
+  if (!idle || idle.ctx < cfg.min_context_tokens) return { kind: 'stop', why: 'small' }
+  const started = Math.max(idle.started * 1000, stretch.lastFork ?? 0)
+  const expires = started + idle.ttl_seconds * 1000
+  const at = Math.min(started + 60_000 * (idle.ttl === '1h' ? cfg.ping_at_minutes_1h : cfg.ping_at_minutes_5m), expires - EXPIRY_MARGIN_MS)
+  if (now >= expires) return { kind: 'stop', why: 'cold' }
+  if (now < at) return { kind: 'wait', ms: at - now }
+  if (cfg.handoff && !stretch.handedOff) return { kind: 'handoff' }
+  if (!cfg.enabled) return { kind: 'stop', why: 'off' }
+  // the last ping's real price stands in for the next one's: its output and thinking too
+  if (stretch.spent + (stretch.lastPing ?? idle.read_usd) > cfg.max_share_of_rewrite * idle.rewrite_usd) return { kind: 'stop', why: 'cap' }
+  if (now - stretch.since > cfg.max_hours * 3_600_000) return { kind: 'stop', why: 'hours' }
+  return { kind: 'ping' }
+}
+
+let warmTimer: Timer | undefined
+let stretch: Stretch | undefined
+let forking = false
+
+const handoffPath = (data: string, id: string) => `${data}/handoff/${id}.md`
+
+function stopWarm(): void {
+  warmTimer?.cancel()
+  warmTimer = undefined
+  stretch = undefined
+}
+
+async function startWarm($: EngineInterface): Promise<void> {
+  stopWarm()
+  stretch = { since: await $.clock.now(), spent: 0, handedOff: false }
+  warmTimer = $.clock.after(SETTLE_MS, () => { void warm($) })
+}
+
+async function keepWarmConfig($: EngineInterface): Promise<KeepWarm> {
+  try {
+    const cfg = at(JSON.parse(await $.fs.read(`${await home($)}/budget.json`)) as Json, 'keep_warm')
+    return { ...KEEP_WARM_DEFAULTS, ...(typeof cfg === 'object' && cfg !== null ? cfg as Partial<KeepWarm> : {}) }
+  } catch { return KEEP_WARM_DEFAULTS }
+}
+
+async function notify($: EngineInterface, text: string): Promise<void> {
+  try { await $.ui.notify(text, { title: TITLE }) } catch { $.ui.toast(`TokenTab: ${text}`) }
+}
+
+async function warm($: EngineInterface): Promise<void> {
+  warmTimer = undefined
+  const s = stretch
+  if (!s || forking) return
+  let idle: Idle | undefined
+  try {
+    const read = JSON.parse(await python($, 'guard.py', ['--idle', await sid($)])) as Partial<Idle>
+    idle = read.ctx === undefined ? undefined : read as Idle
+  } catch { stopWarm(); return }
+  const cfg = await keepWarmConfig($)
+  if (stretch !== s) return
+  const step = warmStep(cfg, idle, s, await $.clock.now())
+  if (step.kind === 'wait') { warmTimer = $.clock.after(step.ms, () => { void warm($) }); return }
+  if (step.kind === 'stop') {
+    stopWarm()
+    if ((step.why === 'cap' || step.why === 'hours') && s.handedOff) {
+      await notify($, `Stopped keeping the cache warm (${step.why === 'cap' ? 'spend cap' : 'time cap'}); it goes cold soon. The handoff note is in ${handoffPath(await home($), await sid($))}.`)
+    }
+    return
+  }
+  forking = true
+  const forkedAt = await $.clock.now()
+  try {
+    const reply = await $.model.fork({ prompt: step.kind === 'handoff' ? HANDOFF_PROMPT : PING_PROMPT })
+    if (stretch !== s) return
+    if (!reply.isAnswered) { stopWarm(); return }
+    s.lastFork = forkedAt
+    const cost = forkCost(await loadPrices($), idle!.model, reply.usage) ?? idle!.read_usd
+    s.spent += cost
+    if (step.kind === 'ping') s.lastPing = cost
+    if (step.kind === 'handoff') {
+      const path = handoffPath(await home($), await sid($))
+      await $.fs.write(path, `<!-- TokenTab handoff, ${new Date(forkedAt).toISOString()} -->\n${reply.text.trim()}\n`)
+      s.handedOff = true
+      await notify($, `Wrote a handoff note before the cache expires: ${path}`)
+    }
+  } catch { stopWarm(); return } finally { forking = false }
+  if (stretch === s) void warm($)
+}
+
+/** This session's handoff note, if the timer wrote one. */
+async function handoffNote($: EngineInterface): Promise<string | undefined> {
+  try {
+    const path = handoffPath(await home($), await sid($))
+    return (await $.fs.exists(path)) ? path : undefined
+  } catch { return undefined }
 }
 
 export const stripAnsi = (s: string): string => s.replace(ANSI, '')
@@ -340,6 +469,10 @@ export const SECTIONS: { title: string; toggle?: Setting; rows: Setting[] }[] = 
       percent: { key: 'weekly_limit_percent', label: 'This week' } },
     { key: 'warn_at_percent', label: 'Warn at', unit: '%', kind: 'limit' },
     { key: 'hard_stop', label: 'Hard stop at 100%', kind: 'switch' },
+  ] },
+  { title: 'keep cache warm', toggle: { key: 'keep_warm.enabled', label: 'keep the cache warm while idle', kind: 'switch' }, rows: [
+    { key: 'keep_warm.handoff', label: 'Handoff note before it expires', kind: 'switch' },
+    { key: 'keep_warm.max_hours', label: 'Stop after', unit: 'hours', kind: 'limit' },
   ] },
 ]
 
@@ -688,6 +821,7 @@ export const register: Register = (on, pluginOptions) => {
     return (
       <Box flexDirection="column" gap={1}>
         <Text>{ask.text}</Text>
+        {ask.handoff ? <Text dimColor>A handoff note was written before it expired: {ask.handoff}. A new session can start from it.</Text> : null}
         {ask.failed ? <Text color="red">TokenTab: {ask.failed}</Text> : null}
         <Text bold>Send your prompt anyway?</Text>
         <Box gap={1}>
@@ -795,11 +929,26 @@ export const register: Register = (on, pluginOptions) => {
     if (coldAsk) { await sentAgain($); return next(e) }
     const cold = await coldCheck($)
     if (cold) {
-      coldAsk = { text: cold, prompt: e.text, attachments: e.attachments }
+      coldAsk = { text: cold, prompt: e.text, attachments: e.attachments, handoff: await handoffNote($) }
       $.ui.invalidate('ui.render')
       return { drop: HELD }
     }
     return next(e)
+  }).catch(($, e, next) => next(e))
+
+  // The main loop's turns bound an idle stretch: the keep-warm timer runs between them,
+  // only where someone may come back to a surface (not under `claude -p`).
+  on('turn.start', ($, e, next) => {
+    if (e.agentId === undefined) stopWarm()
+    return next(e)
+  }).catch(($, e, next) => next(e))
+
+  on('turn.complete', async ($, e, next) => {
+    const r = await next(e)
+    if (e.agentId === undefined) {
+      try { if ((await $.session.surfaces()).length > 0) await startWarm($) } catch { /* no keep-warm this stretch */ }
+    }
+    return r
   }).catch(($, e, next) => next(e))
 
   // The plan's usage windows (5-hour, weekly; none off a subscription) for the guard and the

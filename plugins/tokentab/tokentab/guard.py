@@ -313,6 +313,23 @@ def cold_cli(args):
     print(json.dumps({"cold": c} if c else {}))
     return 0
 
+def idle_cli(sid):
+    """--idle <sid>: the last call's cache, for the keep-warm timer, as JSON; {} before one.
+    started (epoch), ctx, model, ttl, ttl_seconds, and what one keep-warm read and one
+    re-write of the context cost at that model's rates."""
+    prices = load(os.path.join(HERE, "prices.json"), {})
+    tp = glob.glob(os.path.join(ROOT, "*", f"{sid}.jsonl"))
+    last = last_call(tp[0], sid) if tp else None
+    if not last:
+        print("{}")
+        return 0
+    started, ctx, model, ttl = last
+    print(json.dumps({"started": started, "ctx": ctx, "model": model, "ttl": ttl,
+                      "ttl_seconds": 3600 if ttl == "1h" else 300,
+                      "read_usd": round(ctx * rate(prices, model, "cache_read") / 1e6, 6),
+                      "rewrite_usd": round(ctx * rate(prices, model, "cache_write_" + ttl) / 1e6, 6)}))
+    return 0
+
 def ago(seconds):
     m = int(seconds // 60)
     return f"{m // 60}h {m % 60:02d}m" if m >= 60 else f"{m}m"
@@ -631,4 +648,6 @@ if __name__ == "__main__":
         sys.exit(rebuild())
     if len(sys.argv) == 3 and sys.argv[1] in ("--cold-check", "--cold-confirm"):
         sys.exit(cold_cli(sys.argv[1:]))
+    if len(sys.argv) == 3 and sys.argv[1] == "--idle":
+        sys.exit(idle_cli(sys.argv[2]))
     sys.exit(main())
