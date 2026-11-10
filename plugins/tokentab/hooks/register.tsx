@@ -61,21 +61,6 @@ export function dataDir(config: string | undefined, profile: string | undefined,
   return `${root}/plugins/data/tokentab-supertab`
 }
 
-/** Claude Code's global config, where the login is kept (GLOBAL_CONFIG in tokentab.py). */
-export function configFile(config: string | undefined, profile: string | undefined, home: string | undefined): string {
-  const trim = (path: string | undefined) => path?.replace(/[\\/]+$/, '')
-  const root = trim(config) || trim(profile) || trim(home)
-  if (!root) throw new Error('USERPROFILE and HOME are unset')
-  return `${root}/.claude.json`
-}
-
-/** `<account>/<organization>` of a login record (login_account in tokentab.py); null without one. */
-export function accountOf(config: unknown): string | null {
-  const a = (config as Json | null)?.oauthAccount as Json | undefined
-  const account = str(a?.accountUuid), org = str(a?.organizationUuid)
-  return account || org ? `${account ?? ''}/${org ?? ''}` : null
-}
-
 /** `YYYY-MM-DD` of an instant, the module environment's local date. */
 export function dayOf(ms: number): string {
   const d = new Date(ms)
@@ -375,10 +360,12 @@ let measured = false                    // this load has written the usage windo
 let autoOpenHere: boolean | undefined   // the switch set where /config had no row for it, `$.store`'s AUTO_OPEN
 
 // An SDK host (the Desktop app, `claude -p`) lists no plugin's /config row, so there the
-// Budget tab's switch is kept in `$.store` and stands over the manifest's option, until a
-// change through /config clears it.
+// Budget tab's switch is kept in `$.store` with the option it was set over; it stands
+// until /config changes that option, which a load sees without hooking `config.set`.
 const AUTO_OPEN = 'autoOpen'
-const autoOpen = () => autoOpenHere ?? opts.autoOpen !== false
+const optionAutoOpen = () => opts.autoOpen !== false
+const autoOpen = () => autoOpenHere ?? optionAutoOpen()
+const keepAutoOpen = ($: EngineInterface, value: boolean) => $.store.set(AUTO_OPEN, { value, over: optionAutoOpen() })
 
 async function sid($: EngineInterface): Promise<string> {
   return (sessionId ??= await $.session.id())
@@ -449,24 +436,12 @@ async function pageIsOpen($: EngineInterface): Promise<boolean> {
   return pageOpenedAt !== undefined && (await $.clock.now()) - pageOpenedAt < PAGE_MS
 }
 
-async function loginAccount($: EngineInterface): Promise<string | null> {
-  try {
-    const path = configFile(await $.env.get('CLAUDE_CONFIG_DIR'), await $.env.get('USERPROFILE'), await $.env.get('HOME'))
-    return accountOf(JSON.parse(await $.fs.read(path)))
-  } catch { return null }
-}
-
-/** This session's usage windows; before its first reading, the last one written, only if it was this login's. */
+/** This session's usage windows; none before its first reading (another session's may be another login's). */
 async function readWindows($: EngineInterface): Promise<{ kind: string }[]> {
-  const data = await dataRoot($)
   let doc: Json
   try {
-    doc = JSON.parse(await $.fs.read(`${data}/state/windows/${await sid($)}.json`)) as Json
-  } catch {
-    try { doc = JSON.parse(await $.fs.read(`${data}/state/rate_limits.json`)) as Json } catch { return [] }
-    const account = await loginAccount($)
-    if (account === null || doc.account !== account) return []
-  }
+    doc = JSON.parse(await $.fs.read(`${await dataRoot($)}/state/windows/${await sid($)}.json`)) as Json
+  } catch { return [] }
   return Array.isArray(doc.windows) ? doc.windows as { kind: string }[] : []
 }
 
@@ -639,8 +614,9 @@ export const register: Register = (on, pluginOptions) => {
     sessionId = undefined
     waiting = false
     try {
-      const v = await $.store.get(AUTO_OPEN)
-      autoOpenHere = typeof v === 'boolean' ? v : undefined
+      const kept = await $.store.get(AUTO_OPEN) as { value?: unknown, over?: unknown } | undefined
+      autoOpenHere = typeof kept?.value === 'boolean' && kept.over === optionAutoOpen() ? kept.value : undefined
+      if (kept !== undefined && autoOpenHere === undefined) await $.store.delete(AUTO_OPEN)
     } catch { autoOpenHere = undefined }
     showing = false
     // The REPL starts with its terminal; an SDK host (the Desktop app) with none, so its
@@ -722,7 +698,7 @@ export const register: Register = (on, pluginOptions) => {
     try {
       if (!(await $.config.list()).some(row => row.key === AUTO_OPEN_KEY)) {
         autoOpenHere = value
-        await $.store.set(AUTO_OPEN, value)
+        await keepAutoOpen($, value)
         $.ui.invalidate('ui.render')
         return { element: e.element }
       }
@@ -730,7 +706,7 @@ export const register: Register = (on, pluginOptions) => {
       await $.store.delete(AUTO_OPEN)
       const r = await $.config.set({ key: 'tokentab.autoOpen', value: value })
       if ('deny' in r && r.deny !== undefined) {
-        if (stored !== undefined) await $.store.set(AUTO_OPEN, stored)
+        if (stored !== undefined) await keepAutoOpen($, stored)
         $.ui.toast(`TokenTab: auto-open not changed: ${r.deny}`)
       }
     } catch (err) {
@@ -738,17 +714,6 @@ export const register: Register = (on, pluginOptions) => {
     }
     return { element: e.element }
   })
-
-  // The person's change to the switch in /config: it stands over a value the Budget tab
-  // kept in `$.store` where /config had no row. Cleared before the write, which reloads
-  // the module (this module's own `$.config.set` does not come through here).
-  on('config.set', async ($, e, next) => {
-    if (e.key === AUTO_OPEN_KEY) {
-      autoOpenHere = undefined
-      await $.store.delete(AUTO_OPEN)
-    }
-    return next(e)
-  }).catch(($, e, next) => next(e))
 
   // The person's first prompt after an auto-open the engine left undrawn: an open from
   // their own Enter is asked, so placed at any width. Once a session; the pane is opened
@@ -764,9 +729,9 @@ export const register: Register = (on, pluginOptions) => {
   }).catch(($, e, next) => next(e))
 
   // The plan's usage windows (5-hour, weekly; none off a subscription) for the guard and the
-  // report, which run outside the engine: the session's own, and the last of any, stamped with
-  // the login, for a session yet to measure. Written when a window moved and on this load's
-  // first measurement, which also records "none".
+  // report, which run outside the engine: the session's own, and the last of any for the
+  // budget skill. Written when a window moved and on this load's first measurement, which
+  // also records "none".
   on('session.measure', async ($, e, next) => {
     const r = await next(e)
     if (!measured || e.changed.includes('rateLimits')) {
@@ -776,7 +741,7 @@ export const register: Register = (on, pluginOptions) => {
         const data = await dataRoot($), at = new Date(await $.clock.now()).toISOString()
         await $.fs.write(`${data}/state/windows/${await sid($)}.json`, JSON.stringify({ at, windows }) + '\n')
         await $.fs.write(`${data}/state/rate_limits.json`,
-          JSON.stringify({ at, account: await loginAccount($), windows }) + '\n')
+          JSON.stringify({ at, windows }) + '\n')
       } catch { /* the limits stay in the unit last read */ }
     }
     return r

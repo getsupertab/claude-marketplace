@@ -75,23 +75,17 @@ W85='[{"kind": "five_hour", "percentUsed": 85, "resetsAt": "2999-01-01T00:00:00Z
 cat > "$DATA/budget.json" <<'EOF'
 {"budgets_on": true, "session_limit_usd": 0.000001, "five_hour_limit_percent": 90, "weekly_limit_percent": null, "warn_at_percent": 70, "hard_stop": true}
 EOF
-# Before the session's own reading: the last one written counts only if it was this login's
-printf '{"oauthAccount": {"accountUuid": "acc-pro", "organizationUuid": "org-pro"}}\n' > "$CLAUDE_CONFIG_DIR/.claude.json"
-printf '{"account": "acc-other/org-other", "windows": %s}\n' "$W85" > "$DATA/state/rate_limits.json"
-check "guard ignores another login's usage windows and counts USD" \
+# Before the session's own reading, the last one written (maybe another login's) is not used
+printf '{"windows": %s}\n' "$W85" > "$DATA/state/rate_limits.json"
+check "guard ignores another session's usage windows and counts USD" \
   "$(tool Read "" | "$SCRIPTS/guard.sh")" '"permissionDecision": "deny"'
-printf '{"account": "acc-pro/org-pro", "windows": %s}\n' "$W85" > "$DATA/state/rate_limits.json"
-check "guard uses the last usage windows written when they were this login's" \
-  "$(tool Read "" | "$SCRIPTS/guard.sh")" "85% used, limit 90%"
-# The session's own reading wins over the last one written by another login
-printf '{"account": "acc-other/org-other", "windows": []}\n' > "$DATA/state/rate_limits.json"
 printf '{"windows": [{"kind": "five_hour", "percentUsed": 95, "resetsAt": "2999-01-01T00:00:00Z"}]}\n' > "$DATA/state/windows/s-guard.json"
 check "guard counts the plan's 5-hour window in percent and stops past its limit" \
   "$(tool Read "" | "$SCRIPTS/guard.sh")" "95% used"
 sed 's/"budgets_on": true,/"budgets_on": true, "limit_unit": "usd",/' "$DATA/budget.json" > "$DATA/b.tmp" && mv "$DATA/b.tmp" "$DATA/budget.json"
 check "guard ignores an old file's limit_unit while the plan reports windows" \
   "$(tool Read "" | "$SCRIPTS/guard.sh")" "95% used"
-rm "$DATA/state/rate_limits.json" "$DATA/state/windows/s-guard.json" "$CLAUDE_CONFIG_DIR/.claude.json"
+rm "$DATA/state/rate_limits.json" "$DATA/state/windows/s-guard.json"
 check "guard lets TokenTab's own report command through" \
   "$(tool Bash "python3 /plugins/tokentab/tokentab/tokentab.py --status" | "$SCRIPTS/guard.sh")" ""
 # Each launcher the hooks may find Python with, and Windows paths (JSON-escaped below:
