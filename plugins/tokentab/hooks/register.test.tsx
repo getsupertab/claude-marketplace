@@ -753,14 +753,14 @@ test('the limit unit follows the account: percent where the plan reports a usage
 test('session.measure records the usage windows; the Budget tab then shows the percent fields', async ($, on) => {
   mock.env(on, { HOME: '/home/t' })
   const clock = mock.clock(on, { now: T0 })
-  const { fs } = world(on, { ...FILES, '/home/t/.claude.json': JSON.stringify({ oauthAccount: { accountUuid: 'a1', organizationUuid: 'o1' } }) })
+  const { fs } = world(on, FILES)
   on('session.measure', ($, e) => ({ changed: e.changed }))
   await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
   await clock.settle()
   const rateLimits = [{ kind: 'five_hour', percentUsed: 42, resetsAt: '2026-10-15T18:00:00Z' }, { kind: 'seven_day', percentUsed: 7 }]
   await $.session.measure({ context: { window: 200000 }, rateLimits, changed: ['context', 'rateLimits'] })
   const shared = JSON.parse(fs.get(`${DATA}/state/rate_limits.json`)!)
-  expect(shared.account).toBe('a1/o1')
+  expect(shared.account).toBeUndefined()
   expect(shared.windows).toEqual([
     { kind: 'five_hour', percentUsed: 42, resetsAt: '2026-10-15T18:00:00Z' }, { kind: 'seven_day', percentUsed: 7, resetsAt: null }])
   expect(JSON.parse(fs.get(`${DATA}/state/windows/${SID}.json`)!).windows).toEqual(shared.windows)
@@ -785,7 +785,7 @@ test('where /config has no row for it (Desktop), the auto-open switch is kept in
   await $.ui.press(press('auto-open'))
   expect(ui.config).toEqual([])
   expect(ui.toasts).toEqual([])
-  expect(ui.store.get('autoOpen')).toBe(false)
+  expect(ui.store.get('autoOpen')).toEqual({ value: false, over: true })
   const tree = await $.ui.render({ surface: 'desktop', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   expect(elements(tree, 'Button').find(b => b.key === 'auto-open')?.label).toBe('off')
 
@@ -794,8 +794,11 @@ test('where /config has no row for it (Desktop), the auto-open switch is kept in
   await clock.settle()
   expect(ui.opens).toBe(1)
 
-  // a change in /config stands over it
-  await $.config.set({ key: 'tokentab.autoOpen', value: true, previous: true, provider: { plugin: 'tokentab@supertab', tier: 'user' }, origin: { kind: 'composer' } })
+  // once /config changed the option it was kept over, the option stands and the kept value goes
+  ui.store.set('autoOpen', { value: false, over: false })
+  await $.session.start({ cwd: '/w', surface: 'desktop', isInteractive: true })
+  await clock.settle()
+  expect(ui.opens).toBe(2)
   expect(ui.store.has('autoOpen')).toBe(false)
 })
 
