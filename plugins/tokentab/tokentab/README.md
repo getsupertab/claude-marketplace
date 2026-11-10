@@ -94,9 +94,9 @@ Everything is in `budget.json` in your data folder. `null` turns a limit off. `/
 The last four work whether or not `budgets_on` is set.
 
 Each session keeps its own usage-window reading in `state/windows/<session>.json`. The
-latest reading of any session goes to `state/rate_limits.json` with its login, and a new
-session uses it only until its first reading, and only for the same login. Warnings are
-always shown in dollars.
+latest reading of any session also goes to `state/rate_limits.json`, for the budget skill;
+the guard and the views use only the session's own, so a new session counts in dollars
+until its first reading. Warnings are always shown in dollars.
 
 ### Expired cache
 

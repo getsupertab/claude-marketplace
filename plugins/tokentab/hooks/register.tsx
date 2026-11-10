@@ -61,21 +61,6 @@ export function dataDir(config: string | undefined, profile: string | undefined,
   return `${root}/plugins/data/tokentab-supertab`
 }
 
-/** Claude Code's global config, where the login is kept (GLOBAL_CONFIG in tokentab.py). */
-export function configFile(config: string | undefined, profile: string | undefined, home: string | undefined): string {
-  const trim = (path: string | undefined) => path?.replace(/[\\/]+$/, '')
-  const root = trim(config) || trim(profile) || trim(home)
-  if (!root) throw new Error('USERPROFILE and HOME are unset')
-  return `${root}/.claude.json`
-}
-
-/** `<account>/<organization>` of a login record (login_account in tokentab.py); null without one. */
-export function accountOf(config: unknown): string | null {
-  const a = (config as Json | null)?.oauthAccount as Json | undefined
-  const account = str(a?.accountUuid), org = str(a?.organizationUuid)
-  return account || org ? `${account ?? ''}/${org ?? ''}` : null
-}
-
 /** `YYYY-MM-DD` of an instant, the module environment's local date. */
 export function dayOf(ms: number): string {
   const d = new Date(ms)
@@ -133,7 +118,7 @@ async function loadPrices($: EngineInterface): Promise<Prices> {
   return prices
 }
 
-async function home($: EngineInterface): Promise<string> {
+async function dataRoot($: EngineInterface): Promise<string> {
   return dataDir(await $.env.get('CLAUDE_CONFIG_DIR'), await $.env.get('USERPROFILE'), await $.env.get('HOME'))
 }
 
@@ -423,10 +408,12 @@ let measured = false                    // this load has written the usage windo
 let autoOpenHere: boolean | undefined   // the switch set where /config had no row for it, `$.store`'s AUTO_OPEN
 
 // An SDK host (the Desktop app, `claude -p`) lists no plugin's /config row, so there the
-// Budget tab's switch is kept in `$.store` and stands over the manifest's option, until a
-// change through /config clears it.
+// Budget tab's switch is kept in `$.store` with the option it was set over; it stands
+// until /config changes that option, which a load sees without hooking `config.set`.
 const AUTO_OPEN = 'autoOpen'
-const autoOpen = () => autoOpenHere ?? opts.autoOpen !== false
+const optionAutoOpen = () => opts.autoOpen !== false
+const autoOpen = () => autoOpenHere ?? optionAutoOpen()
+const keepAutoOpen = ($: EngineInterface, value: boolean) => $.store.set(AUTO_OPEN, { value, over: optionAutoOpen() })
 
 async function sid($: EngineInterface): Promise<string> {
   return (sessionId ??= await $.session.id())
@@ -497,29 +484,17 @@ async function pageIsOpen($: EngineInterface): Promise<boolean> {
   return pageOpenedAt !== undefined && (await $.clock.now()) - pageOpenedAt < PAGE_MS
 }
 
-async function loginAccount($: EngineInterface): Promise<string | null> {
-  try {
-    const path = configFile(await $.env.get('CLAUDE_CONFIG_DIR'), await $.env.get('USERPROFILE'), await $.env.get('HOME'))
-    return accountOf(JSON.parse(await $.fs.read(path)))
-  } catch { return null }
-}
-
-/** This session's usage windows; before its first reading, the last one written, only if it was this login's. */
+/** This session's usage windows; none before its first reading (another session's may be another login's). */
 async function readWindows($: EngineInterface): Promise<{ kind: string }[]> {
-  const data = await home($)
   let doc: Json
   try {
-    doc = JSON.parse(await $.fs.read(`${data}/state/windows/${await sid($)}.json`)) as Json
-  } catch {
-    try { doc = JSON.parse(await $.fs.read(`${data}/state/rate_limits.json`)) as Json } catch { return [] }
-    const account = await loginAccount($)
-    if (account === null || doc.account !== account) return []
-  }
+    doc = JSON.parse(await $.fs.read(`${await dataRoot($)}/state/windows/${await sid($)}.json`)) as Json
+  } catch { return [] }
   return Array.isArray(doc.windows) ? doc.windows as { kind: string }[] : []
 }
 
 async function readBudget($: EngineInterface): Promise<void> {
-  const path = `${await home($)}/budget.json`
+  const path = `${await dataRoot($)}/budget.json`
   const errors = options?.errors ?? {}
   const windows = await readWindows($)
   try {
@@ -542,7 +517,7 @@ async function refreshNow($: EngineInterface): Promise<void> {
     } else {
       $.ui.status((await python($, 'tokentab.py', ['--status', '--session', id])).trim())
     }
-    if (await pageIsOpen($)) await python($, 'sankey.py', ['--session', id, '--push', pushPath(await home($), id)])
+    if (await pageIsOpen($)) await python($, 'sankey.py', ['--session', id, '--push', pushPath(await dataRoot($), id)])
     error = undefined
   } catch (err) {
     error = String(err instanceof Error ? err.message : err)
@@ -607,7 +582,7 @@ async function openSnapshot($: EngineInterface): Promise<void> {
   let written: string | undefined   // the page, once sankey.py wrote it: a failed open names it
   try {
     const id = await sid($)
-    const path = pagePath(await home($), id)
+    const path = pagePath(await dataRoot($), id)
     await python($, 'sankey.py', ['--session', id, '--out', path])
     written = path
     const { argv, checkExit } = await opener($, path)
@@ -622,31 +597,7 @@ async function openSnapshot($: EngineInterface): Promise<void> {
   }
 }
 
-/** The auto-open switch is the manifest's `userConfig` field: written as the config menu
- *  would, so the menu, the install screen and the pane show one value. The write reloads
- *  the module with the new options; `session.start` then runs again and is idempotent.
- *  Where /config has no row for it (an SDK host), it is kept in `$.store` instead. A stored
- *  value is cleared before the /config write, so the reload cannot read it back. */
-async function setAutoOpen($: EngineInterface, value: boolean): Promise<void> {
-  const key = `${$.plugin.name}.autoOpen`
-  try {
-    if (!(await $.config.list()).some(row => row.key === key)) {
-      autoOpenHere = value
-      await $.store.set(AUTO_OPEN, value)
-      $.ui.invalidate('ui.render')
-      return
-    }
-    const stored = autoOpenHere
-    await $.store.delete(AUTO_OPEN)
-    const r = await $.config.set({ key, value })
-    if ('deny' in r && r.deny !== undefined) {
-      if (stored !== undefined) await $.store.set(AUTO_OPEN, stored)
-      $.ui.toast(`TokenTab: auto-open not changed: ${r.deny}`)
-    }
-  } catch (err) {
-    $.ui.toast(`TokenTab: auto-open not changed: ${err instanceof Error ? err.message : String(err)}`)
-  }
-}
+const AUTO_OPEN_KEY = 'tokentab.autoOpen'   // the /config key
 
 /** One limit through the validator; a refused value is shown under its field, unwritten. */
 async function setBudget($: EngineInterface, key: string, value: string): Promise<void> {
@@ -688,7 +639,7 @@ export const register: Register = (on, pluginOptions) => {
   on('session.start', async ($, e, next) => {
     const r = await next(e)
     try {
-      const data = await home($)
+      const data = await dataRoot($)
       // The loaded marker: scripts/loaded-check.sh looks for it on the first prompt.
       await $.fs.write(`${data}/state/loaded/${await $.session.id()}`, new Date(await $.clock.now()).toISOString() + '\n')
       // First run: the shipped limits become the user's budget.json. After that only keys
@@ -711,8 +662,9 @@ export const register: Register = (on, pluginOptions) => {
     sessionId = undefined
     waiting = false
     try {
-      const v = await $.store.get(AUTO_OPEN)
-      autoOpenHere = typeof v === 'boolean' ? v : undefined
+      const kept = await $.store.get(AUTO_OPEN) as { value?: unknown, over?: unknown } | undefined
+      autoOpenHere = typeof kept?.value === 'boolean' && kept.over === optionAutoOpen() ? kept.value : undefined
+      if (kept !== undefined && autoOpenHere === undefined) await $.store.delete(AUTO_OPEN)
     } catch { autoOpenHere = undefined }
     showing = false
     // The REPL starts with its terminal; an SDK host (the Desktop app) with none, so its
@@ -801,16 +753,33 @@ export const register: Register = (on, pluginOptions) => {
     return { text: `${status}\n${where}`, context: figures === '' ? undefined : [`TokenTab, this session's figures as of now:\n${figures}`] }
   }).catch(() => ({ text: 'TokenTab: the status command failed' }))
 
-  // The person's change to the switch in /config: it stands over a value the Budget tab
-  // kept in `$.store` where /config had no row. Cleared before the write, which reloads
-  // the module (this module's own `$.config.set` does not come through here).
-  on('config.set', async ($, e, next) => {
-    if (e.key === `${$.plugin.name}.autoOpen`) {
-      autoOpenHere = undefined
+  // The Budget tab's auto-open switch is the manifest's `userConfig` field: written as the
+  // config menu would, so the menu, the install screen and the pane show one value. The
+  // write reloads the module; `session.start` then runs again and is idempotent. Where
+  // /config has no row for it (an SDK host), it is kept in `$.store` instead. A stored
+  // value is cleared before the /config write, so the reload cannot read it back.
+  // Answered here, not in the Button's closure: the directory reads config.set only on a hook's own `$`.
+  on('ui.press', { element: 'auto-open', requestId: PANE }, async ($, e) => {
+    const value = !autoOpen()
+    try {
+      if (!(await $.config.list()).some(row => row.key === AUTO_OPEN_KEY)) {
+        autoOpenHere = value
+        await keepAutoOpen($, value)
+        $.ui.invalidate('ui.render')
+        return { element: e.element }
+      }
+      const stored = autoOpenHere
       await $.store.delete(AUTO_OPEN)
+      const r = await $.config.set({ key: 'tokentab.autoOpen', value: value })
+      if ('deny' in r && r.deny !== undefined) {
+        if (stored !== undefined) await keepAutoOpen($, stored)
+        $.ui.toast(`TokenTab: auto-open not changed: ${r.deny}`)
+      }
+    } catch (err) {
+      $.ui.toast(`TokenTab: auto-open not changed: ${err instanceof Error ? err.message : String(err)}`)
     }
-    return next(e)
-  }).catch(($, e, next) => next(e))
+    return { element: e.element }
+  })
 
   // The person's first prompt after an auto-open the engine left undrawn: an open from
   // their own Enter is asked, so placed at any width. Once a session; the pane is opened
@@ -834,19 +803,19 @@ export const register: Register = (on, pluginOptions) => {
   }).catch(($, e, next) => next(e))
 
   // The plan's usage windows (5-hour, weekly; none off a subscription) for the guard and the
-  // report, which run outside the engine: the session's own, and the last of any, stamped with
-  // the login, for a session yet to measure. Written when a window moved and on this load's
-  // first measurement, which also records "none".
+  // report, which run outside the engine: the session's own, and the last of any for the
+  // budget skill. Written when a window moved and on this load's first measurement, which
+  // also records "none".
   on('session.measure', async ($, e, next) => {
     const r = await next(e)
     if (!measured || e.changed.includes('rateLimits')) {
       measured = true
       try {
         const windows = e.rateLimits.map(w => ({ kind: w.kind, percentUsed: w.percentUsed, resetsAt: w.resetsAt ?? null }))
-        const data = await home($), at = new Date(await $.clock.now()).toISOString()
+        const data = await dataRoot($), at = new Date(await $.clock.now()).toISOString()
         await $.fs.write(`${data}/state/windows/${await sid($)}.json`, JSON.stringify({ at, windows }) + '\n')
         await $.fs.write(`${data}/state/rate_limits.json`,
-          JSON.stringify({ at, account: await loginAccount($), windows }) + '\n')
+          JSON.stringify({ at, windows }) + '\n')
       } catch { /* the limits stay in the unit last read */ }
     }
     return r
@@ -860,7 +829,7 @@ export const register: Register = (on, pluginOptions) => {
       try {
         const id = str(e.attributes['session.id']) ?? await $.session.id()
         const ts = e.loggedAt || new Date(await $.clock.now()).toISOString()
-        await append($, await home($), toLine(e, await loadPrices($), id, ts))
+        await append($, await dataRoot($), toLine(e, await loadPrices($), id, ts))
         if (tick !== undefined) stale = true   // the clock's next beat redraws, see startClock
       } catch { /* see above */ }
     }
@@ -1196,9 +1165,9 @@ function budgetTab($: EngineInterface, e: RenderEvent): RenderChildren {
   const column = (ctl: RenderChildren, stretch = false) => (
     <Box width={16} flexShrink={0} flexDirection="column" alignItems={stretch ? 'stretch' : 'flex-start'}>{ctl}</Box>
   )
-  const toggle = (key: string, on: boolean, onPress: () => void): RenderChildren => mobile
-    ? <Text size="footnote" mono weight="semibold">{on ? 'on' : 'off'}</Text>
-    : <Button key={key} label={on ? 'on' : 'off'} variant={on ? 'primary' : 'secondary'} onPress={onPress} />
+  const toggle = (key: string, isOn: boolean, onPress: () => void): RenderChildren => mobile
+    ? <Text size="footnote" mono weight="semibold">{isOn ? 'on' : 'off'}</Text>
+    : <Button key={key} label={isOn ? 'on' : 'off'} variant={isOn ? 'primary' : 'secondary'} onPress={onPress} />
   const unit = unitOf(o?.windows ?? [])
   const control = (s: Setting): RenderChildren => {
     const v = at(o?.budget, s.key)
@@ -1228,7 +1197,7 @@ function budgetTab($: EngineInterface, e: RenderEvent): RenderChildren {
   return (
     <Box flexDirection="column" gap={1}>
       {section('options', undefined, [
-        row('auto-open', 'Open pane at session start', column(toggle('auto-open', autoOpen(), () => { void setAutoOpen($, !autoOpen()) }))),
+        row('auto-open', 'Open pane at session start', column(toggle('auto-open', autoOpen(), () => {}))),
       ])}
       {o?.error !== undefined && <Text size="footnote" color="error">{o.error}</Text>}
       {SECTIONS.flatMap(sec => [
@@ -1398,14 +1367,14 @@ button.primary{background:var(--primary);color:var(--on-primary)}
 </div></div></main>
 <script>
 const DATA = ${data};
-const $ = id => document.getElementById(id);
-const current = () => DATA.variants[$('desc').checked ? 0 : 1];
-const say = text => { $('status').textContent = text; };
+const byId = id => document.getElementById(id);
+const current = () => DATA.variants[byId('desc').checked ? 0 : 1];
+const say = text => { byId('status').textContent = text; };
 function draw() {
   const v = current();
-  $('card').innerHTML = v.svg;
-  $('x').href = v.links.x;
-  $('linkedin').href = v.links.linkedin;
+  byId('card').innerHTML = v.svg;
+  byId('x').href = v.links.x;
+  byId('linkedin').href = v.links.linkedin;
 }
 function png() {
   const svg = current().svg;
@@ -1421,18 +1390,18 @@ function png() {
     img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
   });
 }
-$('desc').addEventListener('change', draw);
+byId('desc').addEventListener('change', draw);
 // A promise in the ClipboardItem keeps Safari's user gesture alive while the PNG renders
 const copyImage = () => navigator.clipboard.write([new ClipboardItem({ 'image/png': png() })]);
-$('copy-image').addEventListener('click', async () => {
+byId('copy-image').addEventListener('click', async () => {
   try { await copyImage(); say('Image copied.'); }
   catch (err) { say('Not copied: ' + err.message + '. Use Download PNG instead.'); }
 });
 // Post links take only text, so the image goes on the clipboard first, to paste into the post
 for (const [id, name] of [['x', 'X'], ['linkedin', 'LinkedIn']]) {
-  $(id).addEventListener('click', async event => {
+  byId(id).addEventListener('click', async event => {
     event.preventDefault();
-    const href = $(id).href;
+    const href = byId(id).href;
     let copied = true;
     try { await copyImage(); } catch { copied = false; }
     const tab = window.open(href, '_blank', 'noopener');
@@ -1444,16 +1413,16 @@ for (const [id, name] of [['x', 'X'], ['linkedin', 'LinkedIn']]) {
 let file;
 const prepare = () => { file = undefined; return png().then(blob => { file = new File([blob], DATA.file, { type: 'image/png' }); }, () => { file = undefined; }); };
 if (navigator.canShare && navigator.canShare({ files: [new File([''], DATA.file, { type: 'image/png' })] })) {
-  $('native').hidden = false;
-  $('desc').addEventListener('change', prepare);
+  byId('native').hidden = false;
+  byId('desc').addEventListener('change', prepare);
   prepare();
-  $('native').addEventListener('click', async () => {
+  byId('native').addEventListener('click', async () => {
     if (!file) { say('Still preparing the image; try again.'); return; }
     try { await navigator.share({ files: [file], text: current().text }); }
     catch (err) { if (err.name !== 'AbortError') say('Not shared: ' + err.message); }
   });
 }
-$('download').addEventListener('click', async () => {
+byId('download').addEventListener('click', async () => {
   try {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(await png()); a.download = DATA.file; a.click();
@@ -1461,7 +1430,7 @@ $('download').addEventListener('click', async () => {
     say('PNG downloaded.');
   } catch (err) { say('Not downloaded: ' + err.message); }
 });
-$('copy-text').addEventListener('click', async () => {
+byId('copy-text').addEventListener('click', async () => {
   try { await navigator.clipboard.writeText(current().text); say('Text copied.'); }
   catch (err) { say('Not copied: ' + err.message); }
 });
@@ -1475,7 +1444,7 @@ async function openSharePage($: EngineInterface, r: Report): Promise<void> {
   let written: string | undefined
   try {
     const now = new Date()
-    const path = `${await home($)}/share/${(await sid($)).slice(0, 8)}.html`
+    const path = `${await dataRoot($)}/share/${(await sid($)).slice(0, 8)}.html`
     await $.fs.write(path, sharePageHtml(shareCard(r, now, true)!, shareCard(r, now, false)!, r.session?.title ?? r.sid.slice(0, 8)))
     written = path
     const { argv, checkExit } = await opener($, path)

@@ -11,6 +11,10 @@ the money went, tool by tool. Nothing leaves your machine.
 Start a new session (or run `/reload-plugins`) and it's counting from your first prompt.
 Full steps are under [Install](#install).
 
+[Privacy](https://github.com/getsupertab/claude-marketplace/tree/main/plugins/tokentab#your-data-stays-yours):
+TokenTab collects nothing and sends nothing; what it reads and writes on your machine is
+under [Your data stays yours](#your-data-stays-yours).
+
 ## Why we built it
 
 It started over Slack. One of us noticed a Claude Code session had burned through far
@@ -190,15 +194,85 @@ clear about what TokenTab does:
   cost, session id and request id. Never your prompts, Claude's replies or your files.
 - **What it reads:** the cost records Claude Code produces for every API call (it reads
   them and passes them on unchanged), and the session's transcript, to count tokens for
-  the budget guard. The transcript is only read, never copied. From `.claude.json` it
-  reads only the account and organization ids, so a usage-window reading is never applied
-  to another login.
+  the budget guard. The transcript is only read, never copied. It reads no credential,
+  login or account file.
 - **What it runs:** Python 3, to work out costs and draw the views; `open`, `xdg-open` or
   `explorer.exe` when you choose "Open in browser" or the share page; and `uname`, to tell
   macOS from Linux. Nothing else.
 - **Where it writes:** only `plugins/data/tokentab-supertab/` in your Claude config
   folder. Uninstalling leaves that folder; delete it to remove the data.
 - **It's open source** (Apache 2.0), so you don't have to take our word for any of this.
+
+### What the hooks module does, call by call
+
+For a reviewer reading `hooks/register.tsx`, each kind of call it makes and why:
+
+- **Programs it starts (`$.process.run`).** Only these, with these arguments:
+  - `python3`, `python` or `py -3` with `-c "import sys; print(sys.version_info[0])"`,
+    once, to find a Python 3; the launcher found is kept in the plugin's store.
+  - That Python with one of the plugin's own files, `tokentab/tokentab.py` (costs, the
+    pane's figures, the status page) or `tokentab/budget.py` (a limit you change in the
+    Budget tab), and local paths and values as arguments.
+  - `uname -s`, to tell macOS from Linux.
+  - `open` (macOS), `xdg-open` (Linux) or `explorer.exe` (Windows) with the path of a
+    local HTML file, only when you choose "Open in browser" or the share page.
+
+  None of these programs is sent anything but those arguments, and none of TokenTab's
+  Python opens a network connection.
+- **Files it writes (`$.fs.write`).** Only under `plugins/data/tokentab-supertab/` in your
+  Claude config folder:
+  - `ledger/<day>/<session>.jsonl`: one line per API call (the numbers listed above).
+    The budget guard (`tokentab/guard.py`, run by the plugin's `PreToolUse` and
+    `UserPromptSubmit` hooks) reads these files and warns or stops on what they add up to;
+    nothing else runs or obeys them.
+  - `budget.json`: your limits, copied from the plugin's default on first run.
+  - `state/loaded/<session>`, `state/windows/<session>.json` and
+    `state/rate_limits.json`: that the module is loaded, and your plan's usage-window
+    percentages, for the guard.
+  - `status/<session>.html` and `.js`, and the share page: the pages "Open in browser"
+    shows.
+- **What it reads.** The files above, `prices.json` and `budget.json`, the API usage
+  records (see the telemetry hook below). No credential, login or account file.
+  Environment variables: `CLAUDE_CONFIG_DIR`, `HOME`, `USERPROFILE`, `OS`,
+  to find the config folder and the platform.
+- **What it sends out.** Nothing. The values it reads go into the local files above, the
+  pane, the status line and, for `/tokentab:status`, the command's answer in your session.
+  Two web addresses appear in the code, and neither is a way out:
+  - `http://www.w3.org/2000/svg` is the SVG namespace in the pane's bars and the share
+    card (`barSvg`, `shareCardSvg`). It is an identifier, never fetched; an SVG drawn as an
+    image does not render without it.
+  - `https://x.com/intent/post` and `https://www.linkedin.com/feed/` are the share page's
+    "Share on X" and "Share on LinkedIn" links (`shareLinks`, asserted in
+    `register.test.tsx`). Your browser opens one only when you click it, with the card's
+    text and nothing else.
+
+  The environment variables it reads are folder paths and the platform name, never a key
+  or token.
+- **Configuration it sets (`$.config.set`).** Only `tokentab.autoOpen`, its own option,
+  when you flip "Open at session start" in the Budget tab. It sets no environment variable
+  and no other setting, and it does not hook `config.set`.
+- **Events it hooks.** `session.start` and `session.attach` (open the pane),
+  `ui.render` and `ui.press` (its own pane), `command.run` for `/tokentab:status` only
+  (answers it in place of the skill's text), `prompt.submit` (opens a pane the start left
+  undrawn; always passes the prompt on), `session.measure` (the usage windows) and
+  `telemetry.log` (below). Every hook passes its event on, and none takes a permission
+  decision.
+
+### The telemetry hook
+
+To see every API call, TokenTab hooks Claude Code's `telemetry.log` event with the
+matcher `{ to: 'collector' }` (`hooks/register.tsx`). That hook sees every record
+addressed to the telemetry collector, with or without telemetry switched on. This is
+what it does with them:
+
+- **It passes every record on first, unchanged.** It never drops, delays, edits or
+  denies one, and a failure in TokenTab never touches the record.
+- **It reads only `api_request` records** and ignores every other kind.
+- **From an `api_request` it keeps** the model, the four token counts, Claude Code's
+  `cost_usd`, `query_source`, `request_id`, `duration_ms` and the session id, prices
+  them, and appends one line to the local ledger (see below). Every other attribute of
+  the record is ignored and not stored.
+- **It sends nothing anywhere.** The ledger stays in TokenTab's data folder.
 
 ## Tell us what you think
 
