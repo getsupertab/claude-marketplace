@@ -11,6 +11,10 @@ the money went, tool by tool. Nothing leaves your machine.
 Start a new session (or run `/reload-plugins`) and it's counting from your first prompt.
 Full steps are under [Install](#install).
 
+[Privacy](https://github.com/getsupertab/claude-marketplace/tree/main/plugins/tokentab#your-data-stays-yours):
+TokenTab collects nothing and sends nothing; what it reads and writes on your machine is
+under [Your data stays yours](#your-data-stays-yours).
+
 ## Why we built it
 
 It started over Slack. One of us noticed a Claude Code session had burned through far
