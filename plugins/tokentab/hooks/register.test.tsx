@@ -1,7 +1,7 @@
 import { test, expect, mock } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On, RenderElement, RenderNode } from 'claude-code'
-import { at, barCells, barSvg, dataDir, inUnit, int, liveLines, pct, SECTIONS, SERIES, shareCard, shareCardSvg, shareLinks, sharePageHtml, shareText, shown, stripAnsi, toneOf, unitOf, usd, withNewKeys, wrapWords } from './register'
+import { at, barCells, barSvg, dataDir, inUnit, int, liveLines, pct, SECTIONS, SERIES, shareCard, shareCardSvg, shareLinks, sharePageHtml, shareText, shown, stripAnsi, timedOut, toneOf, unitOf, usd, withNewKeys, wrapWords } from './register'
 import type { Report } from './register'
 
 // The world beneath the plugin: `$.fs` reaches nothing under `claude plugin test`, and
@@ -221,6 +221,12 @@ test('the data folder comes from CLAUDE_CONFIG_DIR, then USERPROFILE, then HOME'
   expect(dataDir(undefined, 'C:\\Users\\t\\', '/home/t/')).toBe(`C:\\Users\\t/.claude${tail}`)
   expect(dataDir('', '', '/home/t/')).toBe(`/home/t/.claude${tail}`)
   expect(() => dataDir(undefined, undefined, undefined)).toThrow('USERPROFILE and HOME are unset')
+})
+
+test('a helper that timed out is told apart from one that would not start', () => {
+  expect(timedOut(new Error('$.process.run(python3) aborted: still running after 120000ms'))).toBe(true)
+  expect(timedOut(new Error('spawn python3 ENOENT'))).toBe(false)
+  expect(timedOut('still running after 5ms')).toBe(true)
 })
 
 test('an api_request record becomes one priced ledger line per request', async ($, on) => {

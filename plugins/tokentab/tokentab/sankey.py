@@ -781,10 +781,13 @@ class Live:
     caller writing snapshots in a loop only reads what was appended since the last one."""
     def __init__(self):
         self.prices = kt.load_prices()
-        self.store, self.led = kt.Store(self.prices), kt.LedgerStore(self.prices)
+        self.store = self.led = None
 
     def scan(self):
-        self.store.scan(); self.led.scan()
+        if self.store is None:      # the first scan of the run catches up the saved stores
+            self.store, self.led = kt.scanned(self.prices)
+        else:
+            self.store.scan(); self.led.scan()
 
 
 # Cost over time: one cumulative line per rate, start of the session on the left. Two
@@ -1153,6 +1156,16 @@ def main():
     ap.add_argument("--hide", default="", help="columns to leave out, comma-separated: "
                                                + ",".join(k for k, _, _ in COLUMNS))
     a = ap.parse_args()
+    mode = ",".join(m for m, on in (("flow-svg", a.flow_svg), ("push", a.push), ("out", a.out)) if on) or "out"
+    try:
+        run(a)
+    except BaseException as e:
+        kt.perf_done("sankey.py", mode, a.session, error=type(e).__name__)
+        raise
+    kt.perf_done("sankey.py", mode, a.session)
+
+
+def run(a):
     hide = [c for c in a.hide.split(",") if c] + (["model"] if a.no_models else [])
     live = Live()
     live.scan()

@@ -17,6 +17,7 @@ per-tool attribution. No dependencies.
 import argparse, bisect, glob, json, os, re, shlex, sys, time
 from datetime import datetime, timezone
 HERE = os.path.dirname(os.path.abspath(__file__))
+_T0 = time.perf_counter()     # the run's start, for the timing log
 
 # plugin: Claude Code's config folder, CLAUDE_CONFIG_DIR when set, else .claude in USERPROFILE
 # (Windows), else in HOME: the order the hooks module uses (dataDir in hooks/register.tsx)
@@ -425,11 +426,16 @@ class Store:
         self.proj_cwd = {}         # project slug -> a working directory seen in it
         self.present = set()       # session ids with a transcript on disk at the last scan
         self.released = {}         # session_id -> project slug of a Desktop session deleted there
+        self.read_bytes = self.read_files = 0   # what the last scan read (for the timing log)
+        self.rewound, self.gone = [], []        # logs that shrank, logs that vanished, at the last scan
 
     def scan(self):
+        self.read_bytes = self.read_files = 0
+        self.rewound, self.gone = [], []
         if not os.path.isdir(ROOT):
+            self.gone = list(self.offsets)
             return
-        present, released = set(), {}
+        present, released, paths = set(), {}, set()
         for proj in os.listdir(ROOT):
             pdir = os.path.join(ROOT, proj)
             if not os.path.isdir(pdir):
@@ -450,8 +456,10 @@ class Store:
                     size = os.path.getsize(path)
                 except OSError:
                     continue
+                paths.add(path)
                 off = self.offsets.get(path, 0)
                 if size < off:            # file was truncated or rotated
+                    self.rewound.append(path)
                     off = 0
                 if size == off:
                     continue
@@ -462,6 +470,8 @@ class Store:
                         self.offsets[path] = fh.tell()
                 except OSError:
                     continue
+                self.read_files += 1
+                self.read_bytes += size - off
                 # a partial trailing line is left for the next pass
                 if chunk and not chunk.endswith("\n"):
                     cut = chunk.rfind("\n")
@@ -472,6 +482,7 @@ class Store:
                     chunk = chunk[:cut+1]
                 self._consume(chunk, proj)
         self.present, self.released = present, released
+        self.gone = [p for p in self.offsets if p not in paths]
 
     def title(self, sid):
         """The session's title as Claude Code shows it, or None."""
@@ -618,6 +629,8 @@ class LedgerStore:
         self.sessions = {}
         self.events = []
         self.reqs = {}        # request_id -> [session, model, output tokens, thinking tokens filed, series entry]
+        self.read_bytes = self.read_files = 0
+        self.rewound, self.gone = [], []
 
     def reconcile(self, store):
         """Telemetry reports output tokens but not how many were thinking, so a ledger
@@ -639,13 +652,24 @@ class LedgerStore:
         return sum(r[2] for rid, r in self.reqs.items() if r[0] == sid and rid not in store.think)
 
     def scan(self):
-        for p in sorted(glob.glob(os.path.join(CFG, "ledger", "*", "*.jsonl"))):
+        self.read_bytes = self.read_files = 0
+        self.rewound, self.gone = [], []
+        paths = sorted(glob.glob(os.path.join(CFG, "ledger", "*", "*.jsonl")))
+        known = set(paths)
+        self.gone = [p for p in self.offsets if p not in known]
+        for p in paths:
             try:
+                if os.path.getsize(p) < self.offsets.get(p, 0):
+                    self.rewound.append(p)
+                    continue
                 with open(p, "rb") as f:
                     f.seek(self.offsets.get(p, 0))
                     chunk = f.read()
             except OSError:
                 continue
+            if chunk:
+                self.read_files += 1
+                self.read_bytes += len(chunk)
             end = chunk.rfind(b"\n") + 1          # only whole lines
             self.offsets[p] = self.offsets.get(p, 0) + end
             for line in chunk[:end].splitlines():
@@ -679,6 +703,178 @@ class LedgerStore:
 
     def day_total(self):
         return day_total(self.events)
+
+
+# What the scan has read, kept between runs. Every pane refresh, status line, page push and
+# skill is a new Python process; without this each one re-reads every transcript in projects/
+# from the start (over a GB after a busy month, longer than the module's timeout). The state
+# file holds both stores as they stand after a scan, so a run only reads what was appended
+# since. It is thrown away and rebuilt from a full read when it cannot be trusted: a different
+# tokentab.py or price table (key), a log that shrank or vanished (Claude Code's cleanup, a
+# session deleted in Desktop), or a file that does not load. A lock lets one process at a
+# time read and write it, so sessions starting together share one full read.
+def _state(name):
+    return os.path.join(CFG, "state", name)   # read at call time: the tests point CFG elsewhere
+
+
+PERF_MAX = 1_000_000          # bytes; past this the timing log keeps its newer half
+SCAN_FORMAT = 1               # raise when the stores' fields change shape
+PERF = {}                     # this run's timings, for the timing log
+
+
+def scan_key(prices):
+    """What the saved stores depend on: this file's code, the prices, the folders read."""
+    import hashlib
+    h = hashlib.sha256()
+    try:
+        with open(os.path.abspath(__file__), "rb") as f:
+            h.update(f.read())
+    except OSError:
+        h.update(b"?")
+    h.update(json.dumps([SCAN_FORMAT, list(sys.version_info[:2]), ROOT, CFG, prices], sort_keys=True,
+                        default=str).encode("utf-8"))
+    return h.hexdigest()
+
+
+class ScanLock:
+    """An exclusive lock on state/scan.lock for the length of a with block. The OS drops it when the
+    process ends, a killed one included. A lock that cannot be taken is skipped, not waited on."""
+    def __enter__(self):
+        t = time.perf_counter()
+        self.f = None
+        try:
+            path = _state("scan.lock")
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            self.f = open(path, "a+b")
+            if os.name == "nt":
+                import msvcrt
+                while True:
+                    try:
+                        self.f.seek(0)
+                        msvcrt.locking(self.f.fileno(), msvcrt.LK_NBLCK, 1)
+                        break
+                    except OSError:
+                        time.sleep(0.05)
+            else:
+                import fcntl
+                fcntl.flock(self.f.fileno(), fcntl.LOCK_EX)
+        except OSError:
+            if self.f:
+                self.f.close()
+            self.f = None
+        self.waited = time.perf_counter() - t
+        return self
+
+    def __exit__(self, *exc):
+        if self.f:
+            try:
+                if os.name == "nt":
+                    import msvcrt
+                    self.f.seek(0)
+                    msvcrt.locking(self.f.fileno(), msvcrt.LK_UNLCK, 1)
+            except OSError:
+                pass
+            self.f.close()
+
+
+def scanned(prices):
+    """(Store, LedgerStore), both scanned up to now: the saved ones caught up on what was
+    appended since they were saved, or new ones from a full read when there are none or
+    they cannot be trusted. Saves them again when the scan read anything."""
+    import pickle
+    clock, path = time.perf_counter, _state("scan.pickle")
+    with ScanLock() as lock:
+        PERF["lock_s"] = lock.waited
+        t = clock()
+        key, store, led, reason = scan_key(prices), None, None, None
+        try:
+            with open(path, "rb") as f:
+                saved = pickle.load(f)
+            if saved.get("key") == key:
+                store, led = saved["store"], saved["led"]
+            else:
+                reason = "changed"
+        except FileNotFoundError:
+            reason = "none"
+        except Exception:
+            reason = "unreadable"
+        PERF["load_s"] = clock() - t
+        t = clock()
+        if store is not None:
+            store.prices = led.prices = prices
+            store.scan(); led.scan()
+            if store.rewound or led.rewound:
+                reason, store = "shrank", None
+            elif store.gone or led.gone:
+                reason, store = "vanished", None
+        PERF["kind"] = "incremental" if store is not None else "full"
+        if reason:
+            PERF["reason"] = reason
+        if store is None:
+            store, led = Store(prices), LedgerStore(prices)
+            store.scan(); led.scan()
+        PERF["scan_s"] = clock() - t
+        PERF["read_bytes"] = store.read_bytes + led.read_bytes
+        PERF["read_files"] = store.read_files + led.read_files
+        PERF["tracked_files"] = len(store.offsets) + len(led.offsets)
+        t = clock()
+        if PERF["kind"] == "full" or PERF["read_bytes"]:
+            tmp = f"{path}.{os.getpid()}.tmp"
+            try:
+                with open(tmp, "wb") as f:
+                    pickle.dump({"key": key, "store": store, "led": led}, f, protocol=4)
+                os.replace(tmp, path)
+            except Exception:
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
+        PERF["save_s"] = clock() - t
+        try:
+            PERF["state_bytes"] = os.path.getsize(path)
+        except OSError:
+            pass
+    return store, led
+
+
+def perf_log(entry):
+    """Appends one line to the timing log (state/perf.jsonl). Never fails the run."""
+    PERF_LOG = _state("perf.jsonl")
+    try:
+        os.makedirs(os.path.dirname(PERF_LOG), exist_ok=True)
+        line = json.dumps(dict({"ts": datetime.now(timezone.utc).isoformat(timespec="seconds")}, **entry)) + "\n"
+        with open(PERF_LOG, "a", encoding="utf-8") as f:
+            f.write(line)
+        if os.path.getsize(PERF_LOG) > PERF_MAX:
+            with open(PERF_LOG, encoding="utf-8") as f:
+                lines = f.readlines()
+            tmp = f"{PERF_LOG}.{os.getpid()}.tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.writelines(lines[len(lines) // 2:])
+            os.replace(tmp, PERF_LOG)
+    except Exception:
+        pass
+
+
+def perf_done(script, mode, sid=None, error=None):
+    """Logs this run: what ran, how the scan went, and the time each phase took (seconds)."""
+    e = {"script": script, "mode": mode, "version": plugin_version()}
+    if sid:
+        e["session"] = sid
+    e.update({k: round(v, 3) if isinstance(v, float) else v for k, v in PERF.items()})
+    e["total_s"] = round(time.perf_counter() - _T0, 3)
+    e["output_s"] = round(max(0.0, e["total_s"] - sum(PERF.get(k, 0.0) for k in ("lock_s", "load_s", "scan_s", "save_s"))), 3)
+    if error:
+        e["error"] = error
+    perf_log(e)
+
+
+def plugin_version():
+    try:
+        with open(os.path.join(HERE, "..", ".claude-plugin", "plugin.json"), encoding="utf-8") as f:
+            return json.load(f).get("version")
+    except Exception:
+        return None
 
 
 def requests(calls, prompts):
@@ -1137,7 +1333,28 @@ def main():
                     help="the pane's tabs as JSON (spend, tools), for the hooks module, implies --once")
     ap.add_argument("--all", action="store_true", help="include cross-project totals")
     ap.add_argument("--interval", type=float, default=2.0, help="refresh seconds (default 2)")
+    ap.add_argument("--perf-note", metavar="JSON",
+                    help="append this object to the timing log and exit (the hooks module's timeouts)")
     a = ap.parse_args()
+    if a.perf_note:
+        try:
+            note = json.loads(a.perf_note)
+        except ValueError:
+            note = None
+        perf_log(note if isinstance(note, dict) else {"note": a.perf_note})
+        return
+    mode = "report" if a.report else "json" if a.json else "status" if a.status else "once" if a.once else "live"
+    try:
+        run(a)
+    except BaseException as e:
+        if mode != "live" or not isinstance(e, KeyboardInterrupt):
+            perf_done("tokentab.py", mode, a.session, error=type(e).__name__)
+        raise
+    if mode != "live":
+        perf_done("tokentab.py", mode, a.session)
+
+
+def run(a):
 
     prices = load_prices()
     budget = {}
@@ -1147,10 +1364,7 @@ def main():
         except Exception:
             budget = {}
 
-    store = Store(prices)
-    store.scan()
-    led = LedgerStore(prices)
-    led.scan()
+    store, led = scanned(prices)
     sid = a.session or store.newest_session()
 
     if a.json or a.status or a.once or a.report:
@@ -1182,5 +1396,8 @@ def main():
 
 
 if __name__ == "__main__":
-    utf8_stdio()
-    main()
+    # Run as the module sankey.py imports, not as __main__: the saved stores name their
+    # classes by module, and both scripts must read the same file (scanned()).
+    import tokentab
+    tokentab.utf8_stdio()
+    tokentab.main()

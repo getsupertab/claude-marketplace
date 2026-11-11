@@ -196,6 +196,7 @@ def main():
     errs += tokens_case()
     errs += page_case(store, prices)
     errs += requests_case(store, prices)
+    errs += saved_state_case(prices)
     for err in errs:
         print("  " + err)
     print("ALL OK" if not errs else f"{len(errs)} FAILURES")
@@ -580,6 +581,116 @@ def requests_case(store, prices):
         else:
             store.prompts["fx"] = saved
     print("[requests] " + ("OK" if not errs else "FAIL"))
+    return errs
+
+
+def saved_state_case(prices):
+    """kt.scanned(): the stores saved between runs give the same figures as a full read,
+    after new lines, and are rebuilt when a log shrinks or vanishes or the key changes."""
+    errs = []
+    keep = kt.ROOT, kt.CFG
+    root = tempfile.mkdtemp()
+    kt.ROOT, kt.CFG = os.path.join(root, "projects"), os.path.join(root, "cfg")
+    try:
+        os.makedirs(os.path.join(kt.ROOT, "p"))
+        os.makedirs(os.path.join(kt.CFG, "ledger", "2026-10-13"))
+        log = lambda sid: os.path.join(kt.ROOT, "p", f"{sid}.jsonl")
+        ledger = os.path.join(kt.CFG, "ledger", "2026-10-13", "s1.jsonl")
+
+        def add(sid, n):
+            with open(log(sid), "a", encoding="utf-8") as f:
+                for i in range(n):
+                    req = f"{sid}-{os.path.getsize(log(sid)) if os.path.exists(log(sid)) else 0}-{i}"
+                    f.write(json.dumps(dict(user("hi"), sessionId=sid)) + "\n")
+                    f.write(json.dumps(dict(asst(req, OPUS, usage(i=10, r=100, w1=50, o=20, th=5),
+                                                 {"type": "text", "text": "ok"}), sessionId=sid)) + "\n")
+            with open(ledger, "a", encoding="utf-8") as f:
+                f.write(json.dumps({"ts": ts(), "session_id": sid, "model": OPUS, "query_source": "repl_main_thread",
+                                    "request_id": f"L{T[0]}", "tokens": {"input": 10, "output": 20,
+                                    "cache_read": 100, "cache_write": 50}}) + "\n")
+
+        def figures(store, led):
+            led.reconcile(store)
+            return json.dumps({k: {sid: [round(b.cost, 12), sorted((r, round(v, 12)) for r, v in b.cost_by.items()),
+                                         b.msgs, len(b.calls)] for sid, b in st.sessions.items()}
+                               for k, st in (("store", store), ("led", led))}, sort_keys=True)
+
+        def fresh():
+            store, led = kt.Store(prices), kt.LedgerStore(prices)
+            store.scan(); led.scan()
+            return figures(store, led)
+
+        def run(label, kind, reason=None):
+            kt.PERF.clear()
+            got = figures(*kt.scanned(prices))
+            if got != fresh():
+                errs.append(f"saved state: {label}: figures differ from a full read")
+            if kt.PERF.get("kind") != kind or kt.PERF.get("reason") != reason:
+                errs.append(f"saved state: {label}: {kt.PERF.get('kind')}/{kt.PERF.get('reason')}, want {kind}/{reason}")
+
+        add("s1", 3); add("s2", 2)
+        run("first run", "full", "none")
+        run("nothing new", "incremental")
+        if kt.PERF.get("read_bytes") or kt.PERF.get("save_s", 1) > 0.05:
+            errs.append(f"saved state: a run with nothing new read {kt.PERF.get('read_bytes')} bytes")
+        add("s1", 2)
+        run("lines appended", "incremental")
+        with open(log("s2"), "a", encoding="utf-8") as f:
+            f.write('{"type":"assistant","cut')          # a line still being written
+        run("partial line", "incremental")
+        with open(log("s2"), "a", encoding="utf-8") as f:
+            f.write('"}\n')
+        add("s2", 1)
+        run("partial line completed", "incremental")
+        with open(log("s1"), "r+", encoding="utf-8") as f:
+            f.truncate(f.readline().__len__())
+        run("a log shrank", "full", "shrank")
+        os.remove(log("s2"))
+        run("a log vanished", "full", "vanished")
+        prices2 = json.loads(json.dumps(prices))
+        prices2["_test"] = 1
+        kt.PERF.clear(); kt.scanned(prices2)
+        if kt.PERF.get("reason") != "changed":
+            errs.append(f"saved state: other prices: reason {kt.PERF.get('reason')}, want changed")
+        with open(os.path.join(kt.CFG, "state", "scan.pickle"), "wb") as f:
+            f.write(b"not a pickle")
+        run("an unreadable file", "full", "unreadable")
+        errs += both_scripts_case()
+        kt.perf_done("test", "case")
+        with open(os.path.join(kt.CFG, "state", "perf.jsonl"), encoding="utf-8") as f:
+            last = json.loads(f.readlines()[-1])
+        if last.get("script") != "test" or "total_s" not in last or last.get("kind") != "full":
+            errs.append(f"saved state: timing log line {last}")
+    finally:
+        kt.ROOT, kt.CFG = keep
+    print("[saved state] " + ("OK" if not errs else "FAIL"))
+    for e in errs:
+        print("   ", e)
+    return errs
+
+
+def both_scripts_case():
+    """tokentab.py and sankey.py, run as the hooks module runs them, share one state file:
+    after one full read, the other script only catches up."""
+    import subprocess
+    errs, cfg = [], tempfile.mkdtemp()
+    os.makedirs(os.path.join(cfg, "projects", "p"))
+    with open(os.path.join(cfg, "projects", "p", "s.jsonl"), "w", encoding="utf-8") as f:
+        f.write(json.dumps(dict(asst("rB", OPUS, usage(i=10, o=20), {"type": "text", "text": "ok"}), sessionId="s")) + "\n")
+    env = dict(os.environ, CLAUDE_CONFIG_DIR=cfg)
+    here = os.path.join(PLUGIN, "tokentab")
+    for argv in (["tokentab.py", "--status"], ["sankey.py", "--flow-svg"], ["tokentab.py", "--report"]):
+        r = subprocess.run([sys.executable, os.path.join(here, argv[0])] + argv[1:], env=env, capture_output=True)
+        if r.returncode:
+            errs.append(f"saved state: {' '.join(argv)} failed: {r.stderr.decode()[-300:]}")
+    log = os.path.join(cfg, "plugins", "data", "tokentab-supertab", "state", "perf.jsonl")
+    try:
+        with open(log, encoding="utf-8") as f:
+            kinds = [json.loads(x).get("kind") for x in f]
+    except OSError:
+        kinds = []
+    if kinds != ["full", "incremental", "incremental"]:
+        errs.append(f"saved state: the two scripts' runs were {kinds}, want one full read then catch-ups")
     return errs
 
 
