@@ -58,6 +58,12 @@ def rate(prices, model, key):
         m = prices.get("default", {})
     return float(m.get(key, 0.0))
 
+def prices_verified(prices, b=None):
+    """False when the table is unchecked or b spent on a model priced at the default rates."""
+    known = prices.get("models", {})
+    spent = b.cost_bm.items() if b else ()
+    return bool(prices.get("_verified")) and not any(m not in known and sum(d.values()) > 0 for m, d in spent)
+
 # ---------- accumulation ----------
 
 RATES = ("input", "cache_write_5m", "cache_write_1h", "cache_read", "output", "thinking")
@@ -1087,7 +1093,7 @@ def report(store, sid, prices, budget, show_all, led=None):
     sankey.py draws it on the page, so the two cannot drift apart."""
     tb = store.sessions.get(sid)          # transcripts: only source of tool detail
     b, src = source(store, led, sid)
-    R = {"sid": sid, "now": datetime.now(), "prices_verified": bool(prices.get("_verified")), "session": None,
+    R = {"sid": sid, "now": datetime.now(), "prices_verified": prices_verified(prices, b), "session": None,
          "bucket": b, "transcript": tb}   # the buckets themselves, for the Sankey
     if not b:
         return R
@@ -1274,7 +1280,7 @@ def snapshot(store, sid, prices, led=None):
         "tokentab_overhead_usd": round(overhead_total(tb)["cost"], 6),
         "by_source": {k: {"calls": n, "cost_usd": round(c, 6)}
                       for k, (n, c) in sorted(b.by_source.items(), key=lambda kv: -kv[1][1])},
-        "prices_verified": bool(prices.get("_verified")),
+        "prices_verified": prices_verified(prices, b),
         "all_sessions_cost_usd": round(sum(x.cost for x in src.sessions.values()), 6),
         "requests": [{"start": datetime.fromtimestamp(t, timezone.utc).isoformat(),
                       "cost_usd": round(c, 6), "calls": n}

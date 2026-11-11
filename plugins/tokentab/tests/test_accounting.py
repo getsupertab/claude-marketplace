@@ -153,6 +153,22 @@ def check(b, label, tb=None):
     return errs
 
 
+def verified_case(prices):
+    """A model missing from the table is priced at the default rates and reported unverified."""
+    b = kt.Bucket()
+    errs = []
+    if not kt.prices_verified(prices, b):
+        errs.append("an empty bucket reads as unverified")
+    b.cost_bm = {"claude-opus-5-5": {"input": 0.1}, "<synthetic>": {}}
+    if not kt.prices_verified(prices, b):
+        errs.append("listed models read as unverified")
+    b.cost_bm["claude-next-6"] = {"input": 0.1}
+    if kt.prices_verified(prices, b):
+        errs.append("a default-priced model reads as verified")
+    print("[verified] " + ("OK" if not errs else "FAIL"))
+    return errs
+
+
 def main():
     root = tempfile.mkdtemp()
     os.makedirs(os.path.join(root, "proj"))
@@ -198,6 +214,7 @@ def main():
     errs += page_case(store, prices)
     errs += requests_case(store, prices)
     errs += saved_state_case(prices)
+    errs += verified_case(prices)
     for err in errs:
         print("  " + err)
     print("ALL OK" if not errs else f"{len(errs)} FAILURES")

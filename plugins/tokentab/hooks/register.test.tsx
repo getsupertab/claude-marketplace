@@ -277,6 +277,7 @@ test('an api_request record becomes one priced ledger line per request', async (
   expect(two.length).toBe(2)
   expect(two[0].request_id).toBe('req_1')
   expect(two[1].request_id).toBe('req_2')
+  expect(two[1].prices_verified).toBe(false)
   expect(two[1].cost_usd).toBe(Math.round((12 * 4 + 480 * 20 + 71000 * 0.2 + 2100 * 8) / 1e6 * 1e6) / 1e6)
   expect(two[1].fees_usd).toBe(0)
   expect(two[1].cost_usd_cc).toBe(0)

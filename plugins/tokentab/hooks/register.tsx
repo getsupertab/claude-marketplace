@@ -117,7 +117,8 @@ export function toLine(e: TelemetryRecordEntry, prices: Prices, sessionId: strin
     ts, source: 'mod', session_id: sessionId, model, tokens,
     cost_usd: round6(ours), cost_usd_cc: cc, fees_usd: fees,
     query_source: str(a.query_source), request_id: str(a.request_id),
-    prices_verified: Boolean(prices._verified),
+    // an unlisted model was priced at the default rates: the table is behind
+    prices_verified: Boolean(prices._verified) && model in (prices.models ?? {}),
   }
   if (a.duration_ms !== undefined) line.duration_ms = Math.trunc(num(a.duration_ms))
   return line

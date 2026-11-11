@@ -1,7 +1,21 @@
 {
-  "_comment": "USD per 1,000,000 tokens. Published rates from platform.claude.com/docs/en/about-claude/pricing, checked 2026-10-13. Cache writes: 5m = 1.25x input, 1h = 2x input. Cache reads: 0.1x input, except Fable 5.1 / Mythos 5.1 at 0.025x and Opus 5.5 / Sonnet 5.5 at 0.05x. Haiku 5.5 is listed at its up-to-100K-token rate; prompts over 100K tokens cost 5x that and are not modelled. 'default' is Opus 5.5 and applies to any model id not listed here. Not included: web search fees ($10 per 1,000 searches, billed per search) and Claude Code background calls not written to transcripts.",
+  "_comment": "USD per 1,000,000 tokens. Published rates from platform.claude.com/docs/en/about-claude/pricing, checked 2026-10-13; Fable 5.2 / Mythos 5.2 added 2026-11-11 from Claude's API reference (2026-11-03), not yet checked against that page. Cache writes: 5m = 1.25x input, 1h = 2x input. Cache reads: 0.1x input, except Fable 5.2 / Mythos 5.2 / Fable 5.1 / Mythos 5.1 at 0.025x and Opus 5.5 / Sonnet 5.5 at 0.05x. Haiku 5.5 is listed at its up-to-100K-token rate; prompts over 100K tokens cost 5x that and are not modelled. 'default' is Opus 5.5 and applies to any model id not listed here; a call priced at it is reported as unverified. Not included: web search fees ($10 per 1,000 searches, billed per search) and Claude Code background calls not written to transcripts.",
   "_verified": true,
   "models": {
+    "claude-fable-5-2": {
+      "input": 8.0,
+      "output": 40.0,
+      "cache_write_5m": 10.0,
+      "cache_write_1h": 16.0,
+      "cache_read": 0.2
+    },
+    "claude-mythos-5-2": {
+      "input": 8.0,
+      "output": 40.0,
+      "cache_write_5m": 10.0,
+      "cache_write_1h": 16.0,
+      "cache_read": 0.2
+    },
     "claude-fable-5-1": {
       "input": 10.0,
       "output": 50.0,
