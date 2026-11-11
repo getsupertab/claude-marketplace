@@ -341,6 +341,9 @@ A ledger line:
 
 `cost_usd` is the token cost at TokenTab's prices. `cost_usd_cc` is Claude Code's own
 figure; anything it charges beyond tokens, such as web searches, is in `fees_usd`.
+Telemetry does not say whether a cache write lasts 5 minutes or an hour, so
+`cache_write` is priced at the 1-hour rate unless `cost_usd_cc` is below that price:
+then it was a 5-minute write (helper agents, SDK calls and compaction write those).
 
 ## Development
 

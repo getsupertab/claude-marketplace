@@ -1,7 +1,7 @@
 import { test, expect, mock } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On, RenderElement, RenderNode } from 'claude-code'
-import { at, barCells, barSvg, dataDir, inUnit, int, liveLines, pct, SECTIONS, SERIES, shareCard, shareCardSvg, shareLinks, sharePageHtml, shareText, shown, stripAnsi, timedOut, toneOf, unitOf, usd, withNewKeys, wrapWords } from './register'
+import { at, barCells, barSvg, dataDir, inUnit, int, liveLines, pct, SECTIONS, SERIES, shareCard, shareCardSvg, shareLinks, sharePageHtml, shareText, shown, stripAnsi, timedOut, toneOf, ttlOf, unitOf, usd, withNewKeys, wrapWords } from './register'
 import type { Report } from './register'
 
 // The world beneath the plugin: `$.fs` reaches nothing under `claude plugin test`, and
@@ -171,7 +171,7 @@ const T0 = Date.UTC(2026, 9, 15, 14, 3, 11, 412)
 const FILES = { '/tokentab/prices.json': JSON.stringify(PRICES), '/tokentab/budget.json': BUDGET }
 const press = (key: string, surface?: 'terminal' | 'desktop') => ({ plugin: 'tokentab', key, requestId: 'tokentab', ...(surface ? { surface } : {}) })
 
-function request(attributes: Record<string, string | number>) {
+function request(attributes: Record<string, string | number | null>) {
   return {
     to: 'collector' as const, event: 'api_request', loggedAt: '2026-10-15T14:03:11.412Z',
     attributes: {
@@ -227,6 +227,29 @@ test('a helper that timed out is told apart from one that would not start', () =
   expect(timedOut(new Error('$.process.run(python3) aborted: still running after 120000ms'))).toBe(true)
   expect(timedOut(new Error('spawn python3 ENOENT'))).toBe(false)
   expect(timedOut('still running after 5ms')).toBe(true)
+})
+
+test('a cache write is priced at the 5m rate when Claude Code\'s own figure says so', async ($, on) => {
+  mock.env(on, { HOME: '/home/t' })
+  mock.clock(on, { now: T0 })
+  const { fs } = world(on, { '/tokentab/prices.json': JSON.stringify(PRICES) })
+  const path = `${DATA}/ledger/2026-10-15/${SID}.jsonl`
+  // the same tokens as below, the 2100 cache write at 12.5 (5m) instead of 20 (1h): a helper agent's call
+  const at5m = (12 * 10 + 480 * 50 + 71000 * 0.25 + 2100 * 12.5) / 1e6     // 0.068120
+  await $.telemetry.log(request({ cost_usd: at5m, query_source: 'agent:builtin:Explore' }))
+  // a web search on top, still below the 1h price: 5m, and the fee is what is left
+  await $.telemetry.log(request({ cost_usd: at5m + 0.01, request_id: 'req_2' }))
+  // no figure from Claude Code, one at or above the 1h price, or one below the 5m price: 1h, as before
+  await $.telemetry.log(request({ cost_usd: null, request_id: 'req_3' }))
+  await $.telemetry.log(request({ cost_usd: 0.08387 + 0.01, request_id: 'req_4' }))
+  await $.telemetry.log(request({ cost_usd: at5m - 0.01, request_id: 'req_5' }))
+  const lines = fs.get(path)!.trimEnd().split('\n').map(l => JSON.parse(l))
+  expect(lines.map(l => [l.cost_usd, l.fees_usd])).toEqual(
+    [[0.06812, 0], [0.06812, 0.01], [0.08387, 0], [0.08387, 0.01], [0.08387, 0]])
+  const t = { input: 12, output: 480, cache_read: 71000, cache_write: 2100 }
+  expect(ttlOf(PRICES, 'claude-fable-5-1', t, at5m)).toBe('5m')
+  expect(ttlOf(PRICES, 'claude-fable-5-1', t, 0.08387)).toBe('1h')
+  expect(ttlOf(PRICES, 'claude-fable-5-1', { ...t, cache_write: 0 }, at5m)).toBe('1h')
 })
 
 test('an api_request record becomes one priced ledger line per request', async ($, on) => {
