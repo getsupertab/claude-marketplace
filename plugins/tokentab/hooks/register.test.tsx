@@ -246,6 +246,9 @@ test('a cache write is priced at the 5m rate when Claude Code\'s own figure says
   const lines = fs.get(path)!.trimEnd().split('\n').map(l => JSON.parse(l))
   expect(lines.map(l => [l.cost_usd, l.fees_usd])).toEqual(
     [[0.06812, 0], [0.06812, 0.01], [0.08387, 0], [0.08387, 0.01], [0.08387, 0]])
+  // a figure below even the 5m price: our rates for the model are too high
+  expect(lines.map(l => [l.price_drift_usd, l.prices_verified])).toEqual(
+    [[undefined, true], [undefined, true], [undefined, true], [undefined, true], [0.01, false]])
   const t = { input: 12, output: 480, cache_read: 71000, cache_write: 2100 }
   expect(ttlOf(PRICES, 'claude-fable-5-1', t, at5m)).toBe('5m')
   expect(ttlOf(PRICES, 'claude-fable-5-1', t, 0.08387)).toBe('1h')

@@ -45,6 +45,7 @@ export type LedgerLine = {
   query_source: string | null
   request_id: string | null
   prices_verified: boolean
+  price_drift_usd?: number
 }
 
 // A file nears the 4 MiB read-and-write limit: the next line starts <session>-2.jsonl.
@@ -113,14 +114,19 @@ export function toLine(e: TelemetryRecordEntry, prices: Prices, sessionId: strin
   const cc = a.cost_usd === undefined || a.cost_usd === null ? null : num(a.cost_usd)
   const ours = price(prices, model, tokens, ttlOf(prices, model, tokens, cc))
   const fees = cc !== null && cc - ours > MATCH_USD ? round6(cc - ours) : 0
+  // Fees only add to Claude Code's figure, so one below our lowest price for the tokens
+  // means our rates for this model are too high. A zero figure is no figure.
+  const floor = price(prices, model, tokens, '5m')
+  const drift = cc !== null && cc > 0 && floor - cc > MATCH_USD ? round6(floor - cc) : 0
   const line: LedgerLine = {
     ts, source: 'mod', session_id: sessionId, model, tokens,
     cost_usd: round6(ours), cost_usd_cc: cc, fees_usd: fees,
     query_source: str(a.query_source), request_id: str(a.request_id),
-    // an unlisted model was priced at the default rates: the table is behind
-    prices_verified: Boolean(prices._verified) && model in (prices.models ?? {}),
+    // an unlisted model was priced at the default rates, or a listed one above Claude Code: the table is behind
+    prices_verified: Boolean(prices._verified) && model in (prices.models ?? {}) && !drift,
   }
   if (a.duration_ms !== undefined) line.duration_ms = Math.trunc(num(a.duration_ms))
+  if (drift) line.price_drift_usd = drift
   return line
 }
 
@@ -1120,7 +1126,7 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
             )}
           </Box>
         )}
-        {!r.prices_verified && <Text size="footnote" color="warning">Prices unverified: the figures are estimates at the default rates.</Text>}
+        {!r.prices_verified && <Text size="footnote" color="warning">Prices unverified: TokenTab's price table is behind for a model used here, so the figures are estimates.</Text>}
       </Box>
       {rule($, e)}
       {allSessions}

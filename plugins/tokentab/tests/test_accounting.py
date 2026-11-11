@@ -165,6 +165,19 @@ def verified_case(prices):
     b.cost_bm["claude-next-6"] = {"input": 0.1}
     if kt.prices_verified(prices, b):
         errs.append("a default-priced model reads as verified")
+    # Claude Code's figure below our 5m price: the table is too high for that model
+    line = {"model": "claude-opus-5-5", "tokens": {"input": 1000, "output": 1000, "cache_write": 1000},
+            "cost_usd_cc": 0.02}            # ours at 5m: (4 + 20 + 5) / 1000 = 0.029
+    if abs(kt.price_drift(line, prices) - 0.009) > 1e-9:
+        errs.append(f"drift {kt.price_drift(line, prices)} != 0.009")
+    for cc in (0.029, 0.029 - 0.0004, 0.05, 0, None):   # matches, rounding, a fee, no figure
+        if kt.price_drift(dict(line, cost_usd_cc=cc), prices):
+            errs.append(f"a figure of {cc} reads as drift")
+    b = kt.Bucket()
+    b.cost_bm = {"claude-opus-5-5": {"input": 0.1}}
+    b.drift = {"claude-opus-5-5": [1, 0.009]}
+    if kt.prices_verified(prices, b):
+        errs.append("a bucket with drift reads as verified")
     print("[verified] " + ("OK" if not errs else "FAIL"))
     return errs
 
@@ -375,6 +388,12 @@ def ledger_5m_case(prices):
             errs.append(f"ledger 5m: line {n} totals {b.cost:.6f}, want {want:.6f}")
     if abs(led.sessions["f5-1"].cost_by.get("fees", 0) - 0.01) > 1e-9:
         errs.append("ledger 5m: a 5m write with a search on top should leave the search as the fee")
+    # the last figure is below even the 5m price: the table is too high for the model
+    drift = {n: led.sessions[f"f5-{n}"].drift for n in range(len(lines))}
+    if any(drift[n] for n in range(5)) or [c for c, _ in [drift[5].get(OPUS, (0, 0))]] != [1]:
+        errs.append(f"ledger 5m: drift {drift}, want one call on line 5 only")
+    if kt.report(kt.Store(prices), "f5-5", prices, {}, False, led)["prices_verified"] or not kt.report(kt.Store(prices), "f5-0", prices, {}, False, led)["prices_verified"]:
+        errs.append("ledger 5m: the report's prices_verified does not follow the drift")
     return errs
 
 

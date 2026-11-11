@@ -627,7 +627,7 @@ def kpis(P, R):
         alerts.append(("warning", f'Cache is cold. The next prompt re-writes the context ({kt.num(ctx["tokens"])} tokens), '
                        f'about {big(ctx["rewrite"])}{api}.'))
     if not P.get("prices_verified", True):
-        alerts.append(("warning", "Prices unverified: the figures are estimates at the default rates."))
+        alerts.append(("warning", "Prices unverified: TokenTab's price table is behind for a model used here, so the figures are estimates."))
     banners = "".join(f'<div class="alert {t}"><i></i>{esc(x)}</div>' for t, x in alerts)
     return f'<div class="kpis">{"".join(tiles)}</div>' + (f'<div class="alerts">{banners}</div>' if banners else "")
 
