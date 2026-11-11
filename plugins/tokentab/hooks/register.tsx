@@ -73,11 +73,24 @@ export function rate(prices: Prices, model: string, key: string): number {
   return Number(m[key] ?? 0)
 }
 
-/** USD for the tokens at the plugin's prices. Telemetry does not say whether a cache
- *  write was 5m or 1h; Claude Code uses 1h by default, so that rate is applied. */
-export function price(prices: Prices, model: string, t: Tokens): number {
+type Ttl = '1h' | '5m'
+/** Within this, Claude Code's figure and ours count as the same price. */
+const MATCH_USD = 0.0005
+
+/** USD for the tokens at the plugin's prices, the cache write at the 1h or 5m rate. */
+export function price(prices: Prices, model: string, t: Tokens, ttl: Ttl = '1h'): number {
   return (t.input * rate(prices, model, 'input') + t.output * rate(prices, model, 'output')
-    + t.cache_read * rate(prices, model, 'cache_read') + t.cache_write * rate(prices, model, 'cache_write_1h')) / 1_000_000
+    + t.cache_read * rate(prices, model, 'cache_read') + t.cache_write * rate(prices, model, `cache_write_${ttl}`)) / 1_000_000
+}
+
+/** The rate a call's cache write was billed at. Telemetry does not say whether it was 5m
+ *  or 1h. Claude Code's main loop writes 1h; helper agents, SDK calls and compaction write
+ *  5m. Claude Code's own figure tells them apart: fees only add to it, so a figure below
+ *  the 1h price (and not below the 5m one) means a 5m write; what it has above the 5m
+ *  price is then a fee. Without a figure, 1h. */
+export function ttlOf(prices: Prices, model: string, t: Tokens, cc: number | null): Ttl {
+  if (cc === null || !t.cache_write) return '1h'
+  return cc < price(prices, model, t, '1h') - MATCH_USD && cc > price(prices, model, t, '5m') - MATCH_USD ? '5m' : '1h'
 }
 
 const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : Number(v) || 0)
@@ -94,11 +107,12 @@ export function toLine(e: TelemetryRecordEntry, prices: Prices, sessionId: strin
     cache_read: Math.trunc(num(a.cache_read_tokens ?? a.cache_read_input_tokens)),
     cache_write: Math.trunc(num(a.cache_creation_tokens ?? a.cache_creation_input_tokens)),
   }
-  const ours = price(prices, model, tokens)
-  // Claude Code's own figure for comparison; what it has on top of the token price is a
-  // non-token charge (web search is billed per search). cost_usd stays tokens only.
+  // Claude Code's own figure: it says which rate the cache write was billed at, and what
+  // it has on top of the token price is a non-token charge (web search is billed per
+  // search). cost_usd stays tokens only.
   const cc = a.cost_usd === undefined || a.cost_usd === null ? null : num(a.cost_usd)
-  const fees = cc !== null && cc - ours > 0.0005 ? round6(cc - ours) : 0
+  const ours = price(prices, model, tokens, ttlOf(prices, model, tokens, cc))
+  const fees = cc !== null && cc - ours > MATCH_USD ? round6(cc - ours) : 0
   const line: LedgerLine = {
     ts, source: 'mod', session_id: sessionId, model, tokens,
     cost_usd: round6(ours), cost_usd_cc: cc, fees_usd: fees,

@@ -190,6 +190,7 @@ def main():
     errs += breakdown_check(store, prices)
     errs += series_check(b, "transcript", store)
     errs += ledger_case(root, store, prices)
+    errs += ledger_5m_case(prices)
     errs += utf8_case(root, prices)
     errs += locked_page_case(root)
     errs += names_case(prices)
@@ -325,6 +326,38 @@ def ledger_case(root, store, prices):
         errs.append(f"ledger: unmatched output {led.unmatched('fx', store)}, want 80")
     errs += check(lb, "ledger + transcript tools", tb=store.sessions["fx"])
     errs += series_check(lb, "ledger", store)
+    return errs
+
+
+def ledger_5m_case(prices):
+    """Telemetry does not say whether a cache write was 5m or 1h. A line whose Claude Code
+    figure is below the 1h price was a 5m write (helper agents, SDK calls, compaction):
+    filed at that rate, anything above the 5m price is a fee, and the line totals
+    cost_usd_cc. A figure at or above the 1h price, or none, keeps the 1h rate."""
+    errs = []
+    toks = {"input": 3, "output": 200, "cache_read": 40000, "cache_write": 10000}
+    tok = lambda key: (3 * kt.rate(prices, OPUS, "input") + 200 * kt.rate(prices, OPUS, "output")
+                       + 40000 * kt.rate(prices, OPUS, "cache_read") + 10000 * kt.rate(prices, OPUS, key)) / 1e6
+    p5, p1 = tok("cache_write_5m"), tok("cache_write_1h")
+    lines = [(p5, "5m"), (p5 + 0.01, "5m"), (p1, "1h"), (p1 + 0.01, "1h"), (None, "1h"), (p5 - 0.01, "1h")]
+    os.makedirs(os.path.join(kt.CFG, "ledger", "2026-10-14"), exist_ok=True)
+    with open(os.path.join(kt.CFG, "ledger", "2026-10-14", "f5.jsonl"), "w", encoding="utf-8") as f:
+        for n, (cc, _) in enumerate(lines):
+            e = {"ts": "2026-10-14T10:00:00+00:00", "session_id": f"f5-{n}", "model": OPUS, "request_id": f"r5-{n}",
+                 "query_source": "agent:builtin:Explore", "tokens": toks, "cost_usd": round(p1, 6), "cost_usd_cc": cc}
+            f.write(json.dumps(e) + "\n")
+            if kt.write_ttl(e, prices) != lines[n][1]:
+                errs.append(f"ledger 5m: write_ttl {kt.write_ttl(e, prices)} for cost_usd_cc {cc}, want {lines[n][1]}")
+    led = kt.LedgerStore(prices); led.scan()
+    for n, (cc, ttl) in enumerate(lines):
+        b = led.sessions[f"f5-{n}"]
+        if (b.cw5, b.cw1h) != ((10000, 0) if ttl == "5m" else (0, 10000)):
+            errs.append(f"ledger 5m: line {n} filed {b.cw5} at 5m and {b.cw1h} at 1h, want all at {ttl}")
+        want = max(cc, p1 if ttl == "1h" else p5) if cc is not None else p1
+        if abs(b.cost - want) > 1e-9:
+            errs.append(f"ledger 5m: line {n} totals {b.cost:.6f}, want {want:.6f}")
+    if abs(led.sessions["f5-1"].cost_by.get("fees", 0) - 0.01) > 1e-9:
+        errs.append("ledger 5m: a 5m write with a search on top should leave the search as the fee")
     return errs
 
 

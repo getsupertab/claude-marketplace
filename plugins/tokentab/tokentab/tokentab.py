@@ -606,6 +606,26 @@ class Store:
         return best
 
 
+MATCH_USD = 0.0005   # within this, Claude Code's figure and ours count as the same price
+
+def write_ttl(e, prices):
+    """The rate a ledger line's cache write was billed at, "1h" or "5m". Telemetry does
+    not say; Claude Code's main loop writes 1h, helper agents, SDK calls and compaction
+    write 5m. Claude Code's own figure (cost_usd_cc) tells them apart: fees only add to
+    it, so a figure below the 1h price (and not below the 5m one) means a 5m write, and
+    what it has above the 5m price is a fee. Without a figure, 1h. Worked out on read,
+    so lines written before this are filed too."""
+    t = e.get("tokens") or {}
+    w, cc = int(t.get("cache_write") or 0), e.get("cost_usd_cc")
+    if not w or cc is None:
+        return "1h"
+    m = e.get("model") or "unknown"
+    rest = (int(t.get("input") or 0) * rate(prices, m, "input") + int(t.get("output") or 0) * rate(prices, m, "output")
+            + int(t.get("cache_read") or 0) * rate(prices, m, "cache_read")) / 1_000_000.0
+    p1 = rest + w * rate(prices, m, "cache_write_1h") / 1_000_000.0
+    p5 = rest + w * rate(prices, m, "cache_write_5m") / 1_000_000.0
+    return "5m" if p5 - MATCH_USD < float(cc) < p1 - MATCH_USD else "1h"
+
 def fee(e, tokens_usd=None):
     """Charges that are not tokens (web search is billed per search): whatever Claude
     Code's own cost figure has on top of the token price. Worked out on read, against
@@ -617,7 +637,7 @@ def fee(e, tokens_usd=None):
     if cc is None:
         return float(e.get("fees_usd") or 0.0)
     d = float(cc) - (float(e.get("cost_usd") or 0.0) if tokens_usd is None else tokens_usd)
-    return d if d > 0.0005 else 0.0
+    return d if d > MATCH_USD else 0.0
 
 class LedgerStore:
     """Same shape as Store, built from the ledger the hooks module writes: one line per
@@ -680,7 +700,7 @@ class LedgerStore:
                 t = e.get("tokens") or {}
                 u = {"input_tokens": t.get("input"), "output_tokens": t.get("output"),
                      "cache_read_input_tokens": t.get("cache_read"),
-                     "cache_creation": {"ephemeral_1h_input_tokens": t.get("cache_write")}}
+                     "cache_creation": {f"ephemeral_{write_ttl(e, self.prices)}_input_tokens": t.get("cache_write")}}
                 ts = parse_ts(e.get("ts"))
                 b = self.sessions.setdefault(e.get("session_id") or "unknown", Bucket())
                 before, tbefore = b.cost, b.tokens

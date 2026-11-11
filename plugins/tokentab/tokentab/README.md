@@ -30,6 +30,10 @@ The files in this folder are plain Python 3, standard library only:
   is billed as output; TokenTab shows it separately at the same rate.
 - **Fees.** Web search is billed per search, not per token. Whatever Claude Code's own
   figure has on top of the token price goes in `fees_usd`; `cost_usd` stays tokens only.
+- **Cache write 5m or 1h.** Telemetry has one cache-write count and no duration. The
+  main loop writes 1h; helper agents, SDK calls and compaction write 5m. Fees only add
+  to Claude Code's figure, so a figure below the 1h price (not below the 5m one) means
+  a 5m write, and the rest above the 5m price is a fee. No figure: 1h.
 
 Rules that keep the totals right:
 
