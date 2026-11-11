@@ -58,6 +58,14 @@ def rate(prices, model, key):
         m = prices.get("default", {})
     return float(m.get(key, 0.0))
 
+def prices_verified(prices, b=None):
+    """False when the table is unchecked, or b spent on a model priced at the default rates
+    or one whose rates Claude Code's own figures show are too high (price_drift)."""
+    known = prices.get("models", {})
+    spent = b.cost_bm.items() if b else ()
+    return (bool(prices.get("_verified")) and not any(m not in known and sum(d.values()) > 0 for m, d in spent)
+            and not (b and b.drift))
+
 # ---------- accumulation ----------
 
 RATES = ("input", "cache_write_5m", "cache_write_1h", "cache_read", "output", "thinking")
@@ -207,7 +215,7 @@ def tool_totals(tools):
 class Bucket:
     __slots__ = ("inp","cw5","cw1h","cr","out","think","cost","msgs","models","first","last",
                  "tools","parts","overhead","threads","cost_by","cost_bm","by_source","ctx","ctx_model","ttl","calls",
-                 "series","_open")
+                 "series","_open","drift")
     def __init__(self):
         self.inp = self.cw5 = self.cw1h = self.cr = self.out = self.think = 0
         self.ctx, self.ctx_model, self.ttl = 0, None, "1h"   # the latest call
@@ -226,6 +234,7 @@ class Bucket:
         self.calls = []       # (epoch, USD) per call, for request totals
         self.series = []      # [epoch, {rate key: USD}] per call, for the cost-over-time chart
         self._open = None     # the series entry _charge adds to: the call being priced
+        self.drift = {}       # ledger only: model -> [calls, USD] priced above Claude Code's figure
 
     def _tool(self, name, model):
         if name is None:                      # None: TokenTab's own hook text, not a tool
@@ -615,16 +624,26 @@ def write_ttl(e, prices):
     it, so a figure below the 1h price (and not below the 5m one) means a 5m write, and
     what it has above the 5m price is a fee. Without a figure, 1h. Worked out on read,
     so lines written before this are filed too."""
-    t = e.get("tokens") or {}
-    w, cc = int(t.get("cache_write") or 0), e.get("cost_usd_cc")
-    if not w or cc is None:
+    cc = e.get("cost_usd_cc")
+    if not int((e.get("tokens") or {}).get("cache_write") or 0) or cc is None:
         return "1h"
-    m = e.get("model") or "unknown"
-    rest = (int(t.get("input") or 0) * rate(prices, m, "input") + int(t.get("output") or 0) * rate(prices, m, "output")
-            + int(t.get("cache_read") or 0) * rate(prices, m, "cache_read")) / 1_000_000.0
-    p1 = rest + w * rate(prices, m, "cache_write_1h") / 1_000_000.0
-    p5 = rest + w * rate(prices, m, "cache_write_5m") / 1_000_000.0
+    p1, p5 = line_price(e, prices, "1h"), line_price(e, prices, "5m")
     return "5m" if p5 - MATCH_USD < float(cc) < p1 - MATCH_USD else "1h"
+
+def line_price(e, prices, ttl):
+    """USD for a ledger line's tokens at the current rates, the cache write at ttl's rate."""
+    t, m = e.get("tokens") or {}, e.get("model") or "unknown"
+    return sum(int(t.get(k) or 0) * rate(prices, m, r) for k, r in (
+        ("input", "input"), ("output", "output"), ("cache_read", "cache_read"),
+        ("cache_write", f"cache_write_{ttl}"))) / 1_000_000.0
+
+def price_drift(e, prices):
+    """USD by which a line's tokens at our lowest price exceed Claude Code's own figure.
+    Fees only add to that figure, so any excess means our rates for the model are too
+    high. Worked out on read: a corrected table clears it. A zero figure is no figure."""
+    cc = float(e.get("cost_usd_cc") or 0.0)
+    d = line_price(e, prices, "5m") - cc if cc > 0 else 0.0
+    return d if d > MATCH_USD else 0.0
 
 def fee(e, tokens_usd=None):
     """Charges that are not tokens (web search is billed per search): whatever Claude
@@ -709,6 +728,10 @@ class LedgerStore:
                 if e.get("request_id"):
                     self.reqs[e["request_id"]] = [e.get("session_id") or "unknown", e.get("model") or "unknown",
                                                   int(t.get("output") or 0), 0, b._open]
+                d = price_drift(e, self.prices)
+                if d:
+                    dm = b.drift.setdefault(e.get("model") or "unknown", [0, 0.0])
+                    dm[0] += 1; dm[1] += d
                 f = fee(e, b.cost - before)      # tokens repriced at today's rates
                 if f:
                     b.fee(e.get("model") or "unknown", f)
@@ -1087,7 +1110,7 @@ def report(store, sid, prices, budget, show_all, led=None):
     sankey.py draws it on the page, so the two cannot drift apart."""
     tb = store.sessions.get(sid)          # transcripts: only source of tool detail
     b, src = source(store, led, sid)
-    R = {"sid": sid, "now": datetime.now(), "prices_verified": bool(prices.get("_verified")), "session": None,
+    R = {"sid": sid, "now": datetime.now(), "prices_verified": prices_verified(prices, b), "session": None,
          "bucket": b, "transcript": tb}   # the buckets themselves, for the Sankey
     if not b:
         return R
@@ -1274,7 +1297,7 @@ def snapshot(store, sid, prices, led=None):
         "tokentab_overhead_usd": round(overhead_total(tb)["cost"], 6),
         "by_source": {k: {"calls": n, "cost_usd": round(c, 6)}
                       for k, (n, c) in sorted(b.by_source.items(), key=lambda kv: -kv[1][1])},
-        "prices_verified": bool(prices.get("_verified")),
+        "prices_verified": prices_verified(prices, b),
         "all_sessions_cost_usd": round(sum(x.cost for x in src.sessions.values()), 6),
         "requests": [{"start": datetime.fromtimestamp(t, timezone.utc).isoformat(),
                       "cost_usd": round(c, 6), "calls": n}

@@ -1,15 +1,20 @@
-# TokenTab's offline checks on each OS: no API key, no live session.
+# TokenTab's offline checks on each OS: no API key, no live session. Weekly, and on each
+# PR, the price table is also compared with the published prices.
 name: TokenTab
 
 on:
   push:
   pull_request:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
   checks:
+    if: github.event_name != 'schedule'
     strategy:
       fail-fast: false
       matrix:
@@ -49,3 +54,31 @@ jobs:
       - name: Shell hooks
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: sh plugins/tokentab/tests/test_hooks.sh
+
+  prices:
+    # A model missing from prices.json is priced at the default rates, a changed rate is wrong.
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compare prices.json with the published prices
+        id: compare
+        run: python dev/check_prices.py | tee price-check.txt
+        shell: bash -o pipefail {0}
+      - name: Open or update an issue
+        if: failure() && github.event_name == 'schedule' && steps.compare.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: "TokenTab: prices.json differs from the published prices"
+        run: |
+          body="$(printf 'The weekly check (%s) found:\n\n```\n%s\n```\n\nUpdate plugins/tokentab/tokentab/prices.json and bump the plugin version.' \
+            "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" "$(cat price-check.txt)")"
+          number="$(gh issue list --state open --search "in:title \"$TITLE\"" --json number --jq '.[0].number')"
+          if [ -n "$number" ]; then gh issue comment "$number" --body "$body"
+          else gh issue create --title "$TITLE" --body "$body"; fi

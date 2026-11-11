@@ -246,6 +246,9 @@ test('a cache write is priced at the 5m rate when Claude Code\'s own figure says
   const lines = fs.get(path)!.trimEnd().split('\n').map(l => JSON.parse(l))
   expect(lines.map(l => [l.cost_usd, l.fees_usd])).toEqual(
     [[0.06812, 0], [0.06812, 0.01], [0.08387, 0], [0.08387, 0.01], [0.08387, 0]])
+  // a figure below even the 5m price: our rates for the model are too high
+  expect(lines.map(l => [l.price_drift_usd, l.prices_verified])).toEqual(
+    [[undefined, true], [undefined, true], [undefined, true], [undefined, true], [0.01, false]])
   const t = { input: 12, output: 480, cache_read: 71000, cache_write: 2100 }
   expect(ttlOf(PRICES, 'claude-fable-5-1', t, at5m)).toBe('5m')
   expect(ttlOf(PRICES, 'claude-fable-5-1', t, 0.08387)).toBe('1h')
@@ -277,6 +280,7 @@ test('an api_request record becomes one priced ledger line per request', async (
   expect(two.length).toBe(2)
   expect(two[0].request_id).toBe('req_1')
   expect(two[1].request_id).toBe('req_2')
+  expect(two[1].prices_verified).toBe(false)
   expect(two[1].cost_usd).toBe(Math.round((12 * 4 + 480 * 20 + 71000 * 0.2 + 2100 * 8) / 1e6 * 1e6) / 1e6)
   expect(two[1].fees_usd).toBe(0)
   expect(two[1].cost_usd_cc).toBe(0)
