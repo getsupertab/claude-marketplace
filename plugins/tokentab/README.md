@@ -327,7 +327,7 @@ Everything runs from the plugin folder and writes only to its data folder:
 |---|---|
 | `budget.json` | Your limits. |
 | `ledger/<day>/<session>.jsonl` | One line per API request. |
-| `state/` | The guard's working state. |
+| `state/` | The guard's working state; `scan.pickle`, what TokenTab has read of the transcripts so far, so each run reads only what was added (rebuilt from a full read when it cannot be trusted); `perf.jsonl`, how long each run took. |
 | `status/<session>.html` | The browser status page. |
 
 A ledger line:

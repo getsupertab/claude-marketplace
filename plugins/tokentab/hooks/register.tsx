@@ -155,6 +155,12 @@ const COMMAND = 'tokentab:status'
 const REDRAW_MS = 30_000
 const BEAT_MS = 1_000                   // how soon after a ledger write the pane redraws
 const HELPER_TIMEOUT_MS = 20_000
+// The Python helpers. A run normally takes well under a second (the scan only reads what the
+// transcripts gained since the last run, see scanned() in tokentab.py); the first after an
+// update, or after a log shrank or vanished, reads every transcript again, which can take
+// half a minute or more after a busy month. Refreshes run one at a time, so a long one delays
+// the next instead of piling up.
+const SCRIPT_TIMEOUT_MS = 120_000
 // The status page is kept current (its data file written on every redraw) this long
 // after it was last opened from the pane; the page says "stale" once the pushes stop.
 const PAGE_MS = 30 * 60_000
@@ -459,18 +465,38 @@ function findPython($: EngineInterface, failed?: readonly string[]): Promise<rea
 }
 
 /** Runs one of the plugin's Python helpers; its stdout, or the last line of stderr as the error.
- *  A launcher that no longer starts is probed for again, once. */
+ *  A launcher that no longer starts is probed for again, once. A run that times out is not
+ *  retried (it would only take as long again): it goes to the timing log and fails. */
 async function python($: EngineInterface, script: string, args: readonly string[]): Promise<string> {
   const argv = (py: readonly string[]) => [...py, `${$.plugin.root}/tokentab/${script}`, ...args]
   const py = await findPython($)
   let r
   try {
-    r = await $.process.run(argv(py), { timeoutMs: HELPER_TIMEOUT_MS })
-  } catch {
-    r = await $.process.run(argv(await findPython($, py)), { timeoutMs: HELPER_TIMEOUT_MS })
+    r = await $.process.run(argv(py), { timeoutMs: SCRIPT_TIMEOUT_MS })
+  } catch (err) {
+    if (timedOut(err)) {
+      void logTimeout($, py, script, args)
+      throw err
+    }
+    r = await $.process.run(argv(await findPython($, py)), { timeoutMs: SCRIPT_TIMEOUT_MS })
   }
   if (r.exitCode !== 0) throw new Error(r.stderr.trim().split('\n').pop() || `${script} exited ${r.exitCode}`)
   return r.stdout
+}
+
+/** `$.process.run` rejects both when the command cannot start and when it is still running at
+ *  the timeout; only the message tells them apart. */
+export function timedOut(err: unknown): boolean {
+  return /still running after/i.test(err instanceof Error ? err.message : String(err))
+}
+
+/** A helper killed at the timeout cannot log itself: one line for it in state/perf.jsonl. */
+async function logTimeout($: EngineInterface, py: readonly string[], script: string, args: readonly string[]): Promise<void> {
+  const mode = args.filter(a => a.startsWith('--') && a !== '--session').map(a => a.slice(2)).join(',')
+  const note = JSON.stringify({ script, mode, kind: 'timeout', timeout_s: SCRIPT_TIMEOUT_MS / 1000 })
+  try {
+    await $.process.run([...py, `${$.plugin.root}/tokentab/tokentab.py`, '--perf-note', note], { timeoutMs: HELPER_TIMEOUT_MS })
+  } catch { /* the log is best effort */ }
 }
 
 async function isPlaced($: EngineInterface): Promise<boolean> {
