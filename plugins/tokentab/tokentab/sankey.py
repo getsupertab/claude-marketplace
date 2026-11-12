@@ -480,7 +480,13 @@ def svg(b, tb=None, traces=True, keep_tools=None, page=False, where=None):
              + "".join(f"{scope}:has({sel}) path:not(.t){{fill-opacity:.12}}{scope}:has({sel}) rect:not(.t){{opacity:.3}}"
                        f"{scope}:has({sel}) #t{h}{{display:block}}"
                        for h in targets for sel in [hover_sel(h, page)]))
-    parts.insert(0, f"<style>{style}</style><defs>{defs}</defs>")
+    # the page's column rules: a hairline at the left edge of each column's bars, from its top
+    # bar to the drawing's bottom, under everything; the list's groups carry it on (.vl, shown
+    # only while the list is aligned under the chart)
+    rules = "".join(f'<line class="vl" x1="{x}" x2="{x}" y1="{top:.1f}" y2="{ph}" vector-effect="non-scaling-stroke"/>'
+                    for col in cols for x, top in [(flip(pos[next(iter(col))][0]), min(pos[n][1] for n in col))]) \
+        if page and DIR == "ltr" else ""
+    parts[0:0] = [f"<style>{style}</style><defs>{defs}</defs>", rules]
     return f'<svg viewBox="0 0 {pw} {ph}" width="100%" xmlns="http://www.w3.org/2000/svg">{"".join(parts + layers + texts)}</svg>'
 
 
@@ -1220,7 +1226,9 @@ svg{display:block;width:100%;height:auto}svg text{fill:var(--text);font-family:v
 .flow svg{max-width:100%}
 /* the cost flow: the chart, and under it every node with its cost, a group per column. On a
    wide window (.al) each group sits under its column's bars (--cols: the tracks, --c: the
-   group's), the session's header under the session bar; narrower, the groups wrap. While a
+   group's), the session's header under the session bar, and a hairline rule runs from each
+   column's top bar (.vl, in the drawing) down the group's left edge, so chart and list read
+   as one table; narrower, the groups wrap and the rules are hidden. While a
    target is hovered (.tg), the rows on its paths show their slice (--v, from cost_list()'s
    rules) at full contrast (--a:1), the others a dim dash. Nothing moves on hover: a figure
    (.n) keeps the width of its own total (.t, hidden, not removed; the slice is drawn over
@@ -1230,8 +1238,10 @@ svg{display:block;width:100%;height:auto}svg text{fill:var(--text);font-family:v
 .cl{margin-top:18px;display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:16px 28px;align-items:start}
 .g{display:grid;grid-row:span 2;grid-template-rows:subgrid;row-gap:0}
 .gs{display:none}
-@media (min-width:1200px){.cl.al{grid-template-columns:var(--cols);gap:0}
- .cl.al .g{grid-column:var(--c);grid-row:1/span 2;margin-left:-8px;padding-right:12px;min-width:0}.cl.al .gs{display:grid}
+.vl{display:none;stroke:var(--line);stroke-width:1}
+@media (min-width:1200px){.cl.al{grid-template-columns:var(--cols);gap:0;margin-top:0}
+ .cf:has(.cl.al) .vl{display:inline}
+ .cl.al .g{grid-column:var(--c);grid-row:1/span 2;padding:18px 4px 0 0;border-left:1px solid var(--line);min-width:0}.cl.al .gs{display:grid}
  .cl.al .r{gap:8px}.cl.al .n{font-size:12px}.cl.al .r .nm>span{white-space:normal}}
 .gh{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:last baseline;align-content:end;gap:12px;padding:0 8px 6px;margin-bottom:2px;border-bottom:1px solid var(--line)}
 .cl .n{display:grid;justify-items:end}.cl .n>.t,.cl .n::after{grid-area:1/1}
