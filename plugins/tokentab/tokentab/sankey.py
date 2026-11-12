@@ -16,9 +16,9 @@ report underneath. Renderers only; nothing here serves HTTP.
                             for the pane beside the chat (an Svg there is 128 KB at most)
 
 Flow, left to right:  session total → model → kind (context / generation / fees) → rate
-→ tool → where it went, in the pane's terms: tool asks, answers into context, answers
-re-read (a tool's three parts), then what no tool or hook accounts for: context re-reads,
-prompts & replies; and TokenTab overhead. Every ribbon is built from the per-model
+→ tool → where it went, in the pane's terms, ordered like the rates that feed them: context
+re-reads (cache read no tool accounts for), a tool's three parts (answers re-read, answers
+into context, tool asks), prompts & replies (the rest no tool accounts for), TokenTab overhead. Every ribbon is built from the per-model
 bookkeeping, so hovering a model lights exactly its slices downstream and hovering a tool
 exactly the models that paid for it. Plain SVG computed here in Python. Every column but
 the session can be hidden (--hide model,kind,...); its flows are summed over it. Colours follow the system's light or dark setting.
@@ -43,7 +43,7 @@ COLUMNS = [
     ("kind", "kind", "context · generation · fees"),
     ("rate", "rate", "cache read and write, input, output, thinking"),
     ("tool", "tool", "the tool a slice went to"),
-    ("sink", "where it went", "tool asks · answers into context · answers re-read · context re-reads · prompts & replies · TokenTab overhead"),
+    ("sink", "where it went", "context re-reads · answers re-read · answers into context · tool asks · prompts & replies · TokenTab overhead"),
 ]
 ROLES = ("session", "model", "kind", "rate", "tool", "sink")   # a path's nodes; non-tool paths skip "tool"
 
@@ -154,9 +154,13 @@ OTHER_COLOR = SERIES["session_other"]
 # tools and models take the pane's categorical series, costliest first
 TOOL_COLORS = [SERIES[f"session_{i}"] for i in range(1, 11)]
 MODEL_COLORS = [SERIES[f"model_{i}"] for i in range(1, 6)]
-# fixed display order for the named nodes; models and tools sort by cost inside their column
+# fixed display order for the named nodes; models and tools sort by cost inside their column.
+# The sinks follow the rates that feed them, top to bottom (cache read, cache write, output),
+# so few ribbons cross: context re-reads (cache read, past the tools) on top, then a tool's
+# three parts from re-read to asking, then prompts & replies and TokenTab's overhead.
+SINK_ORDER = (REREADS, ANSWERS_REREAD, INTO_CTX, ASKING, PROMPTS, OVERHEAD)
 RANK = {n: i for i, n in enumerate(["session"] + list(TREE) + [l for ls in TREE.values() for l in ls]
-                                   + [ASKING, INTO_CTX, ANSWERS_REREAD, REREADS, PROMPTS, OVERHEAD])}
+                                   + list(SINK_ORDER))}
 
 
 def slug(n):
@@ -295,25 +299,33 @@ def layout(cols, links, rpad=PAD):
     xs = [PAD + i * (W - PAD - rpad - NODE_W) / (len(cols) - 1) for i in range(len(cols))]
     pos = {}
     for ci, (col, x) in enumerate(zip(cols, xs)):
-        # a node whose ribbon skips this column gets a pass-through slot at the bottom, as if it
-        # sat here (HA's "not measured" band); it then keeps that height in its own column
+        # a node whose ribbon skips this column gets a pass-through slot, as if it sat here
+        # (HA's "not measured" band); it then keeps that height in its own column. The slot
+        # sits above this column's nodes when its node ranks before everything they feed
+        # (context re-reads above the tools), else below them
         through = {}
         for src, dst, v in links:
             if colidx[src] < ci < colidx[dst]:
                 through[dst] = through.get(dst, 0) + v
-        items = list(col.items()) + list(through.items())
+        first = min((RANK.get(d, 0) for s_, d, _ in links if s_ in col), default=0)
+        slots = sorted(through.items(), key=lambda kv: RANK.get(kv[0], 0))
+        items = ([kv for kv in slots if RANK.get(kv[0], 0) < first] + list(col.items())
+                 + [kv for kv in slots if RANK.get(kv[0], 0) >= first])
         fixed = {n: pos[n] for n, _ in items if n in pos}
         free = [(n, v) for n, v in items if n not in pos]
         extent = sum(v for _, v in free) * scale + GAP * (len(free) - 1)
         if sum(v for _, v in items) >= total * 0.999 and not fixed:
             y = 40 + (usable - extent) / 2
         else:
-            # partial column: centre on what it feeds, else what feeds it; stay clear of fixed slots
+            # partial column: centre on what it feeds, else what feeds it; stay between the fixed
+            # slots that rank before the free nodes and those that rank after them
             near = [n for n in {d for s_, d, _ in links if s_ in col} if n in pos and n not in fixed] \
                 or [n for n in {s_ for s_, d, _ in links if d in col} if n in pos]
             mid = sum(pos[n][1] + pos[n][2] / 2 for n in near) / len(near) if near else 40 + usable / 2
-            top = min((p[1] for p in fixed.values()), default=40 + usable + GAP) - GAP
-            y = min(max(mid - extent / 2, 40), top - extent)
+            fr = min((RANK.get(n, 0) for n, _ in free), default=0)
+            lo = max((p[1] + p[2] + GAP for n, p in fixed.items() if RANK.get(n, 0) < fr), default=40)
+            top = min((p[1] for n, p in fixed.items() if RANK.get(n, 0) >= fr), default=40 + usable + GAP) - GAP
+            y = min(max(mid - extent / 2, lo), top - extent)
         for n, v in free:
             pos[n] = (x, y, v * scale); y += v * scale + GAP
         for n, (_, fy, fh) in fixed.items():
