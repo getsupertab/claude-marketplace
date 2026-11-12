@@ -1151,8 +1151,8 @@ def css_vars():
 CSS = css_vars() + """
 *{box-sizing:border-box}
 body{margin:0;padding:32px 40px 48px;background:var(--bg);color:var(--text);font:13px/1.45 var(--sans)}
-#app{max-width:1360px}
-header{max-width:1360px}
+#app{max-width:1360px;margin:0 auto}
+header{max-width:1360px;margin-left:auto;margin-right:auto}
 h1{font-size:20px;line-height:28px;font-weight:600;margin:0 0 4px;display:flex;align-items:center;gap:10px}
 h2{font-size:15px;line-height:22px;margin:0 0 14px;font-weight:600;display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
 h2 span{font-size:12px;font-weight:400;color:var(--dim)}
