@@ -579,7 +579,7 @@ def cost_list(b, tb=None, where=None):
                         + f'</span><span class="n"><span class="t">{usd(val[n], 4)}</span></span></div>')
         out.append(f'<div class="g{" gs" if r == "session" else ""}" style="--c:{gi + 2}"><div class="gh" style="--h:var(--h{gi})">'
                    f'<span>{esc(GROUP_NAME[r])}</span><span class="n"><span class="t">{usd(sum(val[n] for n in ns), 4)}</span></span>'
-                   f'</div>{"".join(rows)}</div>')
+                   f'</div><div class="rs">{"".join(rows)}</div></div>')
     rules = []
     for t, (tot, s) in sl.items():
         sel = hover_sel(t, True)
@@ -1210,13 +1210,19 @@ svg{display:block;width:100%;height:auto}svg text{fill:var(--text);font-family:v
    wide window (.al) each group sits under its column's bars (--cols: the tracks, --c: the
    group's), the session's header under the session bar; narrower, the groups wrap. While a
    target is hovered (.tg), the rows on its paths show their slice (--v, from cost_list()'s
-   rules) at full contrast (--a:1), the others a dim dash. */
+   rules) at full contrast (--a:1), the others a dim dash. Nothing moves on hover: a figure
+   (.n) keeps the width of its own total (.t, hidden, not removed; the slice is drawn over
+   it and is never wider), and sub-labels end in an ellipsis instead of wrapping. Each group
+   is two rows of a subgrid, header and rows, so the headers in a row of groups share one
+   height: a title that wraps grows them all, its text on the line. */
 .cl{margin-top:18px;display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:16px 28px;align-items:start}
+.g{display:grid;grid-row:span 2;grid-template-rows:subgrid;row-gap:0}
 .gs{display:none}
 @media (min-width:1200px){.cl.al{grid-template-columns:var(--cols);gap:0}
- .cl.al .g{grid-column:var(--c);grid-row:1;margin-left:-8px;padding-right:12px;min-width:0}.cl.al .gs{display:block}
+ .cl.al .g{grid-column:var(--c);grid-row:1/span 2;margin-left:-8px;padding-right:12px;min-width:0}.cl.al .gs{display:grid}
  .cl.al .r{gap:8px}.cl.al .n{font-size:12px}.cl.al .r .nm>span{white-space:normal}}
-.gh{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:0 8px 6px;margin-bottom:2px;border-bottom:1px solid var(--line)}
+.gh{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:last baseline;align-content:end;gap:12px;padding:0 8px 6px;margin-bottom:2px;border-bottom:1px solid var(--line)}
+.cl .n{display:grid;justify-items:end}.cl .n>.t,.cl .n::after{grid-area:1/1}
 .gh>span:first-child{font-size:11px;line-height:16px;font-weight:500;color:var(--dim);text-transform:uppercase;letter-spacing:.06em}
 .gh .n{font-size:12px;color:var(--secondary)}
 .r{display:grid;grid-template-columns:10px minmax(0,1fr) auto;gap:10px;align-items:center;padding:3px 8px;border-radius:6px;
@@ -1224,9 +1230,9 @@ svg{display:block;width:100%;height:auto}svg text{fill:var(--text);font-family:v
 .sw{width:10px;height:10px;border-radius:3px;opacity:calc(.3 + .7 * var(--a,1))}
 .r .nm{display:flex;flex-direction:column;min-width:0;line-height:18px}
 .r .nm>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.r small{font-size:11px;line-height:14px;color:var(--dim)}
+.r small{font-size:11px;line-height:14px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .r .n::after{content:var(--v)}.gh .n::after{content:var(--h)}
-.cf:has(.tg:hover) .cl .t{display:none}
+.cf:has(.tg:hover) .cl .t{visibility:hidden}
 .cf:has(.tg:hover) .r{--a:0}
 html[data-state=stale] #p-hero{opacity:.55}
 html[data-state=stale] #p-hero::after{content:"These figures stopped updating: the session may have ended.";display:block;margin-top:8px;font-size:12px;color:var(--dim)}
