@@ -391,7 +391,7 @@ def svg(b, tb=None, traces=True, keep_tools=None, page=False, where=None):
     to the card (.cf), so a row of the list lights the chart as its node does. where: a dict
     to receive the drawing's width ("width") and each node's place ("pos": name -> (x, y)
     of its bar, left to right), for the list's order and alignment."""
-    tg = ' class="tg"' if page else ""   # .tg: a hover target, for the list's hover state
+    tg = ' class="tg"'   # .tg: a hover target, for the dimming rule and the list's hover state
     scope = ".cf" if page else "svg"
     all_paths, colors, labels = flows(b, tb)
     if keep_tools is not None:
@@ -475,18 +475,20 @@ def svg(b, tb=None, traces=True, keep_tools=None, page=False, where=None):
                 items.append(ribbon(geom[i][0], pos[src][1] + so * scale, v * scale, geom[i][2], pos[dst][1] + do * scale,
                                     v * scale, f"url(#g{i})", bend_to=geom[i][4]).replace("<path ", '<path class="t" ', 1))
         layers.append(f'<g id="t{h}" class="tl">{"".join(items)}</g>')
-    style = ("path{transition:fill-opacity .15s}rect{transition:opacity .15s}"
-             ".tl{display:none;pointer-events:none}.t{fill-opacity:.9}"
-             + "".join(f"{scope}:has({sel}) path:not(.t){{fill-opacity:.12}}{scope}:has({sel}) rect:not(.t){{opacity:.3}}"
-                       f"{scope}:has({sel}) #t{h}{{display:block}}"
-                       for h in targets for sel in [hover_sel(h, page)]))
+    # Hover cost: the dimming is the same whatever is hovered, so it is one rule on one group
+    # (.base: the ribbons and bars), not a rule per target over every path and rect; only
+    # the target's own layer is switched per target, by id. No transitions: hundreds of
+    # elements fading on every hover read as lag (and are slow in Safari).
+    style = (".tl{display:none;pointer-events:none}.t{fill-opacity:.9}"
+             f"{scope}:has(.tg:hover) .base{{opacity:.27}}"
+             + "".join(f"{scope}:has({hover_sel(h, page)}) #t{h}{{display:block}}" for h in targets))
     # the page's column rules: a hairline at the left edge of each column's bars, from its top
     # bar to the drawing's bottom, under everything; the list's groups carry it on (.vl, shown
     # only while the list is aligned under the chart)
     rules = "".join(f'<line class="vl" x1="{x}" x2="{x}" y1="{top:.1f}" y2="{ph}" vector-effect="non-scaling-stroke"/>'
                     for col in cols for x, top in [(flip(pos[next(iter(col))][0]), min(pos[n][1] for n in col))]) \
         if page and DIR == "ltr" else ""
-    parts[0:0] = [f"<style>{style}</style><defs>{defs}</defs>", rules]
+    parts = [f"<style>{style}</style><defs>{defs}</defs>", rules, f'<g class="base">{"".join(parts)}</g>']
     return f'<svg viewBox="0 0 {pw} {ph}" width="100%" xmlns="http://www.w3.org/2000/svg">{"".join(parts + layers + texts)}</svg>'
 
 
@@ -604,8 +606,8 @@ def cost_list(b, tb=None, where=None):
         heads = ";".join(f"--h{gi}:{css_str(usd(x, 4) if x > 0 else DASH)}"
                          for gi, (_, ns) in enumerate(groups) for x in [sum(s.get(n, 0.0) for n in ns)])
         lit = ",".join(f"#r{slug(n)}" for n in s if n in val and role(n, models) != "session")
-        rules.append(f".cf:has({sel}){{{heads}}}.cf:has({sel}) .r{{--v:var(--v{t},'{DASH}')}}"
-                     + (f".cf:has({sel}) :is({lit}){{--a:1}}" if lit else "")
+        rules.append(f".cf:has({sel}) .cl{{{heads}}}.cf:has({sel}) .r{{--v:var(--v{t},'{DASH}')}}"
+                     + (f".cf:has({sel}) .r:is({lit}){{--a:1}}" if lit else "")
                      + (f".cf:has({sel}) #r{t[1:]}{{background:var(--hover)}}" if t.startswith("n") else ""))
     cls, style = ("cl al", f' style="--cols:{tracks}"') if aligned else ("cl", "")
     return f'<div class="{cls}"{style}><style>{"".join(rules)}</style>{"".join(out)}</div>'

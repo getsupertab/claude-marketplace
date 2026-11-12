@@ -213,7 +213,7 @@ def hover_list_check(b, tb=None):
         for n, v in sl.items():
             if n != "session" and f"--v{t}:'{sankey.usd(v, 4)}'" not in html:
                 errs.append(f"hover {t}: the row of {n} lacks its slice {sankey.usd(v, 4)}")
-        if f".cf:has({sankey.hover_sel(t, True)}){{--h0:'{sankey.usd(tot, 4)}'" not in html:
+        if f".cf:has({sankey.hover_sel(t, True)}) .cl{{--h0:'{sankey.usd(tot, 4)}'" not in html:
             errs.append(f"hover {t}: the first header does not show {sankey.usd(tot, 4)}")
     print(f"    hover list: {len(targets)} targets checked")
     return errs
