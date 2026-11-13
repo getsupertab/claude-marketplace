@@ -1,6 +1,6 @@
 {
   "name": "tokentab",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "See what Claude Code is spending while you work: every API call priced from the first prompt, a live cost pane, and budget limits that warn or stop. No setup.",
   "author": {
     "name": "Supertab",

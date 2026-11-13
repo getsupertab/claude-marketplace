@@ -289,6 +289,10 @@ def pane_check(store, prices):
         errs.append(f"pane report: the 5-hour window against its limit is wrong: {s}")
     if not s["plan"] or [w["scope"] for w in s["windows"]] != ["five_hour", "seven_day"] or s["windows"][1]["used"] != 0:
         errs.append(f"pane report: both windows should be listed, the weekly one reset to 0%: {s}")
+    # Limits off on a plan: the windows still lead the hero, in percent, with no limit or fraction
+    s = kt.pane_report(store, "fx", prices, {**plan, "budgets_on": False}, windows=windows)["session"]
+    if s["unit"] != "percent" or [(w["scope"], w["limit"], w["frac"]) for w in s["windows"]] != [("five_hour", None, None), ("seven_day", None, None)] or s["windows"][0]["used"] != 40:
+        errs.append(f"pane report: limits off should still list the plan windows in percent: {s}")
     if kt.pane_report(store, "fx", prices, budget, windows={})["session"]["plan"]:
         errs.append("pane report: no plan windows means no subscription label")
     if kt.reset_text("2000-01-01T00:00:00Z") is not None or not kt.reset_text("2999-01-01T00:00:00Z"):
