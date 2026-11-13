@@ -16,9 +16,9 @@ report underneath. Renderers only; nothing here serves HTTP.
                             for the pane beside the chat (an Svg there is 128 KB at most)
 
 Flow, left to right:  session total → model → kind (context / generation / fees) → rate
-→ tool → where it went, in the pane's terms: tool asks, answers into context, answers
-re-read (a tool's three parts), then what no tool or hook accounts for: context re-reads,
-prompts & replies; and TokenTab overhead. Every ribbon is built from the per-model
+→ tool → where it went, in the pane's terms, ordered like the rates that feed them: context
+re-reads (cache read no tool accounts for), a tool's three parts (answers re-read, answers
+into context, tool asks), prompts & replies (the rest no tool accounts for), TokenTab overhead. Every ribbon is built from the per-model
 bookkeeping, so hovering a model lights exactly its slices downstream and hovering a tool
 exactly the models that paid for it. Plain SVG computed here in Python. Every column but
 the session can be hidden (--hide model,kind,...); its flows are summed over it. Colours follow the system's light or dark setting.
@@ -43,7 +43,7 @@ COLUMNS = [
     ("kind", "kind", "context · generation · fees"),
     ("rate", "rate", "cache read and write, input, output, thinking"),
     ("tool", "tool", "the tool a slice went to"),
-    ("sink", "where it went", "tool asks · answers into context · answers re-read · context re-reads · prompts & replies · TokenTab overhead"),
+    ("sink", "where it went", "context re-reads · answers re-read · answers into context · tool asks · prompts & replies · TokenTab overhead"),
 ]
 ROLES = ("session", "model", "kind", "rate", "tool", "sink")   # a path's nodes; non-tool paths skip "tool"
 
@@ -120,11 +120,14 @@ def ribbon(u0, v0, h0, u1, v1, h1, color, bend_to=None):
 
 
 def node(u, v, h, color, label, value, right):
+    """A bar and its label; value None leaves the figure out (the page's list beside the
+    chart carries it)."""
     u = flip(u)
     fs = max(7, min(FONT_MAX, h + 1))   # font follows the node height, down to a readable floor
     if LABEL_MAX and len(label) > LABEL_MAX:
         label = label[:LABEL_MAX - 1] + "…"
-    text = f'<tspan font-size="{fs:.0f}">{html.escape(label)} <tspan class="v">{kt.money(value)}</tspan></tspan>'
+    fig = "" if value is None else f' <tspan class="v">{kt.money(value)}</tspan>'
+    text = f'<tspan font-size="{fs:.0f}">{html.escape(label)}{fig}</tspan>'
     if DIR == "ltr":
         tx = u + NODE_W + 8 if right else u - 8
         return (f'<rect x="{u}" y="{v:.1f}" width="{NODE_W}" height="{h:.1f}" fill="{color}"/>'
@@ -151,9 +154,13 @@ OTHER_COLOR = SERIES["session_other"]
 # tools and models take the pane's categorical series, costliest first
 TOOL_COLORS = [SERIES[f"session_{i}"] for i in range(1, 11)]
 MODEL_COLORS = [SERIES[f"model_{i}"] for i in range(1, 6)]
-# fixed display order for the named nodes; models and tools sort by cost inside their column
+# fixed display order for the named nodes; models and tools sort by cost inside their column.
+# The sinks follow the rates that feed them, top to bottom (cache read, cache write, output),
+# so few ribbons cross: context re-reads (cache read, past the tools) on top, then a tool's
+# three parts from re-read to asking, then prompts & replies and TokenTab's overhead.
+SINK_ORDER = (REREADS, ANSWERS_REREAD, INTO_CTX, ASKING, PROMPTS, OVERHEAD)
 RANK = {n: i for i, n in enumerate(["session"] + list(TREE) + [l for ls in TREE.values() for l in ls]
-                                   + [ASKING, INTO_CTX, ANSWERS_REREAD, REREADS, PROMPTS, OVERHEAD])}
+                                   + list(SINK_ORDER))}
 
 
 def slug(n):
@@ -292,25 +299,33 @@ def layout(cols, links, rpad=PAD):
     xs = [PAD + i * (W - PAD - rpad - NODE_W) / (len(cols) - 1) for i in range(len(cols))]
     pos = {}
     for ci, (col, x) in enumerate(zip(cols, xs)):
-        # a node whose ribbon skips this column gets a pass-through slot at the bottom, as if it
-        # sat here (HA's "not measured" band); it then keeps that height in its own column
+        # a node whose ribbon skips this column gets a pass-through slot, as if it sat here
+        # (HA's "not measured" band); it then keeps that height in its own column. The slot
+        # sits above this column's nodes when its node ranks before everything they feed
+        # (context re-reads above the tools), else below them
         through = {}
         for src, dst, v in links:
             if colidx[src] < ci < colidx[dst]:
                 through[dst] = through.get(dst, 0) + v
-        items = list(col.items()) + list(through.items())
+        first = min((RANK.get(d, 0) for s_, d, _ in links if s_ in col), default=0)
+        slots = sorted(through.items(), key=lambda kv: RANK.get(kv[0], 0))
+        items = ([kv for kv in slots if RANK.get(kv[0], 0) < first] + list(col.items())
+                 + [kv for kv in slots if RANK.get(kv[0], 0) >= first])
         fixed = {n: pos[n] for n, _ in items if n in pos}
         free = [(n, v) for n, v in items if n not in pos]
         extent = sum(v for _, v in free) * scale + GAP * (len(free) - 1)
         if sum(v for _, v in items) >= total * 0.999 and not fixed:
             y = 40 + (usable - extent) / 2
         else:
-            # partial column: centre on what it feeds, else what feeds it; stay clear of fixed slots
+            # partial column: centre on what it feeds, else what feeds it; stay between the fixed
+            # slots that rank before the free nodes and those that rank after them
             near = [n for n in {d for s_, d, _ in links if s_ in col} if n in pos and n not in fixed] \
                 or [n for n in {s_ for s_, d, _ in links if d in col} if n in pos]
             mid = sum(pos[n][1] + pos[n][2] / 2 for n in near) / len(near) if near else 40 + usable / 2
-            top = min((p[1] for p in fixed.values()), default=40 + usable + GAP) - GAP
-            y = min(max(mid - extent / 2, 40), top - extent)
+            fr = min((RANK.get(n, 0) for n, _ in free), default=0)
+            lo = max((p[1] + p[2] + GAP for n, p in fixed.items() if RANK.get(n, 0) < fr), default=40)
+            top = min((p[1] for n, p in fixed.items() if RANK.get(n, 0) >= fr), default=40 + usable + GAP) - GAP
+            y = min(max(mid - extent / 2, lo), top - extent)
         for n, v in free:
             pos[n] = (x, y, v * scale); y += v * scale + GAP
         for n, (_, fy, fh) in fixed.items():
@@ -369,9 +384,15 @@ def bar(u, v, h, color, cls=""):
     return f'<rect class="{cls}" x="{v:.1f}" y="{u}" width="{h:.1f}" height="{NODE_W}" fill="{color}"/>'
 
 
-def svg(b, tb=None, traces=True, keep_tools=None):
+def svg(b, tb=None, traces=True, keep_tools=None, page=False, where=None):
     """The Sankey. traces=False leaves out the hover tracing layers and hit boxes (the bulk
-    of the markup); keep_tools folds the long tail of tools into one node."""
+    of the markup); keep_tools folds the long tail of tools into one node. page: drawn for
+    the status page beside cost_list(): labels without figures, and the hover rules scoped
+    to the card (.cf), so a row of the list lights the chart as its node does. where: a dict
+    to receive the drawing's width ("width") and each node's place ("pos": name -> (x, y)
+    of its bar, left to right), for the list's order and alignment."""
+    tg = ' class="tg"'   # .tg: a hover target, for the dimming rule and the list's hover state
+    scope = ".cf" if page else "svg"
     all_paths, colors, labels = flows(b, tb)
     if keep_tools is not None:
         all_paths, colors, labels = fold_tools(all_paths, colors, labels, keep_tools)
@@ -382,7 +403,7 @@ def svg(b, tb=None, traces=True, keep_tools=None):
     # session node and every slice still adds up
     # room for the last column's labels (left to right only: elsewhere they sit under the
     # bars), estimated at 0.6em a character at the largest label size, so none is cut off
-    rpad = max(PAD, 12 + 13 * 0.6 * max(len(f"{labels[n]} {kt.money(v)}") for n, v in cols[-1].items())) \
+    rpad = max(PAD, 12 + 13 * 0.6 * max(len(labels[n] if page else f"{labels[n]} {kt.money(v)}") for n, v in cols[-1].items())) \
         if DIR == "ltr" else PAD
     w0, _ = layout(cols, links, rpad)
     floor = MIN_PX / (w0[0] / links[0][2])
@@ -391,6 +412,8 @@ def svg(b, tb=None, traces=True, keep_tools=None):
     links = [(s_, d, sum(v for _, idx, v in all_paths if i in idx)) for i, (s_, d, _) in enumerate(links)]
     cols = [{n: sum(v for nodes, _, v in all_paths if n in nodes) for n in col} for col in cols]
     w, pos = layout(cols, links, rpad)
+    if where is not None:
+        where.update(pos={n: (flip(p[0]), p[1]) for n, p in pos.items()}, width=size()[0])
     val = {n: v for col in cols for n, v in col.items()}
     nid = {n: "n" + slug(n) for n in val}
     scale = w[0] / links[0][2]
@@ -415,18 +438,18 @@ def svg(b, tb=None, traces=True, keep_tools=None):
         # an invisible 6px-stroked copy makes hairline ribbons hoverable without changing the drawing
         rb = ribbon(geom[i][0], geom[i][1], w[i], geom[i][2], geom[i][3], w[i], f"url(#g{i})", bend_to=geom[i][4])
         hit = rb.replace(f'fill="url(#g{i})" fill-opacity="0.45"', 'class="h" fill="none" stroke="#000" stroke-opacity="0" stroke-width="6" pointer-events="stroke"') if traces else ""
-        parts.append(f'<g id="l{i}">{rb}{hit}</g>')
+        parts.append(f'<g id="l{i}"{tg}>{rb}{hit}</g>')
         out_off[src] += w[i]; in_off[dst] += w[i]
     # bars go under the trace layers, labels above everything; a label is a hover target too
     texts = []
     for ci, col in enumerate(cols):
         for n in col:
             u, v, h = pos[n]
-            rect, text = node(u, v, h, colors[n], labels[n], true_val[n], right=ci > 0).split("<text", 1)
+            rect, text = node(u, v, h, colors[n], labels[n], None if page else true_val[n], right=page or ci > 0).split("<text", 1)
             hh = max(h, HIT_H)   # transparent hit box so hairline nodes can be hovered
             hit = bar(u, v + h / 2 - hh / 2, hh, "none", "h").replace('<rect class="h"', '<rect class="h" pointer-events="all"') if traces else ""
-            parts.append(f'<g id="{nid[n]}">{rect}{hit}</g>')
-            texts.append(f'<g id="k{nid[n][1:]}"><text{text}</g>')
+            parts.append(f'<g id="{nid[n]}"{tg}>{rect}{hit}</g>')
+            texts.append(f'<g id="k{nid[n][1:]}"{tg}><text{text}</g>')
     pw, ph = size()
     if not traces:
         return f'<svg viewBox="0 0 {pw} {ph}" width="100%" xmlns="http://www.w3.org/2000/svg"><defs>{defs}</defs>{"".join(parts + texts)}</svg>'
@@ -452,14 +475,158 @@ def svg(b, tb=None, traces=True, keep_tools=None):
                 items.append(ribbon(geom[i][0], pos[src][1] + so * scale, v * scale, geom[i][2], pos[dst][1] + do * scale,
                                     v * scale, f"url(#g{i})", bend_to=geom[i][4]).replace("<path ", '<path class="t" ', 1))
         layers.append(f'<g id="t{h}" class="tl">{"".join(items)}</g>')
-    all_traces = targets
-    style = ("path{transition:fill-opacity .15s}rect{transition:opacity .15s}"
-             ".tl{display:none;pointer-events:none}.t{fill-opacity:.9}"
-             + "".join(f"svg:has({sel}) path:not(.t){{fill-opacity:.12}}svg:has({sel}) rect:not(.t){{opacity:.3}}"
-                       f"svg:has({sel}) #t{h}{{display:block}}"
-                       for h in all_traces for sel in [f"#{h}:hover" + (f",#k{h[1:]}:hover" if h.startswith("n") else "")]))
-    parts.insert(0, f"<style>{style}</style><defs>{defs}</defs>")
+    # Hover cost: the dimming is the same whatever is hovered, so it is one rule on one group
+    # (.base: the ribbons and bars), not a rule per target over every path and rect; only
+    # the target's own layer is switched per target, by id. No transitions: hundreds of
+    # elements fading on every hover read as lag (and are slow in Safari).
+    style = (".tl{display:none;pointer-events:none}.t{fill-opacity:.9}"
+             f"{scope}:has(.tg:hover) .base{{opacity:.27}}"
+             + "".join(f"{scope}:has({hover_sel(h, page)}) #t{h}{{display:block}}" for h in targets))
+    # the page's column rules: a hairline at the left edge of each column's bars, from its top
+    # bar to the drawing's bottom, under everything; the list's groups carry it on (.vl, shown
+    # only while the list is aligned under the chart)
+    rules = "".join(f'<line class="vl" x1="{x}" x2="{x}" y1="{top:.1f}" y2="{ph}" vector-effect="non-scaling-stroke"/>'
+                    for col in cols for x, top in [(flip(pos[next(iter(col))][0]), min(pos[n][1] for n in col))]) \
+        if page and DIR == "ltr" else ""
+    parts = [f"<style>{style}</style><defs>{defs}</defs>", rules, f'<g class="base">{"".join(parts)}</g>']
     return f'<svg viewBox="0 0 {pw} {ph}" width="100%" xmlns="http://www.w3.org/2000/svg">{"".join(parts + layers + texts)}</svg>'
+
+
+def hover_sel(h, page=False):
+    """The elements whose hover means target h: a ribbon (l<i>) alone; a node (n<slug>) by
+    its bar, its label and, on the page, its row in the list (r<slug>)."""
+    if not h.startswith("n"):
+        return f"#{h}:hover"
+    return f"#{h}:hover,#k{h[1:]}:hover" + (f",#r{h[1:]}:hover" if page else "")
+
+
+SINKS = (ASKING, INTO_CTX, ANSWERS_REREAD, REREADS, PROMPTS, OVERHEAD)
+
+
+def role(n, models):
+    """A node's column by its name (ROLES): models are the bucket's, the named nodes fixed,
+    every other node a tool."""
+    if n in models:
+        return "model"
+    if n == "session" or n in TREE:
+        return "session" if n == "session" else "kind"
+    if n in RANK:
+        return "sink" if n in SINKS else "rate"
+    return "tool"
+
+
+def hover_slices(paths, links):
+    """What the list shows while a target of the Sankey is hovered: for every target (a
+    node's n<slug>, a ribbon's l<i>, the ids svg() gives them), the sum of the paths through
+    it and, per node on those paths, the part of that sum passing the node (its slice).
+    paths: (nodes, value) at true values; links: columns(paths)'s, whose order numbers the
+    ribbons. Returns {target: (total, {node: slice})}."""
+    lid = {(s_, d): i for i, (s_, d, _) in enumerate(links)}
+    out = {}
+    for nodes, v in paths:
+        for t in {"n" + slug(n) for n in nodes} | {f"l{lid[e]}" for e in zip(nodes, nodes[1:])}:
+            tot, sl = out.setdefault(t, [0.0, {}])
+            out[t][0] = tot + v
+            for n in nodes:
+                sl[n] = sl.get(n, 0.0) + v
+    return {t: (tot, sl) for t, (tot, sl) in out.items()}
+
+
+# The list with the page's Sankey (Kate's design): every node with its cost, one group per
+# column, a column's total in its group's header. On a wide window the list runs under the
+# chart, each group under its column's bars; narrower, the groups wrap. Hovering a node, a
+# ribbon or a row puts the list in the hover state: the rows on the hovered target's paths
+# show their slice of it, the others a dash, and each header the target's part in that column.
+LIST_GROUPS = ("session", "model", "kind", "rate", "tool", "sink")
+GROUP_NAME = {"session": "Session", "model": "Model", "kind": "Context / Generation", "rate": "Rate",
+              "tool": "Tool", "sink": "Where it went"}
+DASH = "–"
+
+
+def tool_sub(name):
+    """The line under an MCP tool's name in the list: mcp · <server>."""
+    if not name.startswith("mcp__"):
+        return ""
+    server = name.split("__")[1] if name.count("__") >= 2 else ""
+    return "mcp" + (f" · {server}" if server and not UUID.match(server) else "")
+
+
+def css_str(s):
+    return "'" + s.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
+def cost_list(b, tb=None, where=None):
+    """The list with the page's Sankey and its hover rules, both computed here: every
+    target's figures are precomputed (as custom properties on the rows) and switched by
+    :has() rules like the chart's trace layers, so it needs no script and survives a push.
+    Figures are the true values, not the drawing's MIN_PX-bumped ones. where: svg()'s node
+    places and drawing width, so each column's rows run in the chart's order, top to
+    bottom, and (left to right only) each group can sit under its column. The session's
+    group has no rows: only its header, under the session bar, in the aligned layout."""
+    paths, colors, labels = flows(b, tb)
+    cols, links = columns(paths)
+    models = set(b.cost_bm)
+    val = {n: v for col in cols for n, v in col.items()}
+    pos = (where or {}).get("pos", {})
+    by_role = {}
+    for col in cols:
+        for n in sorted(col, key=lambda n: pos.get(n, (0, 0))[1]):   # stable: cols' order without where
+            by_role.setdefault(role(n, models), []).append(n)
+    sl = hover_slices(paths, links)
+    groups = [(r, by_role[r]) for r in LIST_GROUPS if r in by_role]
+    # the aligned layout's tracks: a lead-in to the first column, then one per group from its
+    # bars to the next group's, as shares of the drawing's width (the list is as wide)
+    xs = [pos[ns[0]][0] for _, ns in groups] if DIR == "ltr" and pos else []
+    # (two groups in one column, as tools and sinks with "where it went" hidden: no alignment)
+    aligned = len(xs) == len(groups) and all(a < b_ for a, b_ in zip(xs, xs[1:]))
+    tracks = ""
+    if aligned:
+        w = where["width"]
+        tracks = " ".join(f"{(b_ - a) / w * 100:.3f}%" for a, b_ in zip([0] + xs, xs + [w]))
+    # per row, its slice of every target it lies on: --v<target>:'$…'
+    on = {n: [] for n in val}
+    for t, (_, s) in sl.items():
+        for n, v in s.items():
+            on[n].append(f"--v{t}:{css_str(usd(v, 4))}")
+    out = []
+    for gi, (r, ns) in enumerate(groups):
+        rows = []
+        for n in ns if r != "session" else []:
+            sub = tool_sub(n) if r == "tool" else ""
+            nm = esc(n.split("__")[-1] if sub else labels[n])
+            rows.append(f'<div class="r tg" id="r{slug(n)}" style="{";".join(on[n])}"><i class="sw" style="background:{colors[n]}"></i>'
+                        f'<span class="nm"><span>{nm}</span>' + (f'<small>{esc(sub)}</small>' if sub else "")
+                        + f'</span><span class="n"><span class="t">{usd(val[n], 4)}</span></span></div>')
+        out.append(f'<div class="g{" gs" if r == "session" else ""}" style="--c:{gi + 2}"><div class="gh" style="--h:var(--h{gi})">'
+                   f'<span>{esc(GROUP_NAME[r])}</span><span class="n"><span class="t">{usd(sum(val[n] for n in ns), 4)}</span></span>'
+                   f'</div><div class="rs">{"".join(rows)}</div></div>')
+    rules = []
+    for t, (tot, s) in sl.items():
+        sel = hover_sel(t, True)
+        heads = ";".join(f"--h{gi}:{css_str(usd(x, 4) if x > 0 else DASH)}"
+                         for gi, (_, ns) in enumerate(groups) for x in [sum(s.get(n, 0.0) for n in ns)])
+        lit = ",".join(f"#r{slug(n)}" for n in s if n in val and role(n, models) != "session")
+        rules.append(f".cf:has({sel}) .cl{{{heads}}}.cf:has({sel}) .r{{--v:var(--v{t},'{DASH}')}}"
+                     + (f".cf:has({sel}) .r:is({lit}){{--a:1}}" if lit else "")
+                     + (f".cf:has({sel}) #r{t[1:]}{{background:var(--hover)}}" if t.startswith("n") else ""))
+    cls, style = ("cl al", f' style="--cols:{tracks}"') if aligned else ("cl", "")
+    return f'<div class="{cls}"{style}><style>{"".join(rules)}</style>{"".join(out)}</div>'
+
+
+# The page's drawing spans the card, the list under it. Every label sits right of its bar,
+# "session" included, so the drawing starts at the card's left edge.
+PAGE_PAD = 0
+
+
+def page_svg(b, tb=None, where=None):
+    """The Sankey for the status page, above cost_list()."""
+    global PAD
+    saved = PAD
+    PAD = PAGE_PAD
+    try:
+        return svg(b, tb, page=True, where=where)
+    finally:
+        PAD = saved
 
 
 # The pane's drawing is the page's Sankey in miniature: the same page size and columns,
@@ -945,8 +1112,10 @@ def parts(R, direction="ltr", models=True, hide=()):
         return {"head": head, "hero": kpis(P, R) if P else "", "flow": "", "chart": "", "status": status}
     since = s["since"].strftime("%H:%M") if s["since"] else "?"
     head = f'<div class="sub">since {since} · updated {R["now"].strftime("%H:%M:%S")}</div>'
+    where = {}
     flow = (f'<section class="card flow">{label("Cost flow", "session → model → context / generation → rate → where it went")}'
-            + (svg(b, tb) if b and b.cost > 0 else '<p class="m">No usage for this session yet.</p>') + "</section>")
+            + (f'<div class="cf"><div class="cc">{page_svg(b, tb, where)}</div>{cost_list(b, tb, where)}</div>'
+               if b and b.cost > 0 else '<p class="m">No usage for this session yet.</p>') + "</section>")
     return {"head": head, "hero": kpis(P, R), "flow": flow, "chart": timeline(R) or "", "status": status_html(R)}
 
 
@@ -985,8 +1154,8 @@ def css_vars():
 CSS = css_vars() + """
 *{box-sizing:border-box}
 body{margin:0;padding:32px 40px 48px;background:var(--bg);color:var(--text);font:13px/1.45 var(--sans)}
-#app{max-width:1360px}
-header{max-width:1360px}
+#app{max-width:1360px;margin:0 auto}
+header{max-width:1360px;margin-left:auto;margin-right:auto}
 h1{font-size:20px;line-height:28px;font-weight:600;margin:0 0 4px;display:flex;align-items:center;gap:10px}
 h2{font-size:15px;line-height:22px;margin:0 0 14px;font-weight:600;display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
 h2 span{font-size:12px;font-weight:400;color:var(--dim)}
@@ -1060,6 +1229,38 @@ summary.tr:hover,summary.li:hover{background:var(--hover)}
 /* charts */
 svg{display:block;width:100%;height:auto}svg text{fill:var(--text);font-family:var(--sans);font-size:13px}svg .v{fill:var(--dim)}
 .flow svg{max-width:100%}
+/* the cost flow: the chart, and under it every node with its cost, a group per column. On a
+   wide window (.al) each group sits under its column's bars (--cols: the tracks, --c: the
+   group's), the session's header under the session bar, and a hairline rule runs from each
+   column's top bar (.vl, in the drawing) down the group's left edge, so chart and list read
+   as one table; narrower, the groups wrap and the rules are hidden. While a
+   target is hovered (.tg), the rows on its paths show their slice (--v, from cost_list()'s
+   rules) at full contrast (--a:1), the others a dim dash. Nothing moves on hover: a figure
+   (.n) keeps the width of its own total (.t, hidden, not removed; the slice is drawn over
+   it and is never wider), and sub-labels end in an ellipsis instead of wrapping. Each group
+   is two rows of a subgrid, header and rows, so the headers in a row of groups share one
+   height: a title that wraps grows them all, its text on the line. */
+.cl{margin-top:18px;display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:16px 28px;align-items:start}
+.g{display:grid;grid-row:span 2;grid-template-rows:subgrid;row-gap:0}
+.gs{display:none}
+.vl{display:none;stroke:var(--line);stroke-width:1}
+@media (min-width:1200px){.cl.al{grid-template-columns:var(--cols);gap:0;margin-top:0}
+ .cf:has(.cl.al) .vl{display:inline}
+ .cl.al .g{grid-column:var(--c);grid-row:1/span 2;padding:18px 4px 0 0;border-left:1px solid var(--line);min-width:0}.cl.al .gs{display:grid}
+ .cl.al .r{gap:8px}.cl.al .n{font-size:12px}.cl.al .r .nm>span{white-space:normal}}
+.gh{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:last baseline;align-content:end;gap:12px;padding:0 8px 6px;margin-bottom:2px;border-bottom:1px solid var(--line)}
+.cl .n{display:grid;justify-items:end}.cl .n>.t,.cl .n::after{grid-area:1/1}
+.gh>span:first-child{font-size:11px;line-height:16px;font-weight:500;color:var(--dim);text-transform:uppercase;letter-spacing:.06em}
+.gh .n{font-size:12px;color:var(--secondary)}
+.r{display:grid;grid-template-columns:10px minmax(0,1fr) auto;gap:10px;align-items:center;padding:3px 8px;border-radius:6px;
+ color:color-mix(in srgb,var(--text) calc(var(--a,1) * 100%),var(--dim));transition:background-color .15s}
+.sw{width:10px;height:10px;border-radius:3px;opacity:calc(.3 + .7 * var(--a,1))}
+.r .nm{display:flex;flex-direction:column;min-width:0;line-height:18px}
+.r .nm>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.r small{font-size:11px;line-height:14px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.r .n::after{content:var(--v)}.gh .n::after{content:var(--h)}
+.cf:has(.tg:hover) .cl .t{visibility:hidden}
+.cf:has(.tg:hover) .r{--a:0}
 html[data-state=stale] #p-hero{opacity:.55}
 html[data-state=stale] #p-hero::after{content:"These figures stopped updating: the session may have ended.";display:block;margin-top:8px;font-size:12px;color:var(--dim)}
 .chart h2{align-items:center}
