@@ -367,7 +367,7 @@ export const SECTIONS: { title: string; toggle?: Setting; rows: Setting[] }[] = 
     { key: 'daily_limit_usd', label: 'Today', unit: 'USD', kind: 'limit',
       percent: { key: 'weekly_limit_percent', label: 'This week' } },
     { key: 'warn_at_percent', label: 'Warn at', unit: '%', kind: 'limit' },
-    { key: 'hard_stop', label: 'Hard stop at 100%', kind: 'switch' },
+    { key: 'hard_stop', label: 'Enable hard stop', kind: 'switch' },
   ] },
 ]
 
