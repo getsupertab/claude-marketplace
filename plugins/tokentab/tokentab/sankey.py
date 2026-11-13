@@ -548,9 +548,10 @@ def lead(P):
     first tile leads with, as the pane's hero: under percent the first plan window."""
     s = P["session"]
     windows = s["windows"] if s["unit"] == "percent" else []
-    first = windows[0] if windows else None
+    first = next((w for w in windows if w["frac"] is not None), windows[0] if windows else None)
     frac = first["frac"] if first else s["frac"]
-    worst = max(w["frac"] for w in windows) if first else frac
+    fracs = [w["frac"] for w in windows if w["frac"] is not None]
+    worst = max(fracs, default=None) if first else frac
     return first, frac, worst
 
 
@@ -570,9 +571,10 @@ def spend_tile(P, R):
     lines = []
     if first:
         figure = percent(first["used"])
-        lines.append(f'of the {kt.WINDOW_NAMES[first["scope"]]} · limit {percent(first["limit"])}{resets(first)}')
-        lines += [f'{WINDOW_SHORT[w["scope"]]} {percent(w["used"])}, limit {percent(w["limit"])}{resets(w)}'
-                  for w in s["windows"][1:]]
+        limit = lambda w, sep: f'{sep}limit {percent(w["limit"])}' if w["limit"] is not None else ""
+        lines.append(f'of the {kt.WINDOW_NAMES[first["scope"]]}{limit(first, " · ")}{resets(first)}')
+        lines += [f'{WINDOW_SHORT[w["scope"]]} {percent(w["used"])}{limit(w, ", ")}{resets(w)}'
+                  for w in s["windows"] if w is not first]
         lines.append(f'{big(s["cost"])}{api}')
     else:
         figure = big(s["cost"])
@@ -620,7 +622,8 @@ def kpis(P, R):
     alerts = []
     first, frac, worst = lead(P)
     if worst is not None and worst >= 1:
-        what = f'the {kt.WINDOW_NAMES[max(s["windows"], key=lambda w: w["frac"])["scope"]]}' if first else "this session"
+        what = (f'the {kt.WINDOW_NAMES[max((w for w in s["windows"] if w["frac"] is not None), key=lambda w: w["frac"])["scope"]]}'
+                if first else "this session")
         alerts.append(("error", f"Over the limit of {what} ({pct(worst)}). "
                        + ("Hard stop is on: TokenTab blocks tool calls." if s["hard_stop"] else "TokenTab only warns: hard stop is off.")))
     if ctx and ctx["cold"]:

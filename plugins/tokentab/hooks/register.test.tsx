@@ -783,6 +783,24 @@ test('the limit unit follows the account: percent where the plan reports a usage
   expect(JSON.stringify(withNewKeys({ b: 5, x: 1 }, { a: 0, b: 0, c: 3 }))).toBe('{"a":0,"b":5,"c":3,"x":1}')
 })
 
+test('a first usage-window reading redraws the open Budget tab in percent, no tab switch', async ($, on) => {
+  mock.env(on, { HOME: '/home/t' })
+  const clock = mock.clock(on, { now: T0 })
+  world(on, FILES)
+  on('session.measure', ($, e) => ({ changed: e.changed }))
+  await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
+  await $.ui.press(press('tab-budget'))
+  await clock.settle()
+  const inputs = async () => elements(await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS }), 'Input').map(i => i.key)
+  expect(await inputs()).toContain('b-session_limit_usd')
+  await $.session.measure({ context: { window: 200000 }, rateLimits: [{ kind: 'five_hour', percentUsed: 42 }], changed: ['context', 'rateLimits'] })
+  await clock.advance(1_000)
+  await clock.settle()
+  expect(await inputs()).toContain('b-five_hour_limit_percent')
+})
+
 test('session.measure records the usage windows; the Budget tab then shows the percent fields', async ($, on) => {
   mock.env(on, { HOME: '/home/t' })
   const clock = mock.clock(on, { now: T0 })

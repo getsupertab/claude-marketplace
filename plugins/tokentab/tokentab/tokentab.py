@@ -1321,8 +1321,13 @@ def pane_report(store, sid, prices, budget, led=None, windows=None):
     unit, rows = limit_rows(budget, {"session": b.cost, "today": out["today"]}, windows)
     # The hero's bar: this session in USD; under percent the first window with a limit and a reading
     row = next((r for r in rows if r["scope"] in ("session", "five_hour", "seven_day")), None) if on else None
-    plan_windows = [{"scope": r["scope"], "used": r["used"], "limit": r["limit"], "frac": r["frac"], "resets": r["resets"]}
-                    for r in rows if r["scope"] in windows] if on and unit == "percent" else []
+    # Every window with a reading, limits on or off; limit and frac only where a limit is checked
+    limited = {r["scope"]: r for r in rows} if on else {}
+    plan_windows = [{"scope": scope, "used": window_used(windows[scope]),
+                     "limit": limited[scope]["limit"] if scope in limited else None,
+                     "frac": limited[scope]["frac"] if scope in limited else None,
+                     "resets": reset_text(windows[scope].get("resetsAt")) if windows[scope].get("resetsAt") else None}
+                    for scope, _, _ in LIMITS["percent"] if scope in windows] if unit == "percent" else []
     out["session"] = {
         "title": R["session"]["title"], "cost": b.cost, "tokens": b.tokens, "msgs": b.msgs,
         "minutes": round((b.last - b.first).total_seconds() / 60) if b.first and b.last else 0,

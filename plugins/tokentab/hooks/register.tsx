@@ -260,7 +260,7 @@ export type Report = {
     limits_on: boolean; unit: Unit
     /** The account reports plan windows (Pro/Max): its dollars are API rates, not a bill. */
     plan?: boolean
-    /** Under percent, each window with a limit and a reading; the first leads the hero. */
+    /** Under percent, each window with a reading; one with a checked limit leads the hero. */
     windows?: PlanWindow[]
     /** The hero's limit as text: `$0.82 of $1.00`, `5-hour window 42% used, limit 80%`. */
     limit: string | null; frac: number | null
@@ -275,7 +275,8 @@ export type Report = {
   sessions?: { sid: string; name: string; detail?: string; cost: number; share: number }[]
 }
 
-export type PlanWindow = { scope: 'five_hour' | 'seven_day'; used: number; limit: number; frac: number; resets: string | null }
+/** `limit` and `frac` are null where no limit is checked: limits off, or none set for that window. */
+export type PlanWindow = { scope: 'five_hour' | 'seven_day'; used: number; limit: number | null; frac: number | null; resets: string | null }
 const WINDOW_NAME = { five_hour: '5-hour window', seven_day: 'weekly window' } as const
 const WINDOW_SHORT = { five_hour: '5-hour', seven_day: 'week' } as const
 const percent = (n: number) => `${Math.round(n * 10) / 10}%`
@@ -863,6 +864,8 @@ export const register: Register = (on, pluginOptions) => {
         await $.fs.write(`${data}/state/windows/${await sid($)}.json`, JSON.stringify({ at, windows }) + '\n')
         await $.fs.write(`${data}/state/rate_limits.json`,
           JSON.stringify({ at, windows }) + '\n')
+        // A first reading or a new login can change the unit: redraw now, not on the next 30 s beat
+        if (tick !== undefined) stale = true
       } catch { /* the limits stay in the unit last read */ }
     }
     return r
@@ -1017,11 +1020,14 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
       </Box>
     )
   }
-  // Under percent the window leads and dollars move below; with no window reading, dollars lead
-  const [lead, ...otherWindows] = s.unit === 'percent' ? s.windows ?? [] : []
+  // Under percent the window leads, limits on or off, and dollars move below; with no window reading, dollars lead
+  const planWindows = s.unit === 'percent' ? s.windows ?? [] : []
+  const lead = planWindows.find(w => w.frac !== null) ?? planWindows[0]
+  const otherWindows = planWindows.filter(w => w !== lead)
   const apiRates = s.plan ? ' at API rates' : ''
   const frac = lead ? lead.frac : s.frac
-  const worst = lead ? Math.max(...(s.windows ?? []).map(w => w.frac)) : frac
+  const fracs = planWindows.flatMap(w => (w.frac === null ? [] : [w.frac]))
+  const worst = lead ? (fracs.length > 0 ? Math.max(...fracs) : null) : frac
   const tone = worst === null ? undefined : toneOf(worst, s.warn_at)
   const badge = worst === null || tone === undefined ? undefined
     : <Text size="footnote" weight="semibold" color={tone}>
@@ -1029,6 +1035,7 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
       </Text>
   const mode = `${s.hard_stop ? 'hard stop' : 'warn only'}, warns at ${s.warn_at}%`
   const resets = (w: PlanWindow) => (w.resets ? ` · resets ${w.resets}` : '')
+  const limitOf = (w: PlanWindow, sep: string) => (w.limit === null ? '' : `${sep}limit ${percent(w.limit)}`)
   const under = [
     lead ? `${usd(s.cost)}${apiRates}` : s.limit ?? '',
     `${int(s.tokens)} tokens`,
@@ -1060,7 +1067,7 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
           <Box alignItems="center" gap={1} flexShrink={1}>
             <Text size="title" weight="bold" tabular>{lead ? percent(lead.used) : usd(s.cost)}</Text>
             {lead
-              ? <Text size="footnote" dimColor>{`of ${WINDOW_NAME[lead.scope]} · limit ${percent(lead.limit)}${resets(lead)}`}</Text>
+              ? <Text size="footnote" dimColor>{`of ${WINDOW_NAME[lead.scope]}${limitOf(lead, ' · ')}${resets(lead)}`}</Text>
               : s.plan && <Text size="footnote" dimColor>at API rates</Text>}
           </Box>
           <Button key="share" label="↑ Share" hotkey="h"
@@ -1070,7 +1077,7 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
           `${pct(frac)} of the ${lead ? WINDOW_NAME[lead.scope] : 'session'} limit`, 8)}
         {otherWindows.map(w => (
           <Text key={`window-${w.scope}`} size="footnote" dimColor>
-            {`${WINDOW_SHORT[w.scope]} ${percent(w.used)}, limit ${percent(w.limit)}${resets(w)}`}
+            {`${WINDOW_SHORT[w.scope]} ${percent(w.used)}${limitOf(w, ', ')}${resets(w)}`}
           </Text>
         ))}
         <Text size="footnote" dimColor>{under}</Text>
