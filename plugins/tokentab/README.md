@@ -9,7 +9,8 @@ the money went, tool by tool. Nothing leaves your machine.
 ```
 
 Start a new session (or run `/reload-plugins`) and it's counting from your first prompt.
-Full steps are under [Install](#install).
+That command runs in Claude Code in a terminal; for the Claude desktop app and other
+routes, see [Install](#install).
 
 [Privacy](https://github.com/getsupertab/claude-marketplace/tree/main/plugins/tokentab#your-data-stays-yours):
 TokenTab collects nothing and sends nothing; what it reads and writes on your machine is
@@ -80,7 +81,7 @@ where TokenTab comes in.
 
 ## Install
 
-In a Claude Code session:
+In Claude Code in a terminal (v2.1.275 or later):
 
 ```
 /plugin install tokentab --marketplace getsupertab/claude-marketplace
@@ -90,12 +91,28 @@ Confirm the source, then pick a scope ("Install for you" puts it in every projec
 Start a new session, or run `/reload-plugins`, and TokenTab is tracking from your first
 prompt.
 
-From a shell instead:
+From a shell instead, with the Claude Code CLI installed:
 
 ```bash
 claude plugin marketplace add getsupertab/claude-marketplace
 claude plugin install tokentab@supertab
 ```
+
+**In the Claude desktop app**, `/plugin` opens the plugins page instead of running the
+command, and the app's terminal has no `claude` command. Use one of these instead:
+
+- **Edit your settings.** Add these two entries to `~/.claude/settings.json` (inside its
+  outer `{ }`), then start a new session:
+
+  ```json
+  "extraKnownMarketplaces": {
+    "supertab": { "source": { "source": "github", "repo": "getsupertab/claude-marketplace" } }
+  },
+  "enabledPlugins": { "tokentab@supertab": true }
+  ```
+
+- **Install the CLI** (`curl -fsSL https://claude.ai/install.sh | bash`), open a new
+  terminal, and run the two shell commands above.
 
 
 **Requirements:** Claude Code 2.1.304 or later, and Python 3 (standard library only) on

@@ -10,9 +10,13 @@ call as it happens and shows you where the money went, tool by tool, with option
 budgets that warn you before you overspend. Free, open source, and nothing leaves your
 machine.
 
+In Claude Code in a terminal (v2.1.275 or later):
+
 ```
 /plugin install tokentab --marketplace getsupertab/claude-marketplace
 ```
+
+In the Claude desktop app, see [In the Claude desktop app](#in-the-claude-desktop-app).
 
 **[Read more about TokenTab →](plugins/tokentab/README.md)**
 
@@ -26,14 +30,14 @@ Each plugin's README covers what it needs after install and how to remove it cle
 
 ## Add the marketplace
 
-The repo is public, so no git credentials are needed. In Claude Code:
+The repo is public, so no git credentials are needed. In Claude Code in a terminal:
 
 ```
 /plugin marketplace add getsupertab/claude-marketplace
 /plugin install <plugin>@supertab
 ```
 
-or from a shell:
+or from a shell, with the Claude Code CLI installed:
 
 ```bash
 claude plugin marketplace add getsupertab/claude-marketplace
@@ -45,6 +49,27 @@ claude plugin install <plugin>@supertab
 
 Claude Code v2.1.275 or later can do both in one step, inside a session:
 `/plugin install <plugin> --marketplace getsupertab/claude-marketplace`.
+
+### In the Claude desktop app
+
+In the desktop app, `/plugin` opens the plugins page instead of running the command, and
+the app's terminal has no `claude` command. Use one of these instead:
+
+- **Edit your settings.** Add these two entries to `~/.claude/settings.json` (inside its
+  outer `{ }`), then start a new session:
+
+  ```json
+  "extraKnownMarketplaces": {
+    "supertab": { "source": { "source": "github", "repo": "getsupertab/claude-marketplace" } }
+  },
+  "enabledPlugins": { "tokentab@supertab": true }
+  ```
+
+- **Install the CLI**, then use the shell commands above in a new terminal:
+
+  ```bash
+  curl -fsSL https://claude.ai/install.sh | bash
+  ```
 
 ## Updates
 
