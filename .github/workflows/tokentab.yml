@@ -3,11 +3,26 @@
 name: TokenTab
 
 on:
+  # Push to main only: a PR branch's pushes already run through pull_request.
   push:
+    branches: [main]
+    paths:
+      - "plugins/tokentab/**"
+      - "dev/**"
+      - ".github/workflows/tokentab.yml"
   pull_request:
+    paths:
+      - "plugins/tokentab/**"
+      - "dev/**"
+      - ".github/workflows/tokentab.yml"
   schedule:
     - cron: "17 6 * * 1"
   workflow_dispatch:
+
+# A newer push to a PR cancels the run it supersedes; every commit on main still runs.
+concurrency:
+  group: tokentab-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
