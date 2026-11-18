@@ -432,6 +432,7 @@ let again = false
 let columns = 60                        // the pane body's width in cells, from the last render
 let waiting = false                     // session.start's open left the pane undrawn: the first prompt opens it
 let showing = false                     // this session's auto-open and clock have started (startShowing)
+let closedByPerson = false              // the person closed the pane: the hint line offers it back
 let measured = false                    // this load has written the usage windows once
 let autoOpenHere: boolean | undefined   // the switch set where /config had no row for it, `$.store`'s AUTO_OPEN
 
@@ -607,8 +608,22 @@ function show($: EngineInterface, v: View): void {
 }
 
 async function openPane($: EngineInterface): Promise<UiOpenResult> {
-  try { return await $.ui.open({ id: PANE, title: TITLE }) }
+  let opened: UiOpenResult
+  try { opened = await $.ui.open({ id: PANE, title: TITLE }) }
   catch (err) { return { isPlaced: false, reason: String(err instanceof Error ? err.message : err) } }
+  if (opened.isPlaced && closedByPerson) {
+    closedByPerson = false
+    $.ui.invalidate('ui.render')
+  }
+  return opened
+}
+
+/** The hint line's reopen button: a press is the person's ask, so the pane is placed at any width. */
+async function reopen($: EngineInterface): Promise<void> {
+  const opened = await openPane($)
+  if (!opened.isPlaced) { $.ui.toast(`TokenTab: the pane did not open (${opened.reason})`); return }
+  if (tick === undefined) startClock($)
+  void refresh($)
 }
 
 let isMac: Promise<boolean> | undefined   // `uname -s` asked at most once a load
@@ -726,6 +741,33 @@ export const register: Register = (on, pluginOptions) => {
     const r = await next(e)
     try { await startShowing($) } catch { /* the pane waits for /tokentab:status */ }
     return r
+  })
+
+  // The person closed the pane with the engine's close mark or ctrl+x x. Claude Code has
+  // no key that brings a closed pane back, so the hint line under the prompt offers it instead.
+  on('ui.close', { id: PANE }, async ($, e, next) => {
+    const r = await next(e)
+    // `claude plugin test` cannot raise a close with origin `person`: checked by hand.
+    if (e.origin.kind === 'person') {
+      closedByPerson = true
+      $.ui.invalidate('ui.render')
+      void refresh($)
+    }
+    return r
+  })
+
+  // Once the person closed the pane, the hint line under the prompt keeps its text and gains
+  // the button that opens the pane again, at its right end. The hint line, not the band above
+  // the prompt: the engine draws a fold mark beside anything in the band.
+  on('ui.render', { component: 'PromptHint' }, ($, e, next) => {
+    if (!closedByPerson) return next(e)
+    const { Box, Text, Button } = $.ui.resolve(e)
+    return (
+      <Box justifyContent="space-between">
+        <Text dimColor>{e.props.hint}</Text>
+        <Button key="reopen" label="▸ TokenTab" onPress={() => { void reopen($) }} />
+      </Box>
+    )
   })
 
   // The cold-cache question, in the band above the prompt.
