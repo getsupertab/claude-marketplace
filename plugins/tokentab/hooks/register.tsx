@@ -711,8 +711,7 @@ export const register: Register = (on, pluginOptions) => {
     const r = await next(e)
     try {
       const data = await dataRoot($)
-      markedId = undefined
-      await markLoaded($, data, await $.session.id())
+      await markLoaded($, data, await sid($))
       // First run: the shipped limits become the user's budget.json. After that only keys
       // a newer version ships are added, the user's values kept.
       const shipped = await $.fs.read(`${$.plugin.root}/tokentab/budget.json`)
@@ -948,7 +947,7 @@ export const register: Register = (on, pluginOptions) => {
     const r = await next(e)
     if (e.event === 'api_request') {
       try {
-        const id = str(e.attributes['session.id']) ?? await $.session.id()
+        const id = str(e.attributes['session.id']) ?? await sid($)
         const ts = e.loggedAt || new Date(await $.clock.now()).toISOString()
         await append($, await dataRoot($), toLine(e, await loadPrices($), id, ts))
         if (tick !== undefined) stale = true   // the clock's next beat redraws, see startClock
