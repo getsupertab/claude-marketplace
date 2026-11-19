@@ -1002,6 +1002,41 @@ test('a prompt from a schedule is never asked about', async ($, on) => {
   expect(seen.sent).toEqual(['scheduled-trigger: tick'])
 })
 
+test('after /clear the cold check and the loaded marker follow the new session id, and an open question is dropped', async ($, on) => {
+  mock.env(on, { HOME: '/home/t' })
+  const fs = new Map<string, string>()
+  on('fs.write', ($, e) => { fs.set(e.path.replace(/\\/g, '/').replace(/^[A-Za-z]:/, ''), e.text); return { value: undefined } })
+  const seen = { sent: [] as string[], checked: [] as string[] }
+  let id = SID
+  mock.clock(on, { now: T0 })
+  on('session.id', () => ({ value: id }))
+  on('session.surfaces', () => ({ value: ['desktop'] }))
+  on('ui.invalidate', () => ({ value: undefined }))
+  on('ui.render', { component: 'AbovePrompt' }, ($, e) => { const { Box } = $.ui.resolve(e); return <Box /> })
+  on('process.run', ($, e) => {
+    const argv = [...e.argv]
+    const out = (stdout: string) => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
+    if (argv.includes('-c')) return out('3\n')
+    const at = argv.indexOf('--cold-check')
+    if (at < 0) return out('{}')
+    seen.checked.push(argv[at + 1]!)
+    // The ended conversation's cache is cold; the new one has made no call yet.
+    return out(JSON.stringify(argv[at + 1] === SID ? { cold: COLD } : {}))
+  })
+  on('prompt.submit', ($, e) => { seen.sent.push(e.text); return { text: e.text } })
+  on('session.end', ($, e) => ({ sessionId: e.sessionId }))
+
+  expect(await $.prompt.submit({ text: 'before', wait: false, origin: { kind: 'composer' } })).toEqual(HELD)
+  expect((await lines($)).length).toBe(2)
+  await $.session.end({ reason: 'clear', sessionId: SID, resume: { id: SID } })
+  id = 'f9e8d7c6-after-clear'
+  expect(await lines($)).toEqual([])
+  expect(await $.prompt.submit({ text: 'after', wait: false, origin: { kind: 'composer' } })).toEqual({ text: 'after' })
+  expect(seen.checked).toEqual([SID, id])
+  expect(seen.sent).toEqual(['after'])
+  expect(fs.get(`${DATA}/state/loaded/${id}`)).toBe('2026-10-15T14:03:11.412Z\n')
+})
+
 test('sending again with the question up is the go-ahead: confirmed, sent, band closed', async ($, on) => {
   const seen = coldWorld(on, COLD)
   await $.prompt.submit({ text: 'go on', wait: false, origin: { kind: 'composer' } })

@@ -423,7 +423,7 @@ let report: Report | undefined          // the last `--report`; a reload starts 
 let error: string | undefined           // the last refresh's failure, drawn above the tab
 let options: Options | undefined        // the last budget.json read
 let pageOpenedAt: number | undefined    // ms; the page's data file is written while within PAGE_MS
-let sessionId: string | undefined
+let markedId: string | undefined        // the session id the loaded marker was last written for
 let tick: Timer | undefined             // set while this load draws anything (the clock's beat)
 let beats = 0                           // beats since the clock started; every REDRAW_MS worth redraws
 let stale = false                       // a ledger line written since the last redraw: the next beat redraws
@@ -444,8 +444,18 @@ const optionAutoOpen = () => opts.autoOpen !== false
 const autoOpen = () => autoOpenHere ?? optionAutoOpen()
 const keepAutoOpen = ($: EngineInterface, value: boolean) => $.store.set(AUTO_OPEN, { value, over: optionAutoOpen() })
 
+// Never cached: after a `/clear` or a resume the process goes on under another id and no
+// `session.start` fires, so a kept id would point the cold check and the report at the
+// conversation that ended.
 async function sid($: EngineInterface): Promise<string> {
-  return (sessionId ??= await $.session.id())
+  return $.session.id()
+}
+
+/** The loaded marker scripts/loaded-check.sh looks for on the first prompt, once per id. */
+async function markLoaded($: EngineInterface, data: string, id: string): Promise<void> {
+  if (markedId === id) return
+  await $.fs.write(`${data}/state/loaded/${id}`, new Date(await $.clock.now()).toISOString() + '\n')
+  markedId = id
 }
 
 // The launchers tried in order, the same as scripts/guard.sh. Each must say it is Python 3,
@@ -703,8 +713,8 @@ export const register: Register = (on, pluginOptions) => {
     const r = await next(e)
     try {
       const data = await dataRoot($)
-      // The loaded marker: scripts/loaded-check.sh looks for it on the first prompt.
-      await $.fs.write(`${data}/state/loaded/${await $.session.id()}`, new Date(await $.clock.now()).toISOString() + '\n')
+      markedId = undefined
+      await markLoaded($, data, await $.session.id())
       // First run: the shipped limits become the user's budget.json. After that only keys
       // a newer version ships are added, the user's values kept.
       const shipped = await $.fs.read(`${$.plugin.root}/tokentab/budget.json`)
@@ -722,7 +732,6 @@ export const register: Register = (on, pluginOptions) => {
     report = undefined
     error = undefined
     options = undefined
-    sessionId = undefined
     waiting = false
     try {
       const kept = await $.store.get(AUTO_OPEN) as { value?: unknown, over?: unknown } | undefined
@@ -742,6 +751,21 @@ export const register: Register = (on, pluginOptions) => {
     try { await startShowing($) } catch { /* the pane waits for /tokentab:status */ }
     return r
   })
+
+  // A `/clear` or a resume ends the conversation, but the process and this load go on
+  // under a new session id. What belonged to the old one goes with it: a pending cold-cache
+  // question, the windows written once per session, a status page's live window.
+  on('session.end', async ($, e, next) => {
+    const r = await next(e)
+    if (e.reason === 'clear' || e.reason === 'resume') {
+      coldAsk = undefined
+      measured = false
+      pageOpenedAt = undefined
+      if (tick !== undefined) stale = true
+      $.ui.invalidate('ui.render')
+    }
+    return r
+  }).catch(($, e, next) => next(e))
 
   // The person closed the pane with the engine's close mark or ctrl+x x. Claude Code has
   // no key that brings a closed pane back, so the hint line under the prompt offers it instead.
@@ -888,6 +912,8 @@ export const register: Register = (on, pluginOptions) => {
       waiting = false
       if (!(await isPlaced($)) && (await openPane($)).isPlaced) void refresh($)
     }
+    // A `/clear` starts a session no `session.start` marked; this runs before the shell gate.
+    try { await markLoaded($, await dataRoot($), await sid($)) } catch { /* the gate then speaks once */ }
     if (!typed(e.origin.kind) || e.text.trim() === '' || resending) return next(e)
     if (coldAsk) { await sentAgain($); return next(e) }
     const cold = await coldCheck($)
