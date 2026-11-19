@@ -7,7 +7,7 @@ description: Summarise what this Claude Code session has spent against its budge
 
 The live figures are in the TokenTab pane beside the chat: `/tokentab:status` opens
 it (in a narrow terminal the numbers are on TokenTab's status line instead), and its
-"open in browser" button writes the status page (where the money went as a flow
+"Open full report" button writes the status page (where the money went as a flow
 diagram, cost over time, every figure) and opens it. This skill is for answering in
 words.
 

@@ -400,11 +400,12 @@ test('an interactive session opens the pane and draws the Spend tab', async ($, 
   expect(ui.status).toEqual([undefined])
 
   const folded = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
-  // the tab row: Spend is the primary one, then Budget and the browser button; then the details toggle
+  // the tab row: Spend is the primary one, then Budget and "Open full report"; then the details toggle
   expect(elements(folded, 'Button').map(b => [b.key, b.variant])).toEqual([
     ['tab-spend', 'primary'], ['tab-budget', 'secondary'], ['open-browser', undefined], ['share', undefined],
     ['details-toggle', undefined], ['sessions-toggle', undefined],
   ])
+  expect(elements(folded, 'Button').slice(0, 3).map(b => b.label)).toEqual(['Spend', 'Budget', 'Open full report ↗'])
   // no keyboard shortcuts: Tab or the arrows and Enter reach every Button (Kate, 2026-11-17)
   expect(elements(folded, 'Button').filter(b => b.hotkey !== undefined)).toEqual([])
   // the breakdown starts folded: the toggle shows, the rate table and the tools do not
@@ -664,7 +665,7 @@ test('/tokentab:status (the skill) is answered by the hook: the pane opens, the 
   const opens = ui.opens
   const r = await $.command.run({ command: 'tokentab:status', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 200 } })
   expect(ui.opens).toBe(opens + 1)
-  expect(r.text).toBe(`${STATUS}\nThe TokenTab pane is open beside the chat; "open in browser" there writes the status page.`)
+  expect(r.text).toBe(`${STATUS}\nThe TokenTab pane is open beside the chat; "Open full report" there writes the status page.`)
   expect(r.context).toEqual([`TokenTab, this session's figures as of now:\n${liveLines(ONCE).map(stripAnsi).join('\n')}`])
 })
 
@@ -733,7 +734,7 @@ test('after /clear, before its first prompt, the redraw writes no page data for 
   ])
 })
 
-/** Presses "open in browser" on a machine whose `uname -s` prints `uname`; the runs and toasts after. */
+/** Presses "Open full report" on a machine whose `uname -s` prints `uname`; the runs and toasts after. */
 async function openOn($: Engine, on: On, env: Record<string, string>, uname: string, openers?: Record<string, number>) {
   mock.env(on, env)
   const clock = mock.clock(on, { now: T0 })
