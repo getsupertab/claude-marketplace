@@ -29,8 +29,11 @@ function world(on: On, initial: Record<string, string>, placed = { is: true }, r
   on('fs.read', ($, e) => { const k = find(e.path); return k ? { value: fs.get(k)! } : { deny: `ENOENT: ${e.path}` } })
   on('fs.write', ($, e) => { fs.set(posix(e.path), e.text); return { value: undefined } })
   on('fs.exists', ($, e) => ({ value: find(e.path) !== undefined }))
-  on('session.id', () => ({ value: SID }))
+  // `session.id` is what `$.session.id()` answers: a test sets it to stand in for a /clear or a resume
+  const session = { id: SID }
+  on('session.id', () => ({ value: session.id }))
   on('session.start', ($, e) => ({ cwd: e.cwd }))
+  on('session.end', ($, e) => ({ sessionId: e.sessionId }))
   on('telemetry.log', { to: 'collector' }, () => ({ value: undefined }))
   const ui: Ui = {
     opens: 0, commands: [], status: [], invalidates: 0, runs: [], toasts: [], config: [], store: new Map(), rows: ['tokentab.autoOpen'], surfaces: [],
@@ -83,7 +86,14 @@ function world(on: On, initial: Record<string, string>, placed = { is: true }, r
     }
     return { value: { exitCode, stdout, stderr, isStdoutTruncated: false, isStderrTruncated: false } }
   })
-  return { fs, ui }
+  return { fs, ui, session }
+}
+
+const NEW_SID = 'f9e8d7c6-after-clear'
+// What the engine does on /clear (or a resume): the old conversation ends, the process goes on under another id.
+async function clear($: Engine, session: { id: string }, reason: 'clear' | 'resume' = 'clear', to = NEW_SID) {
+  await $.session.end({ reason, sessionId: session.id, resume: { id: session.id } })
+  session.id = to
 }
 
 // What `tokentab.py --once` prints (cut down): the header, a dim line, a bold total, a
@@ -684,6 +694,43 @@ test('the open-in-browser button writes the page for this session, opens it, and
   ])
 })
 
+test('resuming a conversation whose status page was opened in the last 30 minutes keeps that page live', async ($, on) => {
+  mock.env(on, { HOME: '/home/t' })
+  const clock = mock.clock(on, { now: T0 })
+  const { ui, session } = world(on, FILES)
+  on('prompt.submit', ($, e) => ({ text: e.text }))
+  ui.store.set(`pageOpenedAt:${NEW_SID}`, T0 - 10 * 60_000)
+  await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
+  await clear($, session, 'resume')
+  await $.prompt.submit({ text: 'hello', wait: false, origin: { kind: 'composer' } })
+  const before = ui.runs.length
+  await $.telemetry.log(request({}))
+  await clock.advance(1000)
+  expect(ui.runs.slice(before).map(a => a[1]!.split('/').pop() + ' ' + a.slice(2).join(' '))).toEqual([
+    `tokentab.py --report --session ${NEW_SID}`,
+    `sankey.py --session ${NEW_SID} --push ${DATA}/status/${NEW_SID}.js`,
+  ])
+})
+
+test('after /clear, before its first prompt, the redraw writes no page data for the new conversation', async ($, on) => {
+  mock.env(on, { HOME: '/home/t' })
+  const clock = mock.clock(on, { now: T0 })
+  const { ui, session } = world(on, FILES)
+  await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
+  await $.ui.press(press('open-browser'))
+  await clear($, session)
+  const before = ui.runs.length
+  await $.telemetry.log(request({}))
+  await clock.advance(1000)
+  expect(ui.runs.slice(before).map(a => a[1]!.split('/').pop() + ' ' + a.slice(2).join(' '))).toEqual([
+    `tokentab.py --report --session ${NEW_SID}`,
+  ])
+})
+
 /** Presses "open in browser" on a machine whose `uname -s` prints `uname`; the runs and toasts after. */
 async function openOn($: Engine, on: On, env: Record<string, string>, uname: string, openers?: Record<string, number>) {
   mock.env(on, env)
@@ -820,6 +867,40 @@ test('session.measure records the usage windows; the Budget tab then shows the p
   const tree = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   expect(elements(tree, 'Input').map(i => i.key)).toEqual(['b-five_hour_limit_percent', 'b-weekly_limit_percent', 'b-warn_at_percent'])
   expect(elements(tree, 'Button').some(b => b.key === 'b-limit_unit')).toBe(false)
+})
+
+test('after /clear the next measurement writes the windows for the new id even when they did not move', async ($, on) => {
+  mock.env(on, { HOME: '/home/t' })
+  const clock = mock.clock(on, { now: T0 })
+  const { fs, session } = world(on, FILES)
+  on('session.measure', ($, e) => ({ changed: e.changed }))
+  await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  const rateLimits = [{ kind: 'five_hour', percentUsed: 42 }]
+  await $.session.measure({ context: { window: 200000 }, rateLimits, changed: ['rateLimits'] })
+  await clear($, session)
+  await $.session.measure({ context: { window: 200000 }, rateLimits, changed: ['context'] })
+  expect(JSON.parse(fs.get(`${DATA}/state/windows/${NEW_SID}.json`)!).windows).toEqual([{ kind: 'five_hour', percentUsed: 42, resetsAt: null }])
+})
+
+test('after /clear the first prompt carries the last usage windows over to the new id, so the limits stay in percent', async ($, on) => {
+  mock.env(on, { HOME: '/home/t' })
+  const clock = mock.clock(on, { now: T0 })
+  const { fs, session } = world(on, FILES)
+  on('session.measure', ($, e) => ({ changed: e.changed }))
+  on('prompt.submit', ($, e) => ({ text: e.text }))
+  await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  const rateLimits = [{ kind: 'five_hour', percentUsed: 42, resetsAt: '2026-10-15T18:00:00Z' }]
+  await $.session.measure({ context: { window: 200000 }, rateLimits, changed: ['rateLimits'] })
+  await clear($, session)
+  expect(fs.get(`${DATA}/state/windows/${NEW_SID}.json`)).toBeUndefined()
+  await $.prompt.submit({ text: 'hello', wait: false, origin: { kind: 'composer' } })
+  expect(fs.get(`${DATA}/state/windows/${NEW_SID}.json`)).toBe(fs.get(`${DATA}/state/windows/${SID}.json`))
+  await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
+  await $.ui.press(press('tab-budget'))
+  const tree = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
+  expect(elements(tree, 'Input').map(i => i.key)).toContain('b-five_hour_limit_percent')
 })
 
 test('where /config has no row for it (Desktop), the auto-open switch is kept in the store until /config changes it', async ($, on) => {
@@ -1000,6 +1081,71 @@ test('a prompt from a schedule is never asked about', async ($, on) => {
   const seen = coldWorld(on, COLD)
   await $.prompt.submit({ text: 'tick', wait: false, origin: { kind: 'scheduled-trigger' } })
   expect(seen.sent).toEqual(['scheduled-trigger: tick'])
+})
+
+test('after /clear the cold check and the loaded marker follow the new session id, and an open question is dropped', async ($, on) => {
+  mock.env(on, { HOME: '/home/t' })
+  const fs = new Map<string, string>()
+  on('fs.write', ($, e) => { fs.set(e.path.replace(/\\/g, '/').replace(/^[A-Za-z]:/, ''), e.text); return { value: undefined } })
+  const seen = { sent: [] as string[], checked: [] as string[] }
+  let id = SID
+  mock.clock(on, { now: T0 })
+  on('session.id', () => ({ value: id }))
+  on('session.surfaces', () => ({ value: ['desktop'] }))
+  on('ui.invalidate', () => ({ value: undefined }))
+  on('ui.render', { component: 'AbovePrompt' }, ($, e) => { const { Box } = $.ui.resolve(e); return <Box /> })
+  on('process.run', ($, e) => {
+    const argv = [...e.argv]
+    const out = (stdout: string) => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
+    if (argv.includes('-c')) return out('3\n')
+    const at = argv.indexOf('--cold-check')
+    if (at < 0) return out('{}')
+    seen.checked.push(argv[at + 1]!)
+    // The ended conversation's cache is cold; the new one has made no call yet.
+    return out(JSON.stringify(argv[at + 1] === SID ? { cold: COLD } : {}))
+  })
+  on('prompt.submit', ($, e) => { seen.sent.push(e.text); return { text: e.text } })
+  on('session.end', ($, e) => ({ sessionId: e.sessionId }))
+
+  expect(await $.prompt.submit({ text: 'before', wait: false, origin: { kind: 'composer' } })).toEqual(HELD)
+  expect((await lines($)).length).toBe(2)
+  await $.session.end({ reason: 'clear', sessionId: SID, resume: { id: SID } })
+  id = 'f9e8d7c6-after-clear'
+  expect(await lines($)).toEqual([])
+  expect(await $.prompt.submit({ text: 'after', wait: false, origin: { kind: 'composer' } })).toEqual({ text: 'after' })
+  expect(seen.checked).toEqual([SID, id])
+  expect(seen.sent).toEqual(['after'])
+  expect(fs.get(`${DATA}/state/loaded/${id}`)).toBe('2026-10-15T14:03:11.412Z\n')
+})
+
+test('an end that is not a /clear or a resume leaves the open question alone', async ($, on) => {
+  coldWorld(on, COLD)
+  on('session.end', ($, e) => ({ sessionId: e.sessionId }))
+  await $.prompt.submit({ text: 'x', wait: false, origin: { kind: 'composer' } })
+  for (const reason of ['prompt_input_exit', 'logout', 'other'] as const) {
+    await $.session.end({ reason, sessionId: SID, resume: { id: SID } })
+    expect((await lines($)).length).toBe(2)
+  }
+})
+
+test('a /clear that lands while the cold check runs leaves the new conversation without the old question', async ($, on) => {
+  const seen = { sent: [] as string[] }
+  mock.clock(on, { now: T0 })
+  on('session.id', () => ({ value: SID }))
+  on('session.surfaces', () => ({ value: ['desktop'] }))
+  on('ui.invalidate', () => ({ value: undefined }))
+  on('ui.render', { component: 'AbovePrompt' }, ($, e) => { const { Box } = $.ui.resolve(e); return <Box /> })
+  on('session.end', ($, e) => ({ sessionId: e.sessionId }))
+  on('process.run', async (_, e) => {
+    const out = (stdout: string) => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
+    if (e.argv.includes('-c')) return out('3\n')
+    if (e.argv.includes('--cold-check')) await $.session.end({ reason: 'clear', sessionId: SID, resume: { id: SID } })
+    return out(JSON.stringify({ cold: COLD }))
+  })
+  on('prompt.submit', ($, e) => { seen.sent.push(e.text); return { text: e.text } })
+  expect(await $.prompt.submit({ text: 'raced', wait: false, origin: { kind: 'composer' } })).toEqual({ text: 'raced' })
+  expect(await lines($)).toEqual([])
+  expect(seen.sent).toEqual(['raced'])
 })
 
 test('sending again with the question up is the go-ahead: confirmed, sent, band closed', async ($, on) => {

@@ -197,6 +197,8 @@ export const HELD = 'TokenTab: held back, the prompt cache has expired. Continue
 // person (its 10 s budget runs on), so the prompt is dropped and Continue sends it again.
 type ColdAsk = { text: string, prompt: string, attachments: PromptSubmitInput['attachments'], failed?: string }
 let coldAsk: ColdAsk | undefined
+// Counts /clears and resumes: an answer that arrives after one belongs to the ended conversation.
+let conversation = 0
 // Continue's resend passes unchecked: Desktop hands it back as typed, not as the plugin's.
 let resending = false
 
@@ -215,7 +217,9 @@ async function answerCold($: EngineInterface, ask: ColdAsk, send: boolean): Prom
   coldAsk = undefined
   $.ui.invalidate('ui.render')
   if (!send) return
+  const at = conversation
   const failed = (step: string, err: unknown) => {
+    if (conversation !== at) return
     coldAsk = { ...ask, failed: `${step}: ${err instanceof Error ? err.message : String(err)}` }
     $.ui.invalidate('ui.render')
   }
@@ -423,7 +427,7 @@ let report: Report | undefined          // the last `--report`; a reload starts 
 let error: string | undefined           // the last refresh's failure, drawn above the tab
 let options: Options | undefined        // the last budget.json read
 let pageOpenedAt: number | undefined    // ms; the page's data file is written while within PAGE_MS
-let sessionId: string | undefined
+let markedId: string | undefined        // the session id the loaded marker was last written for
 let tick: Timer | undefined             // set while this load draws anything (the clock's beat)
 let beats = 0                           // beats since the clock started; every REDRAW_MS worth redraws
 let stale = false                       // a ledger line written since the last redraw: the next beat redraws
@@ -434,6 +438,7 @@ let waiting = false                     // session.start's open left the pane un
 let showing = false                     // this session's auto-open and clock have started (startShowing)
 let closedByPerson = false              // the person closed the pane: the hint line offers it back
 let measured = false                    // this load has written the usage windows once
+let lastWindows: string | undefined     // the last windows file written, for a new id after /clear
 let autoOpenHere: boolean | undefined   // the switch set where /config had no row for it, `$.store`'s AUTO_OPEN
 
 // An SDK host (the Desktop app, `claude -p`) lists no plugin's /config row, so there the
@@ -444,8 +449,16 @@ const optionAutoOpen = () => opts.autoOpen !== false
 const autoOpen = () => autoOpenHere ?? optionAutoOpen()
 const keepAutoOpen = ($: EngineInterface, value: boolean) => $.store.set(AUTO_OPEN, { value, over: optionAutoOpen() })
 
+// Not cached: /clear and resume change the id without a session.start.
 async function sid($: EngineInterface): Promise<string> {
-  return (sessionId ??= await $.session.id())
+  return $.session.id()
+}
+
+/** The loaded marker scripts/loaded-check.sh looks for on the first prompt, once per id. */
+async function markLoaded($: EngineInterface, data: string, id: string): Promise<void> {
+  if (markedId === id) return
+  await $.fs.write(`${data}/state/loaded/${id}`, new Date(await $.clock.now()).toISOString() + '\n')
+  markedId = id
 }
 
 // The launchers tried in order, the same as scripts/guard.sh. Each must say it is Python 3,
@@ -703,8 +716,7 @@ export const register: Register = (on, pluginOptions) => {
     const r = await next(e)
     try {
       const data = await dataRoot($)
-      // The loaded marker: scripts/loaded-check.sh looks for it on the first prompt.
-      await $.fs.write(`${data}/state/loaded/${await $.session.id()}`, new Date(await $.clock.now()).toISOString() + '\n')
+      await markLoaded($, data, await sid($))
       // First run: the shipped limits become the user's budget.json. After that only keys
       // a newer version ships are added, the user's values kept.
       const shipped = await $.fs.read(`${$.plugin.root}/tokentab/budget.json`)
@@ -722,7 +734,6 @@ export const register: Register = (on, pluginOptions) => {
     report = undefined
     error = undefined
     options = undefined
-    sessionId = undefined
     waiting = false
     try {
       const kept = await $.store.get(AUTO_OPEN) as { value?: unknown, over?: unknown } | undefined
@@ -740,6 +751,23 @@ export const register: Register = (on, pluginOptions) => {
   on('session.attach', async ($, e, next) => {
     const r = await next(e)
     try { await startShowing($) } catch { /* the pane waits for /tokentab:status */ }
+    return r
+  })
+
+  // /clear and resume go on under a new id: drop what belonged to the old conversation.
+  on('session.end', async ($, e, next) => {
+    const r = await next(e)
+    // No `.catch` fallback: it would run the end step a second time within its short bound.
+    try {
+      if (e.reason === 'clear' || e.reason === 'resume') {
+        conversation++
+        coldAsk = undefined
+        measured = false
+        pageOpenedAt = undefined
+        if (tick !== undefined) stale = true
+        $.ui.invalidate('ui.render')
+      }
+    } catch { /* the next prompt still reads the new id */ }
     return r
   })
 
@@ -888,10 +916,26 @@ export const register: Register = (on, pluginOptions) => {
       waiting = false
       if (!(await isPlaced($)) && (await openPane($)).isPlaced) void refresh($)
     }
+    // A `/clear` starts a session no `session.start` marked; this runs before the shell gate.
+    // Its windows are the last reading's until the engine measures again, so the limits stay in percent.
+    try {
+      const id = await sid($)
+      if (markedId !== id) {
+        // A resumed conversation's status page may still be inside its live window.
+        try { pageOpenedAt = num(await $.store.get(`pageOpenedAt:${id}`)) || undefined } catch { /* none */ }
+        const data = await dataRoot($)
+        await markLoaded($, data, id)
+        if (lastWindows !== undefined) {
+          await $.fs.write(`${data}/state/windows/${id}.json`, lastWindows)
+          if (tick !== undefined) stale = true
+        }
+      }
+    } catch { /* the gate then speaks once */ }
     if (!typed(e.origin.kind) || e.text.trim() === '' || resending) return next(e)
     if (coldAsk) { await sentAgain($); return next(e) }
+    const at = conversation
     const cold = await coldCheck($)
-    if (cold) {
+    if (cold && conversation === at) {
       coldAsk = { text: cold, prompt: e.text, attachments: e.attachments }
       $.ui.invalidate('ui.render')
       return { drop: HELD }
@@ -910,9 +954,9 @@ export const register: Register = (on, pluginOptions) => {
       try {
         const windows = e.rateLimits.map(w => ({ kind: w.kind, percentUsed: w.percentUsed, resetsAt: w.resetsAt ?? null }))
         const data = await dataRoot($), at = new Date(await $.clock.now()).toISOString()
-        await $.fs.write(`${data}/state/windows/${await sid($)}.json`, JSON.stringify({ at, windows }) + '\n')
-        await $.fs.write(`${data}/state/rate_limits.json`,
-          JSON.stringify({ at, windows }) + '\n')
+        lastWindows = JSON.stringify({ at, windows }) + '\n'
+        await $.fs.write(`${data}/state/windows/${await sid($)}.json`, lastWindows)
+        await $.fs.write(`${data}/state/rate_limits.json`, lastWindows)
         // A first reading or a new login can change the unit: redraw now, not on the next 30 s beat
         if (tick !== undefined) stale = true
       } catch { /* the limits stay in the unit last read */ }
@@ -926,7 +970,7 @@ export const register: Register = (on, pluginOptions) => {
     const r = await next(e)
     if (e.event === 'api_request') {
       try {
-        const id = str(e.attributes['session.id']) ?? await $.session.id()
+        const id = str(e.attributes['session.id']) ?? await sid($)
         const ts = e.loggedAt || new Date(await $.clock.now()).toISOString()
         await append($, await dataRoot($), toLine(e, await loadPrices($), id, ts))
         if (tick !== undefined) stale = true   // the clock's next beat redraws, see startClock
