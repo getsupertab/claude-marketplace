@@ -714,6 +714,23 @@ test('resuming a conversation whose status page was opened in the last 30 minute
   ])
 })
 
+test('after /clear, before its first prompt, the redraw writes no page data for the new conversation', async ($, on) => {
+  mock.env(on, { HOME: '/home/t' })
+  const clock = mock.clock(on, { now: T0 })
+  const { ui, session } = world(on, FILES)
+  await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
+  await $.ui.press(press('open-browser'))
+  await clear($, session)
+  const before = ui.runs.length
+  await $.telemetry.log(request({}))
+  await clock.advance(1000)
+  expect(ui.runs.slice(before).map(a => a[1]!.split('/').pop() + ' ' + a.slice(2).join(' '))).toEqual([
+    `tokentab.py --report --session ${NEW_SID}`,
+  ])
+})
+
 /** Presses "open in browser" on a machine whose `uname -s` prints `uname`; the runs and toasts after. */
 async function openOn($: Engine, on: On, env: Record<string, string>, uname: string, openers?: Record<string, number>) {
   mock.env(on, env)
@@ -850,6 +867,20 @@ test('session.measure records the usage windows; the Budget tab then shows the p
   const tree = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   expect(elements(tree, 'Input').map(i => i.key)).toEqual(['b-five_hour_limit_percent', 'b-weekly_limit_percent', 'b-warn_at_percent'])
   expect(elements(tree, 'Button').some(b => b.key === 'b-limit_unit')).toBe(false)
+})
+
+test('after /clear the next measurement writes the windows for the new id even when they did not move', async ($, on) => {
+  mock.env(on, { HOME: '/home/t' })
+  const clock = mock.clock(on, { now: T0 })
+  const { fs, session } = world(on, FILES)
+  on('session.measure', ($, e) => ({ changed: e.changed }))
+  await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  const rateLimits = [{ kind: 'five_hour', percentUsed: 42 }]
+  await $.session.measure({ context: { window: 200000 }, rateLimits, changed: ['rateLimits'] })
+  await clear($, session)
+  await $.session.measure({ context: { window: 200000 }, rateLimits, changed: ['context'] })
+  expect(JSON.parse(fs.get(`${DATA}/state/windows/${NEW_SID}.json`)!).windows).toEqual([{ kind: 'five_hour', percentUsed: 42, resetsAt: null }])
 })
 
 test('after /clear the first prompt carries the last usage windows over to the new id, so the limits stay in percent', async ($, on) => {
@@ -1085,6 +1116,16 @@ test('after /clear the cold check and the loaded marker follow the new session i
   expect(seen.checked).toEqual([SID, id])
   expect(seen.sent).toEqual(['after'])
   expect(fs.get(`${DATA}/state/loaded/${id}`)).toBe('2026-10-15T14:03:11.412Z\n')
+})
+
+test('an end that is not a /clear or a resume leaves the open question alone', async ($, on) => {
+  coldWorld(on, COLD)
+  on('session.end', ($, e) => ({ sessionId: e.sessionId }))
+  await $.prompt.submit({ text: 'x', wait: false, origin: { kind: 'composer' } })
+  for (const reason of ['prompt_input_exit', 'logout', 'other'] as const) {
+    await $.session.end({ reason, sessionId: SID, resume: { id: SID } })
+    expect((await lines($)).length).toBe(2)
+  }
 })
 
 test('a /clear that lands while the cold check runs leaves the new conversation without the old question', async ($, on) => {
