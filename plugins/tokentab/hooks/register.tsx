@@ -916,6 +916,8 @@ export const register: Register = (on, pluginOptions) => {
     try {
       const id = await sid($)
       if (markedId !== id) {
+        // A resumed conversation's status page may still be inside its live window.
+        try { pageOpenedAt = num(await $.store.get(`pageOpenedAt:${id}`)) || undefined } catch { /* none */ }
         const data = await dataRoot($)
         await markLoaded($, data, id)
         if (lastWindows !== undefined) {

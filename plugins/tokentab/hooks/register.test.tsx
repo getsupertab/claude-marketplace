@@ -694,6 +694,26 @@ test('the open-in-browser button writes the page for this session, opens it, and
   ])
 })
 
+test('resuming a conversation whose status page was opened in the last 30 minutes keeps that page live', async ($, on) => {
+  mock.env(on, { HOME: '/home/t' })
+  const clock = mock.clock(on, { now: T0 })
+  const { ui, session } = world(on, FILES)
+  on('prompt.submit', ($, e) => ({ text: e.text }))
+  ui.store.set(`pageOpenedAt:${NEW_SID}`, T0 - 10 * 60_000)
+  await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
+  await clear($, session, 'resume')
+  await $.prompt.submit({ text: 'hello', wait: false, origin: { kind: 'composer' } })
+  const before = ui.runs.length
+  await $.telemetry.log(request({}))
+  await clock.advance(1000)
+  expect(ui.runs.slice(before).map(a => a[1]!.split('/').pop() + ' ' + a.slice(2).join(' '))).toEqual([
+    `tokentab.py --report --session ${NEW_SID}`,
+    `sankey.py --session ${NEW_SID} --push ${DATA}/status/${NEW_SID}.js`,
+  ])
+})
+
 /** Presses "open in browser" on a machine whose `uname -s` prints `uname`; the runs and toasts after. */
 async function openOn($: Engine, on: On, env: Record<string, string>, uname: string, openers?: Record<string, number>) {
   mock.env(on, env)
