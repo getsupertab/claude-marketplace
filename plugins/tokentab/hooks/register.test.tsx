@@ -1193,3 +1193,57 @@ test('an empty prompt is never held', async ($, on) => {
   expect(await $.prompt.submit({ text: ' ', wait: false, origin: { kind: 'sdk' } })).toEqual({ text: ' ' })
   expect(seen.confirms).toBe(0)
 })
+
+// A busy month: 150 sessions with long titles and 14 tools, the shape of Jannes' pane that froze
+// Desktop on 2026-11-19 (SESSIONS and DETAILS open, a 172,604-char tree).
+const LONG = 'Investigate why the Desktop pane freezes when both folds are open with many sessions this month'
+const BUSY: Report = {
+  ...REPORT,
+  sessions: Array.from({ length: 150 }, (_, i) => ({
+    sid: i === 140 ? SID : `sid-${String(i).padStart(4, '0')}-0000-0000-0000-000000000000`,
+    name: `#${i} ${LONG}`, detail: i % 3 === 0 ? 'deleted' : undefined,
+    cost: 150 - i, share: (150 - i) / 11325,
+  })),
+  tools: Array.from({ length: 14 }, (_, i) => ({
+    name: `mcp__1a59c906-04da-521d-bda7-7f71b9f9e01c__tool_${i}`, calls: 20 - i, cost: 1 - i / 20, ask: 0.5, ctx: 0.3, read: 0.2, ctx_tokens: 12000,
+    children: [{ name: 'sub', calls: 2, cost: 0.1, ask: 0.05, ctx: 0.03, read: 0.02, ctx_tokens: 900, children: [] }],
+  })),
+}
+
+// Desktop drops a pane tree somewhere above 128 KiB (unproven; the API caps an Svg at 131,072
+// chars). Before the cap this month's 150 rows made 142,870 with SESSIONS open and 191,549 with
+// DETAILS open too; 80,000 leaves the tools room to grow and stays well under that.
+const TREE_MAX = 80_000
+
+test('a busy month: the pane lists the ten costliest sessions and this one, counts the rest, and stays small', async ($, on) => {
+  mock.env(on, { HOME: '/home/t' })
+  const clock = mock.clock(on, { now: T0 })
+  const { ui } = world(on, FILES, { is: true }, { value: BUSY })
+  await $.session.start({ cwd: '/w', surface: 'desktop', isInteractive: true })
+  await clock.settle()
+  const render = () => $.ui.render({ surface: 'desktop', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
+  await render()
+  await $.ui.press(press('sessions-toggle', 'desktop'))
+  await $.ui.press(press('details-toggle', 'desktop'))
+  const tree = await render()
+  const size = JSON.stringify(tree).length
+  expect(size).toBeLessThan(TREE_MAX)
+  const t = texts(tree)
+  // rows: the ten costliest, then this session (#140, grey, bold), then the count of the rest
+  // (titles past 80 chars are clipped: Desktop would truncate them to the pane's width anyway)
+  const rows = t.filter(x => x.text.startsWith('#'))
+  expect(rows).toHaveLength(11)
+  expect(rows.map(x => x.text)).toEqual([...Array(10).keys(), 140].map(i => `${`#${i} ${LONG}`.slice(0, 79)}…`))
+  expect(rows.map(x => x.props.bold)).toEqual([...Array(10).fill(false), true])
+  expect(elements(tree, 'Button').find(b => b.key === 'sessions-more')).toMatchObject({ label: '139 more in the full report ↗', plain: true, dimColor: true })
+  // the bar keeps every session: ten coloured, the other 140 together in grey
+  const shares = elements(tree, 'Svg').find(s => String(s.alt).startsWith('this month by session'))!
+  const others = BUSY.sessions!.slice(10).reduce((n, x) => n + x.share, 0)
+  expect(shares.alt).toMatch(new RegExp(`, others ${pct(others)}$`))
+  expect(shares.source).toBe(barSvg(BUSY.sessions!.slice(0, 10).map((x, i) => ({ series: `session_${i + 1}`, frac: x.share }))
+    .concat([{ series: 'session_other', frac: others }]), 6))
+  // the count row opens the full report, which lists them all
+  const runs = ui.runs.length
+  await $.ui.press(press('sessions-more', 'desktop'))
+  expect(ui.runs.slice(runs).map(a => a[0] === 'python3' ? a[1]!.split('/').pop() : a[0])).toEqual(['sankey.py', 'open'])
+})
