@@ -150,8 +150,9 @@ The pane has two tabs:
 - **Spend**: this session's cost, with a bar against its limit; on a percent
   budget it leads with the plan's usage windows. On Pro or Max, dollars are what the
   session would cost at API rates. "Details" shows cost by type (input, cache
-  writes, cache reads, output, thinking), cost per tool, and every session today and
-  this month. "Share" shows the session as a card to copy, or as a page in the
+  writes, cache reads, output, thinking) and cost per tool. "Sessions" shows today and
+  this month across every session, with this month's ten costliest sessions (the full
+  report lists them all). "Share" shows the session as a card to copy, or as a page in the
   browser with an image to download and links to post it on X or LinkedIn.
 - **Settings**: your limits, editable in place, and the switch that opens the pane
   at session start.
