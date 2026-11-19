@@ -20,7 +20,7 @@ import { TOKENS } from './tokens'
 // Under `claude -p`, or with no surface, nothing visual happens and the ledger is
 // written as before.
 //
-// The status page. "open in browser" writes `status/<session>.html` and opens it; for
+// The status page. "Open full report" writes `status/<session>.html` and opens it; for
 // 30 minutes after, every redraw also writes its data file beside it (`sankey.py --push`),
 // which the open page loads as a script and swaps in place: live without a server.
 
@@ -826,7 +826,7 @@ export const register: Register = (on, pluginOptions) => {
   // Two tabs over one report (Spend) and budget.json (Budget), the same tree on
   // every surface: the terminal ignores `size`, `weight` and `mono` and is monospaced
   // anyway; the bars are an Svg where the surface draws one and block characters in the
-  // terminal. Only a Button takes a press, so the tabs and "open in browser" are Buttons.
+  // terminal. Only a Button takes a press, so the tabs and "Open full report" are Buttons.
   on('ui.render', { component: 'Pane', requestId: PANE }, ($, e) => {
     const { Box, Text, Button } = $.ui.resolve(e)
     columns = e.props.bodyColumns
@@ -841,7 +841,7 @@ export const register: Register = (on, pluginOptions) => {
           <Button key={`tab-${t.view}`} label={t.label} variant={view === t.view ? 'primary' : 'secondary'}
             onPress={() => show($, t.view)} />
         ))}
-        <Button key="open-browser" label="open in browser ↗" onPress={() => { void openSnapshot($) }} />
+        <Button key="open-browser" label="Open full report ↗" onPress={() => { void openSnapshot($) }} />
       </Box>
     )
     const body = view === 'budget' ? budgetTab($, e)
@@ -873,7 +873,7 @@ export const register: Register = (on, pluginOptions) => {
     }
     void refresh($)
     const where = opened.isPlaced
-      ? 'The TokenTab pane is open beside the chat; "open in browser" there writes the status page.'
+      ? 'The TokenTab pane is open beside the chat; "Open full report" there writes the status page.'
       : `The TokenTab pane is not placed here (${opened.reason}).`
     return { text: `${status}\n${where}`, context: figures === '' ? undefined : [`TokenTab, this session's figures as of now:\n${figures}`] }
   }).catch(() => ({ text: 'TokenTab: the status command failed' }))
