@@ -401,10 +401,12 @@ test('an interactive session opens the pane and draws the Spend tab', async ($, 
 
   const folded = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   // the tab row: Spend is the primary one, then Budget and the browser button; then the details toggle
-  expect(elements(folded, 'Button').map(b => [b.key, b.variant, b.hotkey])).toEqual([
-    ['tab-spend', 'primary', 's'], ['tab-budget', 'secondary', 'b'], ['open-browser', undefined, 'o'], ['share', undefined, 'h'],
-    ['details-toggle', undefined, 'd'], ['sessions-toggle', undefined, 'a'],
+  expect(elements(folded, 'Button').map(b => [b.key, b.variant])).toEqual([
+    ['tab-spend', 'primary'], ['tab-budget', 'secondary'], ['open-browser', undefined], ['share', undefined],
+    ['details-toggle', undefined], ['sessions-toggle', undefined],
   ])
+  // no keyboard shortcuts: Tab or the arrows and Enter reach every Button (Kate, 2026-11-17)
+  expect(elements(folded, 'Button').filter(b => b.hotkey !== undefined)).toEqual([])
   // the breakdown starts folded: the toggle shows, the rate table and the tools do not
   expect(texts(folded).some(x => x.text === '▸ DETAILS')).toBe(true)
   expect(texts(folded).some(x => x.text === '  total' || x.text === 'TOOLS')).toBe(false)
