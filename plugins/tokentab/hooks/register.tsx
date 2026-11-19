@@ -1039,6 +1039,50 @@ function cell($: EngineInterface, e: RenderEvent, text: string, width: number, s
 /** The colour of a share by its rank: four hues, then grey for the rest. */
 const shareSeries = (rank: number) => `model_${Math.min(rank + 1, 5)}`
 const SESSIONS_COLOURED = 10
+/** The terminal's fold label: a triangle after the name, down while folded and up while open. */
+export const toggleLabel = (name: string, open: boolean): string => `${name} ${open ? '▴' : '▾'}`
+
+/** Figma's 12 px chevron (TokenTab / Spend, nodes 1140:12 and 1140:14), down while folded and
+ *  up while open, in the secondary text colour of the light or dark ground. */
+export function chevronSvg(open: boolean): string {
+  const [light, dark] = TOKENS.surface.secondary!
+  const d = open ? 'M2 8.5L6 4L10 8.5' : 'M2 4L6 8.5L10 4'
+  return '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 12 12" fill="none">'
+    + `<style>path{stroke:${light}}@media(prefers-color-scheme:dark){path{stroke:${dark}}}</style>`
+    + `<path d="${d}" stroke-width="1.5"/></svg>`
+}
+
+/** A fold's toggle. The terminal draws `DETAILS ▾` dim, as before. Desktop draws only a
+ *  Button's label and drops its children, so there the label is the bare name, at full
+ *  strength as in the frame, with Figma's chevron beside it as an Svg. No gap between them:
+ *  the native button's own inner padding (about 7 px) stands in for the frame's 8 px.
+ *
+ *  On Desktop the chevron itself takes no press: only the name does. A decision for the
+ *  design, tried both ways (2026-11-19). A Button's label is plain text and an Svg child is
+ *  refused, so a pressable chevron has to be a text character; the nearest, `DETAILS ∨`/`∧`,
+ *  worked but did not look like Kate's frame. An Svg drawn beneath a label left blank at its
+ *  end (`position: "absolute"`, pinned right) was tried once and the pane froze, but the
+ *  same day showed the pane also freezes on main once its tree grows past about 128 KiB
+ *  (SESSIONS and DETAILS both open), so that try may deserve a second look.
+ *  Should the API gain an icon on Button, or an Svg inside one, the chevron can move in. */
+function foldToggle($: EngineInterface, e: RenderEvent, key: string, name: string, open: boolean, flip: () => void): RenderChildren {
+  const { Box, Text, Button } = $.ui.resolve(e)
+  const onPress = () => { flip(); $.ui.invalidate('ui.render') }
+  if (e.surface === 'terminal') {
+    return (
+      <Button key={key} label={toggleLabel(name, open)} plain onPress={onPress}>
+        <Text size="footnote" dimColor>{toggleLabel(name, open)}</Text>
+      </Button>
+    )
+  }
+  const { Svg } = $.ui.resolve(e)
+  return (
+    <Box key={`${key}-row`} alignItems="center" gap={0} flexShrink={0}>
+      <Button key={key} label={name} plain onPress={onPress} />
+      <Svg source={chevronSvg(open)} alt={open ? 'chevron up, open' : 'chevron down, folded'} width={12} height={12} />
+    </Box>
+  )
+}
 const sessionSeries = (rank: number) => (rank < SESSIONS_COLOURED ? `session_${rank + 1}` : 'session_other')
 
 /** Spend, Figma's "A · Hero number": the session against its limit as one figure and a
@@ -1064,10 +1108,7 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
       </Box>
       {sessions.length > 0 && (
         <Box key="all-toggle" alignItems="center" gap={2}>
-          <Button key="sessions-toggle" label="SESSIONS" plain
-            onPress={() => { sessionsOpen = !sessionsOpen; $.ui.invalidate('ui.render') }}>
-            <Text size="footnote" dimColor>{`${sessionsOpen ? '▾' : '▸'} SESSIONS`}</Text>
-          </Button>
+          {foldToggle($, e, 'sessions-toggle', 'SESSIONS', sessionsOpen, () => { sessionsOpen = !sessionsOpen })}
           {!sessionsOpen && (
             <Box flexGrow={1} flexShrink={1}>
               <Text size="footnote" mono dimColor wrap="truncate">{`${sessions.length} this month`}</Text>
@@ -1178,10 +1219,7 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
       <Box key="details" flexDirection="column" gap="xs">
         {/* Desktop draws the Button's label and drops its children, so the summary sits beside it */}
         <Box alignItems="center" gap={2}>
-          <Button key="details-toggle" label="DETAILS" plain
-            onPress={() => { detailsOpen = !detailsOpen; $.ui.invalidate('ui.render') }}>
-            <Text size="footnote" dimColor>{`${detailsOpen ? '▾' : '▸'} DETAILS`}</Text>
-          </Button>
+          {foldToggle($, e, 'details-toggle', 'DETAILS', detailsOpen, () => { detailsOpen = !detailsOpen })}
           {!detailsOpen && (
             <Box flexGrow={1} flexShrink={1}>
               <Text size="footnote" mono dimColor wrap="truncate">{detailsSummary}</Text>

@@ -1200,7 +1200,7 @@ th.n,.tr.th .n{font:11px var(--sans)}
 .li.dim .nm,.li.dim .n{color:var(--dim)}.li.me .nm,.li.me .n{font-weight:700}
 .sessions details>summary.li{cursor:pointer;list-style:none;color:var(--secondary)}
 .sessions summary::-webkit-details-marker{display:none}
-.sessions summary .nm::before{content:"▸";color:var(--dim)}.sessions details[open]>summary .nm::before{content:"▾"}
+.sessions summary .nm::after{content:"▾";color:var(--dim)}.sessions details[open]>summary .nm::after{content:"▴"}
 .sessions details .li .nm{font-size:12px}
 /* where the money went */
 table{border-collapse:collapse;width:100%}
