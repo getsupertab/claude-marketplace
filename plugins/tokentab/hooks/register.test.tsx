@@ -1,7 +1,7 @@
 import { test, expect, mock } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On, RenderElement, RenderNode } from 'claude-code'
-import { at, barCells, barSvg, dataDir, inUnit, int, liveLines, pct, SECTIONS, SERIES, shareCard, shareCardSvg, shareLinks, sharePageHtml, shareText, shown, stripAnsi, timedOut, toneOf, ttlOf, unitOf, usd, withNewKeys, wrapWords } from './register'
+import { at, barCells, barSvg, dataDir, inUnit, int, liveLines, NO_SURFACE, pct, SECTIONS, SERIES, shareCard, shareCardSvg, shareLinks, sharePageHtml, shareText, shown, stripAnsi, timedOut, toneOf, ttlOf, unitOf, usd, withNewKeys, wrapWords } from './register'
 import type { Report } from './register'
 
 // The world beneath the plugin: `$.fs` reaches nothing under `claude plugin test`, and
@@ -664,6 +664,22 @@ test('/tokentab:status (the skill) is answered by the hook: the pane opens, the 
   expect(ui.opens).toBe(opens + 1)
   expect(r.text).toBe(`${STATUS}\nThe TokenTab pane is open beside the chat; "open in browser" there writes the status page.`)
   expect(r.context).toEqual([`TokenTab, this session's figures as of now:\n${liveLines(ONCE).map(stripAnsi).join('\n')}`])
+})
+
+test('/tokentab:status with no surface attached (a cloud session): the figures go in the reply, with why there is no pane', async ($, on) => {
+  mock.env(on, { HOME: '/home/t' })
+  mock.clock(on, { now: T0 })
+  const { ui } = world(on, FILES, { is: false })
+  await $.session.start({ cwd: '/w', surface: null, isInteractive: false })
+  const figures = liveLines(ONCE).map(stripAnsi).join('\n')
+  const r = await $.command.run({ command: 'tokentab:status', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 200 } })
+  expect(r.text).toBe(`${STATUS}\n\n${figures}\n\n${NO_SURFACE}`)
+  expect(r.context).toEqual([`TokenTab, this session's figures as of now:\n${figures}`])
+
+  // a surface that cannot place the pane yet (a narrow terminal) keeps the short reply: its status line has the figures
+  ui.surfaces = ['terminal']
+  const narrow = await $.command.run({ command: 'tokentab:status', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 200 } })
+  expect(narrow.text).toBe(`${STATUS}\nThe TokenTab pane is not placed here (narrower than 144 columns).`)
 })
 
 test('the open-in-browser button writes the page for this session, opens it, and keeps it live', async ($, on) => {

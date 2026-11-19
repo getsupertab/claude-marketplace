@@ -173,6 +173,7 @@ const TITLE = 'TokenTab'
 // `command.run` hook below answers the skill's command in its place instead. The skill's own
 // text runs only where the module did not load.
 const COMMAND = 'tokentab:status'
+export const NO_SURFACE = 'No TokenTab pane here: this session has nothing to draw one on (a cloud session, or a `claude -p` run). Run /tokentab:status again for fresh figures.'
 const REDRAW_MS = 30_000
 const BEAT_MS = 1_000                   // how soon after a ledger write the pane redraws
 const HELPER_TIMEOUT_MS = 20_000
@@ -872,10 +873,17 @@ export const register: Register = (on, pluginOptions) => {
       status = `TokenTab: ${err instanceof Error ? err.message : String(err)}`
     }
     void refresh($)
+    const context = figures === '' ? undefined : [`TokenTab, this session's figures as of now:\n${figures}`]
+    // A cloud session has no surface (Claude Code serves plugin UI there only to Cowork), nor
+    // does a -p run: no pane and no status line, so the figures go in the reply.
+    if (!opened.isPlaced && (await $.session.surfaces()).length === 0) {
+      const reply = figures === '' ? status : `${status}\n\n${figures}`
+      return { text: `${reply}\n\n${NO_SURFACE}`, context }
+    }
     const where = opened.isPlaced
       ? 'The TokenTab pane is open beside the chat; "open in browser" there writes the status page.'
       : `The TokenTab pane is not placed here (${opened.reason}).`
-    return { text: `${status}\n${where}`, context: figures === '' ? undefined : [`TokenTab, this session's figures as of now:\n${figures}`] }
+    return { text: `${status}\n${where}`, context }
   }).catch(() => ({ text: 'TokenTab: the status command failed' }))
 
   // The Budget tab's auto-open switch is the manifest's `userConfig` field: written as the
