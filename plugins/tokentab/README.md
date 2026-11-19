@@ -133,16 +133,19 @@ opens it at any time. It refreshes after every API call and every 30 seconds.
 
 The pane has two tabs:
 
-- **Spend** (`s`): this session's cost, with a bar against its limit; on a percent
+- **Spend**: this session's cost, with a bar against its limit; on a percent
   budget it leads with the plan's usage windows. On Pro or Max, dollars are what the
-  session would cost at API rates. Press `d` for details: cost by type (input, cache
+  session would cost at API rates. "Details" shows cost by type (input, cache
   writes, cache reads, output, thinking), cost per tool, and every session today and
-  this month. "Share" (`h`) shows the session as a card to copy, or as a page in the
+  this month. "Share" shows the session as a card to copy, or as a page in the
   browser with an image to download and links to post it on X or LinkedIn.
-- **Budget** (`b`): your limits, editable in place, and the switch that opens the pane
+- **Budget**: your limits, editable in place, and the switch that opens the pane
   at session start.
 
-**In the browser.** "Open in browser" (`o`) opens a status page with everything the pane
+The pane has no keyboard shortcuts. From the keyboard, `ctrl+x tab` moves into the pane,
+Tab and Shift+Tab move between its buttons, and Enter presses one.
+
+**In the browser.** "Open in browser" opens a status page with everything the pane
 shows, from the same report and in your plan's unit, with room for more. It leads with a
 summary: the session against its limit, tokens, msgs, a request's average cost and the
 context, plus a banner when you're over a limit or the cache has gone cold. Below that come

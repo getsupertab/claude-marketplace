@@ -348,9 +348,9 @@ export function barCells(parts: { series: string; frac: number }[], cells: numbe
 // ---------- the tabs ----------
 
 export type View = 'spend' | 'budget'
-export const TABS: { view: View; label: string; hotkey: string }[] = [
-  { view: 'spend', label: 'Spend', hotkey: 's' },
-  { view: 'budget', label: 'Budget', hotkey: 'b' },
+export const TABS: { view: View; label: string }[] = [
+  { view: 'spend', label: 'Spend' },
+  { view: 'budget', label: 'Budget' },
 ]
 const TOOLS_SHOWN = 12
 
@@ -816,8 +816,8 @@ export const register: Register = (on, pluginOptions) => {
         {ask.failed ? <Text color="red">TokenTab: {ask.failed}</Text> : null}
         <Text bold>Send your prompt anyway?</Text>
         <Box gap={1}>
-          <Button key="cold-send" label={CONTINUE} hotkey="1" plain variant="primary" onPress={() => { void answerCold($, ask, true) }} />
-          <Button key="cold-hold" label={DONT_SEND} hotkey="2" plain onPress={() => { void answerCold($, ask, false) }} />
+          <Button key="cold-send" label={CONTINUE} plain variant="primary" onPress={() => { void answerCold($, ask, true) }} />
+          <Button key="cold-hold" label={DONT_SEND} plain onPress={() => { void answerCold($, ask, false) }} />
         </Box>
       </Box>
     )
@@ -838,10 +838,10 @@ export const register: Register = (on, pluginOptions) => {
     const tabs = (
       <Box gap={1}>
         {TABS.map(t => (
-          <Button key={`tab-${t.view}`} label={t.label} hotkey={t.hotkey} variant={view === t.view ? 'primary' : 'secondary'}
+          <Button key={`tab-${t.view}`} label={t.label} variant={view === t.view ? 'primary' : 'secondary'}
             onPress={() => show($, t.view)} />
         ))}
-        <Button key="open-browser" label="open in browser ↗" hotkey="o" onPress={() => { void openSnapshot($) }} />
+        <Button key="open-browser" label="open in browser ↗" onPress={() => { void openSnapshot($) }} />
       </Box>
     )
     const body = view === 'budget' ? budgetTab($, e)
@@ -1064,7 +1064,7 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
       </Box>
       {sessions.length > 0 && (
         <Box key="all-toggle" alignItems="center" gap={2}>
-          <Button key="sessions-toggle" label="SESSIONS" hotkey="a" plain
+          <Button key="sessions-toggle" label="SESSIONS" plain
             onPress={() => { sessionsOpen = !sessionsOpen; $.ui.invalidate('ui.render') }}>
             <Text size="footnote" dimColor>{`${sessionsOpen ? '▾' : '▸'} SESSIONS`}</Text>
           </Button>
@@ -1163,7 +1163,7 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
               ? <Text size="footnote" dimColor>{`of ${WINDOW_NAME[lead.scope]}${limitOf(lead, ' · ')}${resets(lead)}`}</Text>
               : s.plan && <Text size="footnote" dimColor>at API rates</Text>}
           </Box>
-          <Button key="share" label="↑ Share" hotkey="h"
+          <Button key="share" label="↑ Share"
             onPress={() => { void openSharePage($, r) }} />
         </Box>
         {frac !== null && bar($, e, [{ series: toneOf(frac, s.warn_at), frac }],
@@ -1178,7 +1178,7 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
       <Box key="details" flexDirection="column" gap="xs">
         {/* Desktop draws the Button's label and drops its children, so the summary sits beside it */}
         <Box alignItems="center" gap={2}>
-          <Button key="details-toggle" label="DETAILS" hotkey="d" plain
+          <Button key="details-toggle" label="DETAILS" plain
             onPress={() => { detailsOpen = !detailsOpen; $.ui.invalidate('ui.render') }}>
             <Text size="footnote" dimColor>{`${detailsOpen ? '▾' : '▸'} DETAILS`}</Text>
           </Button>
