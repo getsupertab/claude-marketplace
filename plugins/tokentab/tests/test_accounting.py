@@ -219,6 +219,169 @@ def hover_list_check(b, tb=None):
     return errs
 
 
+def day_budget_case():
+    """day_budget: what is left of the week over the time left, fixed at the start of the local
+    day. Unused budget and overspend roll on through the base; spending today leaves today's alone."""
+    from datetime import datetime, timedelta, timezone
+    errs = []
+    saved = kt.BASELINE_PATH
+    kt.BASELINE_PATH = os.path.join(tempfile.mkdtemp(), "week_baseline.json")
+    L = lambda m, d, h=0: datetime(2026, m, d, h).astimezone()      # a local wall-clock time
+    iso = lambda dt: dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    win = lambda pct, reset: {"seven_day": {"kind": "seven_day", "percentUsed": pct, "resetsAt": iso(reset)}}
+
+    def entries(reset, day, base, last):
+        with open(kt.BASELINE_PATH, "w", encoding="utf-8") as f:
+            json.dump({iso(reset): {"day": day, "base": base, "last": last}}, f)
+
+    def want(label, got, allowed, used=None, tol=0.05):
+        if got is None or abs(got["allowed"] - allowed) > tol or (used is not None and abs(got["used"] - used) > 1e-9):
+            errs.append(f"day_budget {label}: want allowed {allowed:.3f} used {used}, got {got}")
+
+    try:
+        # A fresh week at midnight, no baseline yet: 100/7
+        reset, now = L(11, 26), L(11, 19, 10).timestamp()
+        got = kt.day_budget({}, win(0, reset), now)
+        want("fresh week", got, 100 / 7, 0)
+        if got and (got["base"] != 0 or got["cap"] != 100 or got["frac"] != 0):
+            errs.append(f"day_budget fresh week: {got}")
+        got = kt.day_budget({}, win(2, reset), now)
+        want("fresh week, 2% used", got, 100 / 7, 2)
+        if got and abs(got["frac"] - 2 / got["allowed"]) > 1e-9:
+            errs.append(f"day_budget fresh week frac: {got}")
+        # Day 1 unused: day 2 is 100/6. Day 1 used 20%: day 2 is 80/6
+        now = L(11, 20, 9).timestamp()
+        entries(reset, "2026-11-19", 0, 0)
+        want("day 1 unused", kt.day_budget({}, win(0, reset), now), 100 / 6, 0)
+        entries(reset, "2026-11-19", 0, 20)
+        want("day 1 used 20%", kt.day_budget({}, win(20, reset), now), 80 / 6, 0)
+        want("day 1 used 20%, 3 more today", kt.day_budget({}, win(23, reset), now), 80 / 6, 3)
+        # The budget is fixed for the day: spending today does not change it
+        entries(reset, "2026-11-20", 20, 20)
+        a, b = (kt.day_budget({}, win(p, reset), now) for p in (21, 30))
+        if not a or not b or a["allowed"] != b["allowed"] or (a["used"], b["used"]) != (1, 10):
+            errs.append(f"day_budget: spending moved today's allowance: {a} {b}")
+        # An odd-hour reset: the second to last day spreads over the 37 hours left, the last day gets what is left
+        odd = L(11, 21, 13)
+        entries(odd, "2026-11-19", 4, 4)
+        want("odd-hour reset, day 2", kt.day_budget({}, win(4, odd), now), 96 * 24 / 37)
+        entries(odd, "2026-11-20", 10, 10)
+        want("odd-hour reset, last day", kt.day_budget({}, win(10, odd), L(11, 21, 9).timestamp()), 90, 0, tol=1e-6)
+        # No baseline entry, mid-week: the week's use so far is the base, so nothing is used today yet
+        mid_week, now = L(11, 24), L(11, 19, 14).timestamp()
+        os.remove(kt.BASELINE_PATH)
+        got = kt.day_budget({}, win(30, mid_week), now)
+        if not got or got["base"] != 30 or got["used"] != 0:
+            errs.append(f"day_budget without a baseline, mid-week: {got}")
+        # The spec's example: today 2026-11-19, base 4, reset 2026-11-21T01:00Z
+        fixed, now = datetime(2026, 11, 21, 1, tzinfo=timezone.utc), L(11, 19, 14).timestamp()
+        entries(fixed, "2026-11-19", 4, 4)
+        mid, nxt = L(11, 19).timestamp(), L(11, 20).timestamp()
+        want("spec example", kt.day_budget({}, win(4, fixed), now), 96 * (nxt - mid) / (fixed.timestamp() - mid), 0, tol=1e-9)
+        # The cap: weekly_limit_percent, 100 when null or absent, read with budgets_on either way
+        entries(reset, "2026-11-19", 10, 10)
+        now = L(11, 19, 14).timestamp()
+        for cfg, cap in (({"weekly_limit_percent": 50}, 50), ({"weekly_limit_percent": None}, 100), ({}, 100),
+                         ({"weekly_limit_percent": 50, "budgets_on": True}, 50)):
+            got = kt.day_budget(cfg, win(10, reset), now)
+            if not got or got["cap"] != cap:
+                errs.append(f"day_budget cap for {cfg}: {got}")
+        # Over the allowance, and an allowance of zero
+        got = kt.day_budget({"weekly_limit_percent": 50}, win(30, reset), now)
+        if not got or got["frac"] < 1:
+            errs.append(f"day_budget overspent: {got}")
+        entries(reset, "2026-11-19", 100, 100)
+        got = kt.day_budget({}, win(100, reset), now)
+        if not got or got["allowed"] != 0 or got["frac"] != 0:
+            errs.append(f"day_budget with nothing left: {got}")
+        got = kt.day_budget({}, win(101, reset), now)
+        if not got or got["frac"] != 1.0:
+            errs.append(f"day_budget with nothing left and use: {got}")
+        # None: switched off, no weekly reading, a reset already past
+        if kt.day_budget({"daily_budget": {"enabled": False}}, win(1, reset), now) is not None:
+            errs.append("day_budget: disabled should be None")
+        if kt.day_budget({"daily_budget": {"enabled": True}}, win(1, reset), now) is None:
+            errs.append("day_budget: enabled should work")
+        if kt.day_budget({}, {}, now) is not None or kt.day_budget({}, {"five_hour": win(1, reset)["seven_day"]}, now) is not None:
+            errs.append("day_budget: no weekly reading should be None")
+        if kt.day_budget({}, win(1, L(11, 18)), now) is not None:
+            errs.append("day_budget: a reset already past should be None")
+    finally:
+        kt.BASELINE_PATH = saved
+    # budget.py: the headline takes three words and refuses the rest; other strings are edited in the file
+    import budget
+    if [budget.parse("headline", "five_hour", w) for w in ("today", "Week", " five_hour ")] != ["today", "week", "five_hour"]:
+        errs.append("budget.parse: headline should take today, five_hour and week")
+    for key, old, raw in (("headline", "today", "month"), ("headline", "today", "40"), ("other", "text", "1")):
+        try:
+            budget.parse(key, old, raw)
+            errs.append(f"budget.parse: {key}={raw} should be refused")
+        except ValueError:
+            pass
+    return errs
+
+
+def day_budget_pane_case(store, prices):
+    """The pane's today window, the status line and the reopen button's text follow budget.json's headline."""
+    from datetime import datetime, timedelta, timezone
+    errs = []
+    saved = (kt.BASELINE_PATH, kt.WINDOWS_DIR)
+    tmp = tempfile.mkdtemp()
+    kt.BASELINE_PATH, kt.WINDOWS_DIR = os.path.join(tmp, "week_baseline.json"), os.path.join(tmp, "windows")
+    os.makedirs(kt.WINDOWS_DIR)
+    try:
+        # Whole hours, three days out, so the week began before today
+        reset = (datetime.now(timezone.utc) + timedelta(days=3)).replace(minute=0, second=0, microsecond=0)
+        r = reset.strftime("%Y-%m-%dT%H:%M:%SZ")
+        windows = {"five_hour": {"kind": "five_hour", "percentUsed": 13, "resetsAt": "2999-01-01T00:00:00Z"},
+                   "seven_day": {"kind": "seven_day", "percentUsed": 5, "resetsAt": r}}
+        with open(kt.BASELINE_PATH, "w", encoding="utf-8") as f:
+            json.dump({r: {"day": datetime.now().astimezone().date().isoformat(), "base": 2, "last": 5}}, f)
+        with open(os.path.join(kt.WINDOWS_DIR, "fx.json"), "w", encoding="utf-8") as f:
+            json.dump({"windows": list(windows.values())}, f)
+        day = kt.day_budget({}, windows)
+        for on in (True, False):   # not gated by budgets_on
+            s = kt.pane_report(store, "fx", prices, {"budgets_on": on}, windows=windows)["session"]
+            today = [w for w in s["windows"] if w["scope"] == "today"]
+            if [w["scope"] for w in s["windows"]] != ["five_hour", "seven_day", "today"] or not day:
+                errs.append(f"pane today window: windows are {s['windows']}")
+            elif (today[0]["limit"], today[0]["resets"], today[0]["used"]) != (None, None, 3) \
+                    or today[0]["frac"] != day["frac"] or today[0]["allowed"] != day["allowed"]:
+                errs.append(f"pane today window: {today[0]}")
+            if s["headline"] != "five_hour" or s["daily_warn_at"] != 80:
+                errs.append(f"pane headline: {s['headline']} {s['daily_warn_at']}")
+        s = kt.pane_report(store, "fx", prices, {"headline": "today", "daily_budget": {"warn_at_percent": 60}}, windows=windows)["session"]
+        if s["headline"] != "today" or s["daily_warn_at"] != 60:
+            errs.append(f"pane headline today: {s['headline']} {s['daily_warn_at']}")
+        s = kt.pane_report(store, "fx", prices, {"daily_budget": {"enabled": False}, "headline": "today"}, windows=windows)["session"]
+        if "today" in [w["scope"] for w in s["windows"]] or s["headline"] is not None:
+            errs.append(f"pane today window: disabled should have none and no headline: {s['windows']} {s['headline']}")
+        s = kt.pane_report(store, "fx", prices, {"headline": "week"}, windows={"five_hour": windows["five_hour"]})["session"]
+        if s["headline"] is not None:
+            errs.append(f"pane headline without its reading should be None: {s['headline']}")
+        # The status line leads with the headline; the button says it in short
+        pct = f"{day['frac'] * 100:.0f}%"
+        cases = (({}, "5 hours 13% · week 5% · today " + pct, "13% 5-hour"),
+                 ({"headline": "five_hour"}, "5 hours 13% · week 5% · today " + pct, "13% 5-hour"),
+                 ({"headline": "week"}, "week 5% · 5 hours 13% · today " + pct, "5% week"),
+                 ({"headline": "today"}, "today " + pct, f"{pct} daily allowance"),
+                 ({"headline": "today", "daily_budget": {"enabled": False}}, "5 hours 13% · week 5% · session", "13% 5-hour"))
+        for budget, line_start, button in cases:
+            line, got = kt.status_parts(store, "fx", prices, budget)
+            if not line.startswith(line_start) or got != button or kt.status_line(store, "fx", prices, budget) != line:
+                errs.append(f"status for {budget}: {line!r} {got!r}, want {line_start!r} {button!r}")
+        line = kt.status_line(store, "fx", prices, {"headline": "today"})
+        if f"today {pct} · 3% of week · 5 hours" not in line:
+            errs.append(f"status line today item: {line!r}")
+        os.remove(os.path.join(kt.WINDOWS_DIR, "fx.json"))
+        line, button = kt.status_parts(store, "fx", prices, {"headline": "today"})
+        if button is not None or "of week" in line or line.startswith("5 hours"):
+            errs.append(f"status without a plan reading: {line!r} {button!r}")
+    finally:
+        kt.BASELINE_PATH, kt.WINDOWS_DIR = saved
+    return errs
+
+
 def main():
     root = tempfile.mkdtemp()
     os.makedirs(os.path.join(root, "proj"))
@@ -253,6 +416,8 @@ def main():
         errs.append("snapshot cost_by does not sum to cost_usd")
     kt.render(store, "fx", prices, {}, True)
     errs += pane_check(store, prices)
+    errs += day_budget_case()
+    errs += day_budget_pane_case(store, prices)
     errs += breakdown_check(store, prices)
     errs += series_check(b, "transcript", store)
     errs += ledger_case(root, store, prices)

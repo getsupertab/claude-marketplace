@@ -90,12 +90,16 @@ Everything is in `budget.json` in your data folder. `null` turns a limit off. `/
 | `weekly_limit_percent` | `90` | Limit on the plan's weekly usage window. Resets with the window. |
 | `warn_at_percent` | `70` | Warnings start here, then once per 10%. |
 | `hard_stop` | `false` | `true` stops Claude at 100%; `false` only warns. |
+| `daily_budget` | on, warns at `80` | On Pro and Max: what is left of the week, spread evenly over the time left, fixed at the start of each local day. `enabled` switches it, `warn_at_percent` sets the warning. It only ever warns, never blocks, and works whether or not `budgets_on` is set. |
+| `headline` | `five_hour` | Which plan number leads in the pane, the status line and the reopen button: `today` (the daily budget), `five_hour` or `week`. |
 | `context_warn_tokens` | `[200000, 350000]` | Tells you and Claude when the context passes each size. Re-arms after a compaction. |
 | `cold_resume` | on | Holds back the first prompt after the prompt cache has expired. See below. |
 | `new_session` | on | Asks Claude to suggest a new session when that would be cheaper. See below. |
 | `helpers_may_delegate` | `false` | Whether a helper agent may start or message other agents. |
 
-The last four work whether or not `budgets_on` is set.
+The last six work whether or not `budgets_on` is set.
+
+The daily budget is the weekly limit's remainder over the days left. The cap is `weekly_limit_percent`, or 100 when it is `null`. At midnight, or at the first reading of the day, TokenTab records the week's percent so far in `state/week_baseline.json`. Today's allowance is what is left under the cap, times today's share of the time to the reset. Spending today does not change it. Unused allowance and overspend carry into tomorrow's.
 
 Each session keeps its own usage-window reading in `state/windows/<session>.json`. The
 latest reading of any session also goes to `state/rate_limits.json`, for the budget skill;

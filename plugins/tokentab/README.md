@@ -181,6 +181,15 @@ windows instead, 80% and 90% by default. TokenTab picks the unit from your accou
 where Claude Code reports usage windows, dollars otherwise. It's not a setting: your
 account decides.
 
+### Daily budget
+
+On Pro and Max, TokenTab also spreads what is left of the week over the days left: a
+daily allowance, fixed at the start of each local day. The pane, the status line and the
+button that brings a closed pane back show how much of it is used. It warns once at 80%
+and once at 100%, and never blocks, with budgets on or off. `daily_budget.enabled` and
+`daily_budget.warn_at_percent` in `budget.json` set it. `headline` (`today`, `five_hour`
+or `week`) picks which plan number leads; the default is `five_hour`.
+
 ### What it does with budgets off
 
 The limits are off, but these checks run from the start. Each one is set in
