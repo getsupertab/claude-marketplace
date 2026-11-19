@@ -434,6 +434,7 @@ let waiting = false                     // session.start's open left the pane un
 let showing = false                     // this session's auto-open and clock have started (startShowing)
 let closedByPerson = false              // the person closed the pane: the hint line offers it back
 let measured = false                    // this load has written the usage windows once
+let lastWindows: string | undefined     // the last windows file written, for a new id after /clear
 let autoOpenHere: boolean | undefined   // the switch set where /config had no row for it, `$.store`'s AUTO_OPEN
 
 // An SDK host (the Desktop app, `claude -p`) lists no plugin's /config row, so there the
@@ -911,9 +912,17 @@ export const register: Register = (on, pluginOptions) => {
       if (!(await isPlaced($)) && (await openPane($)).isPlaced) void refresh($)
     }
     // A `/clear` starts a session no `session.start` marked; this runs before the shell gate.
+    // Its windows are the last reading's until the engine measures again, so the limits stay in percent.
     try {
       const id = await sid($)
-      if (markedId !== id) await markLoaded($, await dataRoot($), id)
+      if (markedId !== id) {
+        const data = await dataRoot($)
+        await markLoaded($, data, id)
+        if (lastWindows !== undefined) {
+          await $.fs.write(`${data}/state/windows/${id}.json`, lastWindows)
+          if (tick !== undefined) stale = true
+        }
+      }
     } catch { /* the gate then speaks once */ }
     if (!typed(e.origin.kind) || e.text.trim() === '' || resending) return next(e)
     if (coldAsk) { await sentAgain($); return next(e) }
@@ -937,9 +946,9 @@ export const register: Register = (on, pluginOptions) => {
       try {
         const windows = e.rateLimits.map(w => ({ kind: w.kind, percentUsed: w.percentUsed, resetsAt: w.resetsAt ?? null }))
         const data = await dataRoot($), at = new Date(await $.clock.now()).toISOString()
-        await $.fs.write(`${data}/state/windows/${await sid($)}.json`, JSON.stringify({ at, windows }) + '\n')
-        await $.fs.write(`${data}/state/rate_limits.json`,
-          JSON.stringify({ at, windows }) + '\n')
+        lastWindows = JSON.stringify({ at, windows }) + '\n'
+        await $.fs.write(`${data}/state/windows/${await sid($)}.json`, lastWindows)
+        await $.fs.write(`${data}/state/rate_limits.json`, lastWindows)
         // A first reading or a new login can change the unit: redraw now, not on the next 30 s beat
         if (tick !== undefined) stale = true
       } catch { /* the limits stay in the unit last read */ }

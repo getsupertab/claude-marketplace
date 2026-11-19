@@ -29,8 +29,11 @@ function world(on: On, initial: Record<string, string>, placed = { is: true }, r
   on('fs.read', ($, e) => { const k = find(e.path); return k ? { value: fs.get(k)! } : { deny: `ENOENT: ${e.path}` } })
   on('fs.write', ($, e) => { fs.set(posix(e.path), e.text); return { value: undefined } })
   on('fs.exists', ($, e) => ({ value: find(e.path) !== undefined }))
-  on('session.id', () => ({ value: SID }))
+  // `session.id` is what `$.session.id()` answers: a test sets it to stand in for a /clear or a resume
+  const session = { id: SID }
+  on('session.id', () => ({ value: session.id }))
   on('session.start', ($, e) => ({ cwd: e.cwd }))
+  on('session.end', ($, e) => ({ sessionId: e.sessionId }))
   on('telemetry.log', { to: 'collector' }, () => ({ value: undefined }))
   const ui: Ui = {
     opens: 0, commands: [], status: [], invalidates: 0, runs: [], toasts: [], config: [], store: new Map(), rows: ['tokentab.autoOpen'], surfaces: [],
@@ -83,7 +86,14 @@ function world(on: On, initial: Record<string, string>, placed = { is: true }, r
     }
     return { value: { exitCode, stdout, stderr, isStdoutTruncated: false, isStderrTruncated: false } }
   })
-  return { fs, ui }
+  return { fs, ui, session }
+}
+
+const NEW_SID = 'f9e8d7c6-after-clear'
+// What the engine does on /clear (or a resume): the old conversation ends, the process goes on under another id.
+async function clear($: Engine, session: { id: string }, reason: 'clear' | 'resume' = 'clear', to = NEW_SID) {
+  await $.session.end({ reason, sessionId: session.id, resume: { id: session.id } })
+  session.id = to
 }
 
 // What `tokentab.py --once` prints (cut down): the header, a dim line, a bold total, a
@@ -820,6 +830,26 @@ test('session.measure records the usage windows; the Budget tab then shows the p
   const tree = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   expect(elements(tree, 'Input').map(i => i.key)).toEqual(['b-five_hour_limit_percent', 'b-weekly_limit_percent', 'b-warn_at_percent'])
   expect(elements(tree, 'Button').some(b => b.key === 'b-limit_unit')).toBe(false)
+})
+
+test('after /clear the first prompt carries the last usage windows over to the new id, so the limits stay in percent', async ($, on) => {
+  mock.env(on, { HOME: '/home/t' })
+  const clock = mock.clock(on, { now: T0 })
+  const { fs, session } = world(on, FILES)
+  on('session.measure', ($, e) => ({ changed: e.changed }))
+  on('prompt.submit', ($, e) => ({ text: e.text }))
+  await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  const rateLimits = [{ kind: 'five_hour', percentUsed: 42, resetsAt: '2026-10-15T18:00:00Z' }]
+  await $.session.measure({ context: { window: 200000 }, rateLimits, changed: ['rateLimits'] })
+  await clear($, session)
+  expect(fs.get(`${DATA}/state/windows/${NEW_SID}.json`)).toBeUndefined()
+  await $.prompt.submit({ text: 'hello', wait: false, origin: { kind: 'composer' } })
+  expect(fs.get(`${DATA}/state/windows/${NEW_SID}.json`)).toBe(fs.get(`${DATA}/state/windows/${SID}.json`))
+  await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
+  await $.ui.press(press('tab-budget'))
+  const tree = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
+  expect(elements(tree, 'Input').map(i => i.key)).toContain('b-five_hour_limit_percent')
 })
 
 test('where /config has no row for it (Desktop), the auto-open switch is kept in the store until /config changes it', async ($, on) => {
