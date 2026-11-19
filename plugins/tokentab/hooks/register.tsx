@@ -752,15 +752,18 @@ export const register: Register = (on, pluginOptions) => {
   // /clear and resume go on under a new id: drop what belonged to the old conversation.
   on('session.end', async ($, e, next) => {
     const r = await next(e)
-    if (e.reason === 'clear' || e.reason === 'resume') {
-      coldAsk = undefined
-      measured = false
-      pageOpenedAt = undefined
-      if (tick !== undefined) stale = true
-      $.ui.invalidate('ui.render')
-    }
+    // No `.catch` fallback: it would run the end step a second time within its short bound.
+    try {
+      if (e.reason === 'clear' || e.reason === 'resume') {
+        coldAsk = undefined
+        measured = false
+        pageOpenedAt = undefined
+        if (tick !== undefined) stale = true
+        $.ui.invalidate('ui.render')
+      }
+    } catch { /* the next prompt still reads the new id */ }
     return r
-  }).catch(($, e, next) => next(e))
+  })
 
   // The person closed the pane with the engine's close mark or ctrl+x x. Claude Code has
   // no key that brings a closed pane back, so the hint line under the prompt offers it instead.
