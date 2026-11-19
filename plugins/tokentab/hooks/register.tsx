@@ -757,14 +757,15 @@ export const register: Register = (on, pluginOptions) => {
   })
 
   // Once the person closed the pane, the hint line under the prompt keeps its text and gains
-  // the button that opens the pane again, at its right end. The hint line, not the band above
+  // the button that opens the pane again, two cells after it (the engine lays the line out
+  // only as wide as its content, so it cannot sit at the row's right end). The hint line, not the band above
   // the prompt: the engine draws a fold mark beside anything in the band.
   on('ui.render', { component: 'PromptHint' }, ($, e, next) => {
     if (!closedByPerson) return next(e)
     const { Box, Text, Button } = $.ui.resolve(e)
     return (
-      <Box justifyContent="space-between">
-        <Text dimColor>{e.props.hint}</Text>
+      <Box>
+        <Text dimColor>{e.props.hint}  </Text>
         <Button key="reopen" label="▸ TokenTab" onPress={() => { void reopen($) }} />
       </Box>
     )
