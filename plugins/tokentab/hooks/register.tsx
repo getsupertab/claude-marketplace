@@ -197,6 +197,8 @@ export const HELD = 'TokenTab: held back, the prompt cache has expired. Continue
 // person (its 10 s budget runs on), so the prompt is dropped and Continue sends it again.
 type ColdAsk = { text: string, prompt: string, attachments: PromptSubmitInput['attachments'], failed?: string }
 let coldAsk: ColdAsk | undefined
+// Counts /clears and resumes: an answer that arrives after one belongs to the ended conversation.
+let conversation = 0
 // Continue's resend passes unchecked: Desktop hands it back as typed, not as the plugin's.
 let resending = false
 
@@ -215,7 +217,9 @@ async function answerCold($: EngineInterface, ask: ColdAsk, send: boolean): Prom
   coldAsk = undefined
   $.ui.invalidate('ui.render')
   if (!send) return
+  const at = conversation
   const failed = (step: string, err: unknown) => {
+    if (conversation !== at) return
     coldAsk = { ...ask, failed: `${step}: ${err instanceof Error ? err.message : String(err)}` }
     $.ui.invalidate('ui.render')
   }
@@ -756,6 +760,7 @@ export const register: Register = (on, pluginOptions) => {
     // No `.catch` fallback: it would run the end step a second time within its short bound.
     try {
       if (e.reason === 'clear' || e.reason === 'resume') {
+        conversation++
         coldAsk = undefined
         measured = false
         pageOpenedAt = undefined
@@ -928,8 +933,9 @@ export const register: Register = (on, pluginOptions) => {
     } catch { /* the gate then speaks once */ }
     if (!typed(e.origin.kind) || e.text.trim() === '' || resending) return next(e)
     if (coldAsk) { await sentAgain($); return next(e) }
+    const at = conversation
     const cold = await coldCheck($)
-    if (cold) {
+    if (cold && conversation === at) {
       coldAsk = { text: cold, prompt: e.text, attachments: e.attachments }
       $.ui.invalidate('ui.render')
       return { drop: HELD }

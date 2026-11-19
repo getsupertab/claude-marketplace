@@ -1087,6 +1087,26 @@ test('after /clear the cold check and the loaded marker follow the new session i
   expect(fs.get(`${DATA}/state/loaded/${id}`)).toBe('2026-10-15T14:03:11.412Z\n')
 })
 
+test('a /clear that lands while the cold check runs leaves the new conversation without the old question', async ($, on) => {
+  const seen = { sent: [] as string[] }
+  mock.clock(on, { now: T0 })
+  on('session.id', () => ({ value: SID }))
+  on('session.surfaces', () => ({ value: ['desktop'] }))
+  on('ui.invalidate', () => ({ value: undefined }))
+  on('ui.render', { component: 'AbovePrompt' }, ($, e) => { const { Box } = $.ui.resolve(e); return <Box /> })
+  on('session.end', ($, e) => ({ sessionId: e.sessionId }))
+  on('process.run', async (_, e) => {
+    const out = (stdout: string) => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
+    if (e.argv.includes('-c')) return out('3\n')
+    if (e.argv.includes('--cold-check')) await $.session.end({ reason: 'clear', sessionId: SID, resume: { id: SID } })
+    return out(JSON.stringify({ cold: COLD }))
+  })
+  on('prompt.submit', ($, e) => { seen.sent.push(e.text); return { text: e.text } })
+  expect(await $.prompt.submit({ text: 'raced', wait: false, origin: { kind: 'composer' } })).toEqual({ text: 'raced' })
+  expect(await lines($)).toEqual([])
+  expect(seen.sent).toEqual(['raced'])
+})
+
 test('sending again with the question up is the go-ahead: confirmed, sent, band closed', async ($, on) => {
   const seen = coldWorld(on, COLD)
   await $.prompt.submit({ text: 'go on', wait: false, origin: { kind: 'composer' } })
