@@ -444,9 +444,7 @@ const optionAutoOpen = () => opts.autoOpen !== false
 const autoOpen = () => autoOpenHere ?? optionAutoOpen()
 const keepAutoOpen = ($: EngineInterface, value: boolean) => $.store.set(AUTO_OPEN, { value, over: optionAutoOpen() })
 
-// Never cached: after a `/clear` or a resume the process goes on under another id and no
-// `session.start` fires, so a kept id would point the cold check and the report at the
-// conversation that ended.
+// Not cached: /clear and resume change the id without a session.start.
 async function sid($: EngineInterface): Promise<string> {
   return $.session.id()
 }
@@ -752,9 +750,7 @@ export const register: Register = (on, pluginOptions) => {
     return r
   })
 
-  // A `/clear` or a resume ends the conversation, but the process and this load go on
-  // under a new session id. What belonged to the old one goes with it: a pending cold-cache
-  // question, the windows written once per session, a status page's live window.
+  // /clear and resume go on under a new id: drop what belonged to the old conversation.
   on('session.end', async ($, e, next) => {
     const r = await next(e)
     if (e.reason === 'clear' || e.reason === 'resume') {
