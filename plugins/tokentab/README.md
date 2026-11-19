@@ -115,6 +115,17 @@ command, and the app's terminal has no `claude` command. Use one of these instea
 - **Install the CLI** (`curl -fsSL https://claude.ai/install.sh | bash`), open a new
   terminal, and run the two shell commands above.
 
+**In a cloud session** (a Code session on a cloud environment, in the desktop app or on
+claude.ai), Claude Code runs remotely and doesn't see the plugins installed on your
+computer. Install TokenTab on claude.ai as well. It then prices every call there too, with
+two differences:
+
+- **No pane and no status line.** Claude Code doesn't draw plugin panes in cloud sessions
+  yet. `/tokentab:status` puts the figures in its reply instead.
+- **Its own figures and limits.** The ledger and `budget.json` live in the cloud
+  session's environment, so its daily and monthly totals don't include your local
+  sessions, and it starts from the default limits rather than the ones you set locally.
+
 
 **Requirements:** Claude Code 2.1.304 or later, and Python 3 (standard library only) on
 macOS, Linux or Windows. It works in Claude Code (the terminal and the Desktop app's Code
