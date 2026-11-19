@@ -771,9 +771,15 @@ export const register: Register = (on, pluginOptions) => {
     )
   })
 
-  // The cold-cache question, in the band above the prompt.
+  // The cold-cache question, in the band above the prompt. Off the terminal the band also
+  // carries the reopen button: Desktop draws no hook's tree in the hint line.
   on('ui.render', { component: 'AbovePrompt' }, ($, e, next) => {
-    if (!coldAsk || e.props.hasSurvey) return next(e)
+    if (e.props.hasSurvey) return next(e)
+    if (!coldAsk) {
+      if (!closedByPerson || e.surface === 'terminal') return next(e)
+      const { Button } = $.ui.resolve(e)
+      return <Button key="reopen" label="▸ TokenTab" onPress={() => { void reopen($) }} />
+    }
     const { Box, Text, Button } = $.ui.resolve(e)
     const ask = coldAsk
     return (
