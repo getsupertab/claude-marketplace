@@ -908,7 +908,10 @@ export const register: Register = (on, pluginOptions) => {
       if (!(await isPlaced($)) && (await openPane($)).isPlaced) void refresh($)
     }
     // A `/clear` starts a session no `session.start` marked; this runs before the shell gate.
-    try { await markLoaded($, await dataRoot($), await sid($)) } catch { /* the gate then speaks once */ }
+    try {
+      const id = await sid($)
+      if (markedId !== id) await markLoaded($, await dataRoot($), id)
+    } catch { /* the gate then speaks once */ }
     if (!typed(e.origin.kind) || e.text.trim() === '' || resending) return next(e)
     if (coldAsk) { await sentAgain($); return next(e) }
     const cold = await coldCheck($)
