@@ -1272,7 +1272,7 @@ test('session.measure keeps state/week_baseline.json across local midnight', asy
 
 test('the reopen button names the headline once the status run has one', () => {
   expect(reopenLabel(undefined)).toBe('▸ TokenTab')
-  expect(reopenLabel('28% daily allowance')).toBe('▸ TokenTab · 28% daily allowance')
+  expect(reopenLabel("28% of today's budget")).toBe("▸ TokenTab · 28% of today's budget")
 })
 
 test('the headline picks the hero: today shows what was used of the day, the rest stay one line', async ($, on) => {
@@ -1290,12 +1290,44 @@ test('the headline picks the hero: today shows what was used of the day, the res
   await draw()
   let tree = await draw()
   let t = texts(tree)
-  expect(t.find(x => x.text === '4%')?.props.size).toBe('title')
-  expect(t.some(x => x.text === 'of the week used today · 5% allowed')).toBe(true)
+  // the hero is the share of today's budget, the one percent the bar, button and status line show too
+  expect(t.find(x => x.text === '80%')?.props.size).toBe('title')
+  expect(t.some(x => x.text === "of today's budget used")).toBe(true)
+  expect(t.some(x => x.text === "today's budget is 5% of the week, 4% used so far")).toBe(true)
   expect(t.some(x => x.text === '5-hour 8% · resets 16:00')).toBe(true)
   expect(t.some(x => x.text === 'week 21% · resets Thu 09:00')).toBe(true)
-  expect(t.some(x => x.text === 'Warning · 80%')).toBe(true)
   expect(elements(tree, 'Svg').filter(s => s.alt !== 'separator')[0]!.alt).toBe("80% of today's budget")
+  // the badge gives the state only, not the hero's number again
+  expect(t.some(x => x.text === 'Warning')).toBe(true)
+  expect(t.some(x => /^(Warning|Over) · |% used$/.test(x.text))).toBe(false)
+
+  // under the warn level there is no badge at all
+  report.value = { ...REPORT, session: { ...session, headline: 'today', windows: [windows[0], windows[1], { ...windows[2], used: 0.3, frac: 0.06 }] } }
+  await $.telemetry.log(request({}))
+  await clock.advance(1000)
+  tree = await draw()
+  t = texts(tree)
+  expect(t.find(x => x.text === '6%')?.props.size).toBe('title')
+  expect(t.some(x => /^(Warning|Over)\b|% used$/.test(x.text))).toBe(false)
+
+  // a 5-hour limit beside today's hero: no second percent, and the badge names the window past its warn level
+  const badgeWith = async (fiveHour: number, today: number) => {
+    report.value = { ...REPORT, session: { ...session, headline: 'today', warn_at: 70, windows: [
+      { ...windows[0], used: fiveHour * 80, limit: 80, frac: fiveHour }, windows[1],
+      { ...windows[2], used: today * 5, frac: today }] } }
+    await $.telemetry.log(request({}))
+    await clock.advance(1000)
+    return texts(await draw()).filter(x => /Warning|Over|% used$/.test(x.text)).map(x => x.text)
+  }
+  expect(await badgeWith(0.4, 0.06)).toEqual([])
+  expect(await badgeWith(0.75, 0.06)).toEqual(['5-hour · Warning'])
+  expect(await badgeWith(1.1, 0.85)).toEqual(['5-hour · Over'])
+  expect(await badgeWith(0.4, 0.85)).toEqual(['Warning'])
+  // both past their warn level in the same state: the limit, which can hard-stop, takes the badge, whichever reads higher
+  expect(await badgeWith(0.9, 0.85)).toEqual(['5-hour · Warning'])
+  expect(await badgeWith(0.75, 0.95)).toEqual(['5-hour · Warning'])
+  // a worse state still wins: today over its budget beats a 5-hour warning
+  expect(await badgeWith(0.75, 1.2)).toEqual(['Over'])
 
   // a headline that is not the lead keeps today as a dim line; the first window with a reading leads
   report.value = { ...REPORT, session: { ...session, headline: null } }
@@ -1304,7 +1336,7 @@ test('the headline picks the hero: today shows what was used of the day, the res
   tree = await draw()
   t = texts(tree)
   expect(t.find(x => x.text === '8%')?.props.size).toBe('title')
-  expect(t.some(x => x.text === 'today 4% of the week · 5% allowed · 80% of budget')).toBe(true)
+  expect(t.some(x => x.text === "today's budget 80% used · 5% of the week, 4% used so far")).toBe(true)
   // the badge then judges only the windows it sits beside, not today's budget
   expect(t.some(x => x.text === 'Warning · 80%')).toBe(false)
 })
