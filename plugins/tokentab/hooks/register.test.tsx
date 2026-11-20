@@ -1323,6 +1323,11 @@ test('the headline picks the hero: today shows what was used of the day, the res
   expect(await badgeWith(0.75, 0.06)).toEqual(['5-hour · Warning'])
   expect(await badgeWith(1.1, 0.85)).toEqual(['5-hour · Over'])
   expect(await badgeWith(0.4, 0.85)).toEqual(['Warning'])
+  // both past their warn level in the same state: the limit, which can hard-stop, takes the badge, whichever reads higher
+  expect(await badgeWith(0.9, 0.85)).toEqual(['5-hour · Warning'])
+  expect(await badgeWith(0.75, 0.95)).toEqual(['5-hour · Warning'])
+  // a worse state still wins: today over its budget beats a 5-hour warning
+  expect(await badgeWith(0.75, 1.2)).toEqual(['Over'])
 
   // a headline that is not the lead keeps today as a dim line; the first window with a reading leads
   report.value = { ...REPORT, session: { ...session, headline: null } }

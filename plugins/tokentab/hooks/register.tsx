@@ -1251,7 +1251,8 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
   const RANK = { success: 0, warning: 1, error: 2 } as const
   const judged = planWindows.flatMap(w => (w.frac === null || (w.scope === 'today' && w !== lead) ? []
     : [{ w, frac: w.frac, tone: toneOf(w.frac, warnOf(w)) }]))
-    .sort((a, b) => RANK[b.tone] - RANK[a.tone] || b.frac - a.frac)
+    // On the same state a limit beats today's budget: it can hard-stop, and today's hero and bar show their own colour
+    .sort((a, b) => RANK[b.tone] - RANK[a.tone] || Number(a.w.scope === 'today') - Number(b.w.scope === 'today') || b.frac - a.frac)
   const worst = lead ? (judged[0]?.frac ?? null) : frac
   const tone = lead ? judged[0]?.tone : frac === null ? undefined : toneOf(frac, s.warn_at)
   // With today's budget as the hero, a second percent beside it reads as a rival figure for the day. The badge
