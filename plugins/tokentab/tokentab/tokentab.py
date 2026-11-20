@@ -1438,7 +1438,7 @@ def status_parts(store, sid, prices, budget, led=None):
              for scope, _, name in LIMITS["percent"] if scope in windows}
     day = day_budget(budget, windows)
     if day:
-        items["today"] = (f"today {day['frac']*100:.0f}% · {_pct(day['used'])}% of week",
+        items["today"] = (f"today {day['frac']*100:.0f}% of budget",
                           f"{day['frac']*100:.0f}% daily allowance")
     lead = plan_lead(budget, windows, day) or next(iter(items), None)
     order = ([lead] if lead else []) + [k for k in items if k != lead]

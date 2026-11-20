@@ -395,7 +395,7 @@ def day_budget_pane_case(store, prices):
             if not line.startswith(line_start) or got != button or kt.status_line(store, "fx", prices, budget) != line:
                 errs.append(f"status for {budget}: {line!r} {got!r}, want {line_start!r} {button!r}")
         line = kt.status_line(store, "fx", prices, {"headline": "today", "daily_budget": ON})
-        if f"today {pct} · 3% of week · 5 hours" not in line:
+        if f"today {pct} of budget · 5 hours" not in line:
             errs.append(f"status line today item: {line!r}")
         os.remove(os.path.join(kt.WINDOWS_DIR, "fx.json"))
         line, button = kt.status_parts(store, "fx", prices, {"headline": "today", "daily_budget": ON})
