@@ -1272,7 +1272,7 @@ test('session.measure keeps state/week_baseline.json across local midnight', asy
 
 test('the reopen button names the headline once the status run has one', () => {
   expect(reopenLabel(undefined)).toBe('▸ TokenTab')
-  expect(reopenLabel('28% daily allowance')).toBe('▸ TokenTab · 28% daily allowance')
+  expect(reopenLabel("28% of today's budget")).toBe("▸ TokenTab · 28% of today's budget")
 })
 
 test('the headline picks the hero: today shows what was used of the day, the rest stay one line', async ($, on) => {
@@ -1309,6 +1309,20 @@ test('the headline picks the hero: today shows what was used of the day, the res
   t = texts(tree)
   expect(t.find(x => x.text === '6%')?.props.size).toBe('title')
   expect(t.some(x => /^(Warning|Over)\b|% used$/.test(x.text))).toBe(false)
+
+  // a 5-hour limit beside today's hero: no second percent, and the badge names the window past its warn level
+  const badgeWith = async (fiveHour: number, today: number) => {
+    report.value = { ...REPORT, session: { ...session, headline: 'today', warn_at: 70, windows: [
+      { ...windows[0], used: fiveHour * 80, limit: 80, frac: fiveHour }, windows[1],
+      { ...windows[2], used: today * 5, frac: today }] } }
+    await $.telemetry.log(request({}))
+    await clock.advance(1000)
+    return texts(await draw()).filter(x => /Warning|Over|% used$/.test(x.text)).map(x => x.text)
+  }
+  expect(await badgeWith(0.4, 0.06)).toEqual([])
+  expect(await badgeWith(0.75, 0.06)).toEqual(['5-hour · Warning'])
+  expect(await badgeWith(1.1, 0.85)).toEqual(['5-hour · Over'])
+  expect(await badgeWith(0.4, 0.85)).toEqual(['Warning'])
 
   // a headline that is not the lead keeps today as a dim line; the first window with a reading leads
   report.value = { ...REPORT, session: { ...session, headline: null } }

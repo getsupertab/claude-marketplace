@@ -1254,18 +1254,21 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
     .sort((a, b) => RANK[b.tone] - RANK[a.tone] || b.frac - a.frac)
   const worst = lead ? (judged[0]?.frac ?? null) : frac
   const tone = lead ? judged[0]?.tone : frac === null ? undefined : toneOf(frac, s.warn_at)
-  // Today's budget as the hero already shows its share in large type: the badge then gives only its state
-  const sameAsHero = lead?.scope === 'today' && judged[0]?.w === lead
-  const badge = worst === null || tone === undefined || (sameAsHero && tone === 'success') ? undefined
+  // With today's budget as the hero, a second percent beside it reads as a rival figure for the day. The badge
+  // then shows only a state, past a warn level, and names the window when it is not today's budget.
+  const todayLeads = lead?.scope === 'today'
+  const named = todayLeads && judged[0] && judged[0].w !== lead ? `${WINDOW_SHORT[judged[0].w.scope]} · ` : ''
+  const badge = worst === null || tone === undefined || (todayLeads && tone === 'success') ? undefined
     : <Text size="footnote" weight="semibold" color={tone}>
-        {sameAsHero ? (tone === 'error' ? 'Over' : 'Warning')
+        {todayLeads ? `${named}${tone === 'error' ? 'Over' : 'Warning'}`
           : tone === 'error' ? `Over · ${pct(worst)}` : tone === 'warning' ? `Warning · ${pct(worst)}` : `${pct(worst)} used`}
       </Text>
   const mode = lead?.scope === 'today' ? `never blocks, warns at ${dailyWarn}%`
     : `${s.hard_stop ? 'hard stop' : 'warn only'}, warns at ${s.warn_at}%`
   // Today's budget is always read as a share of itself; the week's figures follow, named as such
-  const weekShare = (w: PlanWindow) => `today's budget is ${percent(w.allowed ?? 0)} of the week, ${percent(w.used)} used so far`
-  const budgetLine = (w: PlanWindow) => `today's budget ${pct(w.frac ?? 0)} used · ${percent(w.allowed ?? 0)} of the week, ${percent(w.used)} used so far`
+  const ofWeek = (w: PlanWindow) => `${percent(w.allowed ?? 0)} of the week, ${percent(w.used)} used so far`
+  const weekShare = (w: PlanWindow) => `today's budget is ${ofWeek(w)}`
+  const budgetLine = (w: PlanWindow) => `today's budget ${pct(w.frac ?? 0)} used · ${ofWeek(w)}`
   const resets = (w: PlanWindow) => (w.resets ? ` · resets ${w.resets}` : '')
   const limitOf = (w: PlanWindow, sep: string) => (w.limit === null ? '' : `${sep}limit ${percent(w.limit)}`)
   const under = [
@@ -1302,7 +1305,7 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
             </Text>
             {lead
               ? <Text size="footnote" dimColor>{lead.scope === 'today'
-                ? `of today's budget used`
+                ? "of today's budget used"
                 : `of ${WINDOW_NAME[lead.scope]}${limitOf(lead, ' · ')}${resets(lead)}`}</Text>
               : s.plan && <Text size="footnote" dimColor>at API rates</Text>}
           </Box>

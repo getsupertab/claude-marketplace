@@ -1114,9 +1114,6 @@ def day_warn_at(budget):
     v = cfg.get("warn_at_percent") if isinstance(cfg, dict) else None
     return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else 80.0
 
-def _pct(x):
-    return f"{round(x, 1):g}"
-
 def plan_lead(budget, windows, day):
     """The plan number that leads, per budget.json's headline: "today", "five_hour" or "seven_day";
     None when the chosen one has no reading, so the caller's own order stands."""
@@ -1439,7 +1436,7 @@ def status_parts(store, sid, prices, budget, led=None):
     day = day_budget(budget, windows)
     if day:
         items["today"] = (f"today {day['frac']*100:.0f}% of budget",
-                          f"{day['frac']*100:.0f}% daily allowance")
+                          f"{day['frac']*100:.0f}% of today's budget")
     lead = plan_lead(budget, windows, day) or next(iter(items), None)
     order = ([lead] if lead else []) + [k for k in items if k != lead]
     button = items[lead][1] if lead else None
