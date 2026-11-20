@@ -90,7 +90,7 @@ Everything is in `budget.json` in your data folder. `null` turns a limit off. `/
 | `weekly_limit_percent` | `90` | Limit on the plan's weekly usage window. Resets with the window. |
 | `warn_at_percent` | `70` | Warnings start here, then once per 10%. |
 | `hard_stop` | `false` | `true` stops Claude at 100%; `false` only warns. |
-| `daily_budget` | on, warns at `80` | On Pro and Max: what is left of the week, spread evenly over the time left, fixed at the start of each local day. `enabled` switches it, `warn_at_percent` sets the warning. It only ever warns, never blocks, and works whether or not `budgets_on` is set. |
+| `daily_budget` | off, warns at `80` | On Pro and Max: what is left of the week, spread evenly over the time left, fixed at the start of each local day. `enabled` switches it on, `warn_at_percent` is where the pane's badge turns amber. It only shows in the pane, the status line and the reopen button: it sends no notice, never blocks, and ignores `budgets_on`. |
 | `headline` | `five_hour` | Which plan number leads in the pane, the status line and the reopen button: `today` (the daily budget), `five_hour` or `week`. |
 | `context_warn_tokens` | `[200000, 350000]` | Tells you and Claude when the context passes each size. Re-arms after a compaction. |
 | `cold_resume` | on | Holds back the first prompt after the prompt cache has expired. See below. |
