@@ -20,7 +20,7 @@ import { TOKENS } from './tokens'
 // Under `claude -p`, or with no surface, nothing visual happens and the ledger is
 // written as before.
 //
-// The status page. "open in browser" writes `status/<session>.html` and opens it; for
+// The status page. "Open full report" writes `status/<session>.html` and opens it; for
 // 30 minutes after, every redraw also writes its data file beside it (`sankey.py --push`),
 // which the open page loads as a script and swaps in place: live without a server.
 
@@ -357,9 +357,9 @@ export function barCells(parts: { series: string; frac: number }[], cells: numbe
 // ---------- the tabs ----------
 
 export type View = 'spend' | 'budget'
-export const TABS: { view: View; label: string; hotkey: string }[] = [
-  { view: 'spend', label: 'Spend', hotkey: 's' },
-  { view: 'budget', label: 'Budget', hotkey: 'b' },
+export const TABS: { view: View; label: string }[] = [
+  { view: 'spend', label: 'Spend' },
+  { view: 'budget', label: 'Budget' },
 ]
 const TOOLS_SHOWN = 12
 
@@ -873,8 +873,8 @@ export const register: Register = (on, pluginOptions) => {
         {ask.failed ? <Text color="red">TokenTab: {ask.failed}</Text> : null}
         <Text bold>Send your prompt anyway?</Text>
         <Box gap={1}>
-          <Button key="cold-send" label={CONTINUE} hotkey="1" plain variant="primary" onPress={() => { void answerCold($, ask, true) }} />
-          <Button key="cold-hold" label={DONT_SEND} hotkey="2" plain onPress={() => { void answerCold($, ask, false) }} />
+          <Button key="cold-send" label={CONTINUE} plain variant="primary" onPress={() => { void answerCold($, ask, true) }} />
+          <Button key="cold-hold" label={DONT_SEND} plain onPress={() => { void answerCold($, ask, false) }} />
         </Box>
       </Box>
     )
@@ -883,7 +883,7 @@ export const register: Register = (on, pluginOptions) => {
   // Two tabs over one report (Spend) and budget.json (Budget), the same tree on
   // every surface: the terminal ignores `size`, `weight` and `mono` and is monospaced
   // anyway; the bars are an Svg where the surface draws one and block characters in the
-  // terminal. Only a Button takes a press, so the tabs and "open in browser" are Buttons.
+  // terminal. Only a Button takes a press, so the tabs and "Open full report" are Buttons.
   on('ui.render', { component: 'Pane', requestId: PANE }, ($, e) => {
     const { Box, Text, Button } = $.ui.resolve(e)
     columns = e.props.bodyColumns
@@ -895,10 +895,10 @@ export const register: Register = (on, pluginOptions) => {
     const tabs = (
       <Box gap={1}>
         {TABS.map(t => (
-          <Button key={`tab-${t.view}`} label={t.label} hotkey={t.hotkey} variant={view === t.view ? 'primary' : 'secondary'}
+          <Button key={`tab-${t.view}`} label={t.label} variant={view === t.view ? 'primary' : 'secondary'}
             onPress={() => show($, t.view)} />
         ))}
-        <Button key="open-browser" label="open in browser ↗" hotkey="o" onPress={() => { void openSnapshot($) }} />
+        <Button key="open-browser" label="Open full report ↗" onPress={() => { void openSnapshot($) }} />
       </Box>
     )
     const body = view === 'budget' ? budgetTab($, e)
@@ -930,7 +930,7 @@ export const register: Register = (on, pluginOptions) => {
     }
     void refresh($)
     const where = opened.isPlaced
-      ? 'The TokenTab pane is open beside the chat; "open in browser" there writes the status page.'
+      ? 'The TokenTab pane is open beside the chat; "Open full report" there writes the status page.'
       : `The TokenTab pane is not placed here (${opened.reason}).`
     return { text: `${status}\n${where}`, context: figures === '' ? undefined : [`TokenTab, this session's figures as of now:\n${figures}`] }
   }).catch(() => ({ text: 'TokenTab: the status command failed' }))
@@ -1109,6 +1109,50 @@ function cell($: EngineInterface, e: RenderEvent, text: string, width: number, s
 /** The colour of a share by its rank: four hues, then grey for the rest. */
 const shareSeries = (rank: number) => `model_${Math.min(rank + 1, 5)}`
 const SESSIONS_COLOURED = 10
+/** The terminal's fold label: a triangle after the name, down while folded and up while open. */
+export const toggleLabel = (name: string, open: boolean): string => `${name} ${open ? '▴' : '▾'}`
+
+/** Figma's 12 px chevron (TokenTab / Spend, nodes 1140:12 and 1140:14), down while folded and
+ *  up while open, in the secondary text colour of the light or dark ground. */
+export function chevronSvg(open: boolean): string {
+  const [light, dark] = TOKENS.surface.secondary!
+  const d = open ? 'M2 8.5L6 4L10 8.5' : 'M2 4L6 8.5L10 4'
+  return '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 12 12" fill="none">'
+    + `<style>path{stroke:${light}}@media(prefers-color-scheme:dark){path{stroke:${dark}}}</style>`
+    + `<path d="${d}" stroke-width="1.5"/></svg>`
+}
+
+/** A fold's toggle. The terminal draws `DETAILS ▾` dim, as before. Desktop draws only a
+ *  Button's label and drops its children, so there the label is the bare name, at full
+ *  strength as in the frame, with Figma's chevron beside it as an Svg. No gap between them:
+ *  the native button's own inner padding (about 7 px) stands in for the frame's 8 px.
+ *
+ *  On Desktop the chevron itself takes no press: only the name does. A decision for the
+ *  design, tried both ways (2026-11-19). A Button's label is plain text and an Svg child is
+ *  refused, so a pressable chevron has to be a text character; the nearest, `DETAILS ∨`/`∧`,
+ *  worked but did not look like Kate's frame. An Svg drawn beneath a label left blank at its
+ *  end (`position: "absolute"`, pinned right) was tried once and the pane froze, but the
+ *  same day showed the pane also freezes on main once its tree grows past about 128 KiB
+ *  (SESSIONS and DETAILS both open), so that try may deserve a second look.
+ *  Should the API gain an icon on Button, or an Svg inside one, the chevron can move in. */
+function foldToggle($: EngineInterface, e: RenderEvent, key: string, name: string, open: boolean, flip: () => void): RenderChildren {
+  const { Box, Text, Button } = $.ui.resolve(e)
+  const onPress = () => { flip(); $.ui.invalidate('ui.render') }
+  if (e.surface === 'terminal') {
+    return (
+      <Button key={key} label={toggleLabel(name, open)} plain onPress={onPress}>
+        <Text size="footnote" dimColor>{toggleLabel(name, open)}</Text>
+      </Button>
+    )
+  }
+  const { Svg } = $.ui.resolve(e)
+  return (
+    <Box key={`${key}-row`} alignItems="center" gap={0} flexShrink={0}>
+      <Button key={key} label={name} plain onPress={onPress} />
+      <Svg source={chevronSvg(open)} alt={open ? 'chevron up, open' : 'chevron down, folded'} width={12} height={12} />
+    </Box>
+  )
+}
 const sessionSeries = (rank: number) => (rank < SESSIONS_COLOURED ? `session_${rank + 1}` : 'session_other')
 
 /** Spend, Figma's "A · Hero number": the session against its limit as one figure and a
@@ -1134,10 +1178,7 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
       </Box>
       {sessions.length > 0 && (
         <Box key="all-toggle" alignItems="center" gap={2}>
-          <Button key="sessions-toggle" label="SESSIONS" hotkey="a" plain
-            onPress={() => { sessionsOpen = !sessionsOpen; $.ui.invalidate('ui.render') }}>
-            <Text size="footnote" dimColor>{`${sessionsOpen ? '▾' : '▸'} SESSIONS`}</Text>
-          </Button>
+          {foldToggle($, e, 'sessions-toggle', 'SESSIONS', sessionsOpen, () => { sessionsOpen = !sessionsOpen })}
           {!sessionsOpen && (
             <Box flexGrow={1} flexShrink={1}>
               <Text size="footnote" mono dimColor wrap="truncate">{`${sessions.length} this month`}</Text>
@@ -1245,7 +1286,7 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
                 : `of ${WINDOW_NAME[lead.scope]}${limitOf(lead, ' · ')}${resets(lead)}`}</Text>
               : s.plan && <Text size="footnote" dimColor>at API rates</Text>}
           </Box>
-          <Button key="share" label="↑ Share" hotkey="h"
+          <Button key="share" label="↑ Share"
             onPress={() => { void openSharePage($, r) }} />
         </Box>
         {frac !== null && bar($, e, [{ series: toneOf(frac, lead ? warnOf(lead) : s.warn_at), frac }],
@@ -1261,10 +1302,7 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
       <Box key="details" flexDirection="column" gap="xs">
         {/* Desktop draws the Button's label and drops its children, so the summary sits beside it */}
         <Box alignItems="center" gap={2}>
-          <Button key="details-toggle" label="DETAILS" hotkey="d" plain
-            onPress={() => { detailsOpen = !detailsOpen; $.ui.invalidate('ui.render') }}>
-            <Text size="footnote" dimColor>{`${detailsOpen ? '▾' : '▸'} DETAILS`}</Text>
-          </Button>
+          {foldToggle($, e, 'details-toggle', 'DETAILS', detailsOpen, () => { detailsOpen = !detailsOpen })}
           {!detailsOpen && (
             <Box flexGrow={1} flexShrink={1}>
               <Text size="footnote" mono dimColor wrap="truncate">{detailsSummary}</Text>

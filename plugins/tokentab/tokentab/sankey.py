@@ -631,7 +631,7 @@ def page_svg(b, tb=None, where=None):
 
 # The pane's drawing is the page's Sankey in miniature: the same page size and columns,
 # every tool but a long tail, labels small; the surface scales it to the pane's width, and
-# where that is too small to read, "open in browser" shows the page.
+# where that is too small to read, "Open full report" shows the page.
 FLOW_W, FLOW_H, FLOW_PAD, FLOW_FONT, FLOW_LABEL, FLOW_TOOLS = W, H, 110, 8, 30, 12
 FLOW_HIDE = ()
 _S = TOKENS["surface"]
@@ -1200,7 +1200,7 @@ th.n,.tr.th .n{font:11px var(--sans)}
 .li.dim .nm,.li.dim .n{color:var(--dim)}.li.me .nm,.li.me .n{font-weight:700}
 .sessions details>summary.li{cursor:pointer;list-style:none;color:var(--secondary)}
 .sessions summary::-webkit-details-marker{display:none}
-.sessions summary .nm::before{content:"▸";color:var(--dim)}.sessions details[open]>summary .nm::before{content:"▾"}
+.sessions summary .nm::after{content:"▾";color:var(--dim)}.sessions details[open]>summary .nm::after{content:"▴"}
 .sessions details .li .nm{font-size:12px}
 /* where the money went */
 table{border-collapse:collapse;width:100%}
