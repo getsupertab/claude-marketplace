@@ -11,7 +11,7 @@ between turns). Config: budget.json in the plugin's data folder (/tokentab:budge
 import glob, json, os, re, sys, time
 from datetime import datetime
 
-from tokentab import ROOT, data_dir, day_budget, limit_rows, read_windows, utf8_stdio  # noqa: E402  (same folder; env var, else the folder in use)
+from tokentab import ROOT, data_dir, limit_rows, read_windows, utf8_stdio   # noqa: E402  (same folder; env var, else the folder in use)
 CFG   = data_dir()  # plugin: data in the plugin's data folder, shipped files next to this script
 HERE  = os.path.dirname(os.path.abspath(__file__))
 STATE = os.path.join(CFG, "state")
@@ -63,7 +63,7 @@ def tally(transcript, prices, st, others=frozenset()):
     # are derived from them at the current prices every time, so a price change
     # re-prices history. The tamper check runs on raw counts, which only grow.
     keep = {k: st.get(k) for k in ("band_session", "band_today", "band_five_hour", "band_seven_day",
-                                   "reset_five_hour", "reset_seven_day", "band_week_today", "reset_week_today", "ctx_band", "cold_block_at",
+                                   "reset_five_hour", "reset_seven_day", "ctx_band", "cold_block_at",
                                    "turn_base_cost", "turn_base_tokens",
                                    "health_warned", "health_warned_at", "recent", "subs")}
     if "raw" not in st or st.get("v") != FORMAT:   # old format: re-read the transcript once
@@ -573,29 +573,6 @@ def main():
         v = judge(row["scope"], row["frac"], row["parts"][0], row["reset"])
         if v:
             verdicts.append(v)
-
-    # The daily budget out of the weekly window only ever warns: not gated by budgets_on, never denies.
-    # Once at the warn level and once at 100%, per local day.
-    day = day_budget(b, read_windows(sid))
-    if day:
-        dcfg = b.get("daily_budget") if isinstance(b.get("daily_budget"), dict) else {}
-        day_warn = float(dcfg.get("warn_at_percent", 80)) / 100.0
-        if st.get("reset_week_today") != today:
-            st["band_week_today"], st["reset_week_today"] = 0, today
-        if day["frac"] >= day_warn:
-            band = 100 if day["frac"] >= 1.0 else 1
-            if band > int(st.get("band_week_today") or 0):
-                st["band_week_today"] = band
-                pct = int(day["frac"] * 100)
-                nums = f"{round(day['used'], 1):g}% of the week today, {round(day['allowed'], 1):g}% allowed"
-                head = "today's budget reached" if band == 100 else f"{pct}% of today's budget used"
-                verdicts.append(("note",
-                    f"TokenTab: {head} ({nums}). Warning only, nothing is blocked. "
-                    f"/tokentab:budget changes the warning level.",
-                    f"BUDGET NOTICE: {head} ({nums}). This is a soft limit: nothing is "
-                    f"blocked. Mention it to the user in one line and keep going, using fewer "
-                    f"calls where you can: every call in this conversation re-reads its whole "
-                    f"context."))
 
     if helper:
         verdicts = [v for v in verdicts if v[0] == "deny"]

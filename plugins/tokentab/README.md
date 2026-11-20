@@ -186,12 +186,15 @@ account decides.
 
 ### Daily budget
 
-On Pro and Max, TokenTab also spreads what is left of the week over the days left: a
-daily allowance, fixed at the start of each local day. The pane, the status line and the
-button that brings a closed pane back show how much of it is used. It warns once at 80%
-and once at 100%, and never blocks, with budgets on or off. `daily_budget.enabled` and
-`daily_budget.warn_at_percent` in `budget.json` set it. `headline` (`today`, `five_hour`
-or `week`) picks which plan number leads; the default is `five_hour`.
+On Pro and Max, TokenTab can also spread what is left of the week over the days left: a
+daily allowance, fixed at the start of each local day. It is off by default. Turn it on
+with the daily budget switch in the pane's settings, or ask: "turn the daily budget on".
+Once on, the pane, the status line and the button that brings a closed pane back show
+how much of it is used, and the pane's badge turns amber at 80%. It only shows the
+number: it sends no notice, tells Claude nothing, and never blocks, with budgets on or
+off. `daily_budget.enabled` and `daily_budget.warn_at_percent` in `budget.json` set it.
+`headline` (`today`, `five_hour` or `week`) picks which plan number leads; the default
+is `five_hour`.
 
 ### What it does with budgets off
 

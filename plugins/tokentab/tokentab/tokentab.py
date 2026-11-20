@@ -1071,9 +1071,9 @@ def _iso_ts(iso):
 
 def day_budget(budget, windows, now=None):
     """Today's allowance out of the weekly window: what is left of the week, spread evenly over the time
-    left, fixed at the start of the local day. None without a reading, once reset, or when switched off."""
+    left, fixed at the start of the local day. None unless switched on, without a reading, or once reset."""
     cfg = budget.get("daily_budget")
-    if isinstance(cfg, dict) and cfg.get("enabled") is False:
+    if not (isinstance(cfg, dict) and cfg.get("enabled") is True):
         return None
     w = windows.get("seven_day")
     reset = _iso_ts(w.get("resetsAt")) if w else None
@@ -1086,9 +1086,15 @@ def day_budget(budget, windows, now=None):
     mid = datetime.combine(at.date(), dtime()).astimezone().timestamp()
     nxt = datetime.combine(at.date() + timedelta(days=1), dtime()).astimezone().timestamp()
     week_start = reset - 7 * 86400
-    entry = (_read_json(BASELINE_PATH) or {}).get(str(w["resetsAt"]))
+    # Matched to the minute, so the same reset written another way (.000Z, +00:00) still finds its entry
+    kept = _read_json(BASELINE_PATH)
+    entry = next((v for k, v in kept.items() if (t := _iso_ts(k)) is not None and round(t / 60) == round(reset / 60)),
+                 None) if isinstance(kept, dict) else None
     if isinstance(entry, dict) and isinstance(entry.get("base"), (int, float)):
         last = entry.get("last")
+        # Another session may have read the week more recently; usage only grows within a week
+        if isinstance(last, (int, float)):
+            cur = max(cur, float(last))
         base = float(entry["base"] if entry.get("day") == at.date().isoformat()
                      else last if isinstance(last, (int, float)) else cur)
     else:
@@ -1100,6 +1106,13 @@ def day_budget(budget, windows, now=None):
     used = max(0.0, cur - base)
     frac = used / allowed if allowed > 0 else (1.0 if used > 0 else 0.0)
     return {"used": used, "allowed": allowed, "frac": frac, "base": base, "cap": cap}
+
+def day_warn_at(budget):
+    """The daily budget's warn level in percent: 80 when budget.json has none or a hand-edited
+    value that is not a number."""
+    cfg = budget.get("daily_budget")
+    v = cfg.get("warn_at_percent") if isinstance(cfg, dict) else None
+    return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else 80.0
 
 def _pct(x):
     return f"{round(x, 1):g}"
@@ -1391,7 +1404,7 @@ def pane_report(store, sid, prices, budget, led=None, windows=None):
         "frac": row["frac"] if row else None,
         "warn_at": budget.get("warn_at_percent", 70), "hard_stop": bool(budget.get("hard_stop")),
         "headline": plan_lead(budget, windows, day),
-        "daily_warn_at": (budget.get("daily_budget") or {}).get("warn_at_percent", 80),
+        "daily_warn_at": day_warn_at(budget),
     }
     out["rates"] = [{"label": r["label"], "key": r["key"], "tokens": r["tokens"], "cost": r["cost"], "share": r["share"]}
                     for r in R["rates"]]

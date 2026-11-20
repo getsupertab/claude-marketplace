@@ -106,43 +106,23 @@ for cmd in \
   check "guard denies a look-alike: $cmd" "$(tool Bash "$cmd" | "$SCRIPTS/guard.sh")" '"permissionDecision": "deny"'
 done
 
-# Daily budget: a warning out of the weekly window, once at the warn level and once at 100%,
-# per local day. It works with budgets_on off and never denies, hard_stop or not.
+# Daily budget: it only shows in the pane and status line. The guard says nothing about it,
+# under, at or over 100%, switched on or off, whatever budgets_on and hard_stop say.
 REAL="$(for py in python3 python "py -3"; do $py -c 'import sys; sys.exit(sys.version_info[0] != 3)' 2>/dev/null && { $py -c 'import sys; print(sys.executable)'; break; }; done)"
 pyline() { "$REAL" -c "import datetime as d; $1"; }
 TODAY="$(pyline 'print(d.date.today().isoformat())')"
 RESET="$(pyline 'print(d.datetime.combine(d.date.today() + d.timedelta(3), d.time()).astimezone().astimezone(d.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))')"
 printf '{"%s": {"day": "%s", "base": 0, "last": 0}}\n' "$RESET" "$TODAY" > "$DATA/state/week_baseline.json"
 week() { printf '{"windows": [{"kind": "seven_day", "percentUsed": %s, "resetsAt": "%s"}]}\n' "$1" "$RESET" > "$DATA/state/windows/s-guard.json"; }
-refute() {  # refute <name> <haystack> <needle>
-  case "$2" in *"$3"*) echo "FAIL  $1"; echo "      unwanted: $3"; echo "      got:      $2"; FAILED=1 ;; *) echo "pass  $1" ;; esac
-}
-newday() {  # forget the day the guard last warned on
-  sed "s/\"reset_week_today\": \"$TODAY\"/\"reset_week_today\": \"2000-01-01\"/" "$DATA/state/s-guard.json" > "$DATA/b.tmp" && mv "$DATA/b.tmp" "$DATA/state/s-guard.json"
-}
-cat > "$DATA/budget.json" <<'EOF'
-{"budgets_on": false, "hard_stop": true, "daily_budget": {"enabled": true, "warn_at_percent": 80}}
-EOF
-week 5
-check "day budget: quiet under the warn level" "$(tool Read "" | "$SCRIPTS/guard.sh")" ""
-week 30
-OUT="$(tool Read "" | "$SCRIPTS/guard.sh")"
-check "day budget: warns at the warn level, with budgets off" "$OUT" "of today's budget used"
-check "day budget: says it only warns" "$OUT" "Warning only, nothing is blocked"
-refute "day budget: never denies, even with hard_stop" "$OUT" '"permissionDecision": "deny"'
-check "day budget: warns once per band" "$(tool Read "" | "$SCRIPTS/guard.sh")" ""
-week 45
-OUT="$(tool Read "" | "$SCRIPTS/guard.sh")"
-check "day budget: warns again at 100%" "$OUT" "today's budget reached"
-refute "day budget: never denies at 100% either" "$OUT" '"permissionDecision": "deny"'
-check "day budget: quiet after the 100% warning" "$(tool Read "" | "$SCRIPTS/guard.sh")" ""
-newday
-check "day budget: re-armed on a new day" "$(tool Read "" | "$SCRIPTS/guard.sh")" "today's budget reached"
-cat > "$DATA/budget.json" <<'EOF'
-{"budgets_on": false, "hard_stop": true, "daily_budget": {"enabled": false, "warn_at_percent": 80}}
-EOF
-newday
-check "day budget: silent when switched off" "$(tool Read "" | "$SCRIPTS/guard.sh")" ""
+for cfg in '"enabled": true, "warn_at_percent": 80' '"enabled": false' '"enabled": true, "warn_at_percent": "80%"'; do
+  for budgets in false true; do
+    printf '{"budgets_on": %s, "hard_stop": true, "weekly_limit_percent": null, "daily_budget": {%s}}\n' "$budgets" "$cfg" > "$DATA/budget.json"
+    for pct in 5 30 45; do
+      week "$pct"
+      check "day budget: guard silent at ${pct}% of the week, budgets_on $budgets, {$cfg}" "$(tool Read "" | "$SCRIPTS/guard.sh")" ""
+    done
+  done
+done
 rm "$DATA/state/windows/s-guard.json" "$DATA/state/week_baseline.json"
 
 # Python launchers, in the module's order: a python3 that is not Python 3 (the Store

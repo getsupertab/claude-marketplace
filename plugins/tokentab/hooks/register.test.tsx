@@ -1221,9 +1221,13 @@ test('the weekly baseline: seeded from the reading before, rolled at local midni
   // first reading since this week began: the reading before it, from an earlier day, is the base
   expect(weekBaseline({}, { percentUsed: 5, resetsAt: RESET }, prior(localMs(2026, 11, 18, 20), 3), now))
     .toEqual({ [RESET]: { day, base: 3, last: 5 } })
-  // the reading before is from today, or another week's: the week is further on than the day, so now is the base
+  // a reading before from earlier today is still nearer the day's start than now, so it is the base
   expect(weekBaseline({}, { percentUsed: 5, resetsAt: RESET }, prior(localMs(2026, 11, 19, 9), 3), now))
-    .toEqual({ [RESET]: { day, base: 5, last: 5 } })
+    .toEqual({ [RESET]: { day, base: 3, last: 5 } })
+  // the same reset spelled another way is the same week
+  expect(weekBaseline({}, { percentUsed: 5, resetsAt: RESET }, prior(localMs(2026, 11, 18, 20), 3, '2026-11-21T01:00:00.000Z'), now))
+    .toEqual({ [RESET]: { day, base: 3, last: 5 } })
+  // another week's reading says nothing about this one: now is the base
   expect(weekBaseline({}, { percentUsed: 5, resetsAt: RESET }, prior(localMs(2026, 11, 18, 20), 3, '2026-11-14T01:00:00Z'), now))
     .toEqual({ [RESET]: { day, base: 5, last: 5 } })
   expect(weekBaseline({}, { percentUsed: 5, resetsAt: RESET }, undefined, now)).toEqual({ [RESET]: { day, base: 5, last: 5 } })
@@ -1235,6 +1239,10 @@ test('the weekly baseline: seeded from the reading before, rolled at local midni
   expect(weekBaseline(kept, { percentUsed: 6, resetsAt: RESET }, undefined, now)).toEqual({ [RESET]: { day, base: 3, last: 6 } })
   const next = localMs(2026, 11, 20, 8)
   expect(weekBaseline(kept, { percentUsed: 7, resetsAt: RESET }, undefined, next)).toEqual({ [RESET]: { day: localDay(next), base: 5, last: 7 } })
+  // a session behind another never moves `last` back; an entry kept under another spelling moves to the new one
+  expect(weekBaseline(kept, { percentUsed: 4, resetsAt: RESET }, undefined, now)).toEqual({ [RESET]: { day, base: 3, last: 5 } })
+  const spelled = '2026-11-21T01:00:00.000Z'
+  expect(weekBaseline(kept, { percentUsed: 6, resetsAt: spelled }, undefined, now)).toEqual({ [spelled]: { day, base: 3, last: 6 } })
 })
 
 test('session.measure keeps state/week_baseline.json across local midnight', async ($, on) => {
@@ -1297,4 +1305,6 @@ test('the headline picks the hero: today shows what was used of the day, the res
   t = texts(tree)
   expect(t.find(x => x.text === '8%')?.props.size).toBe('title')
   expect(t.some(x => x.text === 'today 4% of the week · 5% allowed · 80% of budget')).toBe(true)
+  // the badge then judges only the windows it sits beside, not today's budget
+  expect(t.some(x => x.text === 'Warning · 80%')).toBe(false)
 })

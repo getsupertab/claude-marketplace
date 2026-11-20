@@ -409,6 +409,10 @@ const localMidnight = (ms: number): number => {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
 }
 
+/** Two spellings of the same weekly reset, compared to the minute. */
+const sameReset = (a: unknown, b: string): boolean =>
+  typeof a === 'string' && Math.round(Date.parse(a) / 60_000) === Math.round(Date.parse(b) / 60_000)
+
 /** state/week_baseline.json after a weekly reading: per reset, the local day, the weekly percent
  *  when that day started (`base`) and the latest reading (`last`). The daily budget is the week's
  *  remainder over `base`, fixed for the day. `before` is the file of readings the new one replaces:
@@ -417,22 +421,29 @@ export function weekBaseline(
   kept: Json, reading: { percentUsed: number; resetsAt: string }, before: Json | undefined, now: number,
 ): Json {
   const out: Json = {}
-  for (const [reset, entry] of Object.entries(kept)) if (Date.parse(reset) > now) out[reset] = entry
+  let entry: { day?: unknown; base?: unknown; last?: unknown } | undefined
+  for (const [reset, value] of Object.entries(kept)) {
+    if (!(Date.parse(reset) > now)) continue
+    // The same reset written another way (.000Z, +00:00) is the same week: take it over under the new spelling
+    if (sameReset(reset, reading.resetsAt)) entry = value as typeof entry
+    else out[reset] = value
+  }
   const reset = Date.parse(reading.resetsAt)
   if (!(reset > now)) return out
   const day = localDay(now), midnight = localMidnight(now), cur = reading.percentUsed
-  const entry = out[reading.resetsAt] as { day?: unknown; base?: unknown; last?: unknown } | undefined
   if (typeof entry?.base === 'number' && typeof entry.last === 'number') {
-    out[reading.resetsAt] = entry.day === day ? { ...entry, last: cur } : { day, base: entry.last, last: cur }
+    // Usage only grows within a week, so a reading below `last` is a session behind another
+    const last = Math.max(entry.last, cur)
+    out[reading.resetsAt] = entry.day === day ? { ...entry, last } : { day, base: entry.last, last }
     return out
   }
   const prev = Array.isArray(before?.windows)
     ? (before.windows as { kind?: unknown; percentUsed?: unknown; resetsAt?: unknown }[])
-        .find(w => w.kind === 'seven_day' && w.resetsAt === reading.resetsAt)
+        .find(w => w.kind === 'seven_day' && sameReset(w.resetsAt, reading.resetsAt))
     : undefined
-  const prevAt = typeof before?.at === 'string' ? Date.parse(before.at) : NaN
-  const base = typeof prev?.percentUsed === 'number' && prevAt < midnight ? prev.percentUsed
-    : reset - 7 * 86_400_000 >= midnight ? 0 : cur
+  // A week that began today starts at zero; else the reading before, even from earlier today, is nearer the day's start than now
+  const base = reset - 7 * 86_400_000 >= midnight ? 0
+    : typeof prev?.percentUsed === 'number' ? Math.min(prev.percentUsed, cur) : cur
   out[reading.resetsAt] = { day, base, last: cur }
   return out
 }
@@ -1235,9 +1246,11 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
   const frac = lead ? lead.frac : s.frac
   const dailyWarn = s.daily_warn_at ?? 80
   const warnOf = (w: PlanWindow) => (w.scope === 'today' ? dailyWarn : s.warn_at)
-  // The badge shows the window nearest its own warn level, so today's budget counts too
+  // The badge shows the window nearest its own warn level. Today's budget counts only as the lead,
+  // since nothing else beside the badge names it.
   const RANK = { success: 0, warning: 1, error: 2 } as const
-  const judged = planWindows.flatMap(w => (w.frac === null ? [] : [{ frac: w.frac, tone: toneOf(w.frac, warnOf(w)) }]))
+  const judged = planWindows.flatMap(w => (w.frac === null || (w.scope === 'today' && w !== lead) ? []
+    : [{ frac: w.frac, tone: toneOf(w.frac, warnOf(w)) }]))
     .sort((a, b) => RANK[b.tone] - RANK[a.tone] || b.frac - a.frac)
   const worst = lead ? (judged[0]?.frac ?? null) : frac
   const tone = lead ? judged[0]?.tone : frac === null ? undefined : toneOf(frac, s.warn_at)
@@ -1245,7 +1258,7 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
     : <Text size="footnote" weight="semibold" color={tone}>
         {tone === 'error' ? `Over · ${pct(worst)}` : tone === 'warning' ? `Warning · ${pct(worst)}` : `${pct(worst)} used`}
       </Text>
-  const mode = lead?.scope === 'today' ? `warn only, warns at ${dailyWarn}%`
+  const mode = lead?.scope === 'today' ? `never blocks, warns at ${dailyWarn}%`
     : `${s.hard_stop ? 'hard stop' : 'warn only'}, warns at ${s.warn_at}%`
   const budgetLine = (w: PlanWindow) => `today ${percent(w.used)} of the week · ${percent(w.allowed ?? 0)} allowed · ${pct(w.frac ?? 0)} of budget`
   const resets = (w: PlanWindow) => (w.resets ? ` · resets ${w.resets}` : '')

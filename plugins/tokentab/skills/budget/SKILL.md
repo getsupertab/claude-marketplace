@@ -22,7 +22,8 @@ Read the file and show, in a short list: whether `budgets_on` is on (off, or mis
 means none of the limits below are checked), the unit in effect, its two limits (`null` means off), `warn_at_percent` and `hard_stop` (true blocks at 100%,
 false only warns). "Turn budgets on/off" means `budgets_on`. Also show the daily budget
 (`daily_budget.enabled` and `daily_budget.warn_at_percent`: on Pro and Max, what is left
-of the week spread over the days left; it only warns and ignores `budgets_on`) and
+of the week spread over the days left; off unless `enabled` is true, and it only shows in
+the pane and status line, never notifies or blocks, and ignores `budgets_on`) and
 `headline` (`today`, `five_hour` or `week`: which plan number leads in the pane, status
 line and reopen button).
 
