@@ -88,6 +88,8 @@ check "guard ignores an old file's limit_unit while the plan reports windows" \
 rm "$DATA/state/rate_limits.json" "$DATA/state/windows/s-guard.json"
 check "guard lets TokenTab's own report command through" \
   "$(tool Bash "python3 /plugins/tokentab/tokentab/tokentab.py --status" | "$SCRIPTS/guard.sh")" ""
+check "guard lets the status-json run through" \
+  "$(tool Bash "python3 /plugins/tokentab/tokentab/tokentab.py --status-json --session abc" | "$SCRIPTS/guard.sh")" ""
 # Each launcher the hooks may find Python with, and Windows paths (JSON-escaped below:
 # \\ is one backslash, \" a quote)
 for cmd in \
@@ -104,9 +106,27 @@ for cmd in \
   check "guard denies a look-alike: $cmd" "$(tool Bash "$cmd" | "$SCRIPTS/guard.sh")" '"permissionDecision": "deny"'
 done
 
+# Daily budget: it only shows in the pane and status line. The guard says nothing about it,
+# under, at or over 100%, switched on or off, whatever budgets_on and hard_stop say.
+REAL="$(for py in python3 python "py -3"; do $py -c 'import sys; sys.exit(sys.version_info[0] != 3)' 2>/dev/null && { $py -c 'import sys; print(sys.executable)'; break; }; done)"
+pyline() { "$REAL" -c "import datetime as d; $1"; }
+TODAY="$(pyline 'print(d.date.today().isoformat())')"
+RESET="$(pyline 'print(d.datetime.combine(d.date.today() + d.timedelta(3), d.time()).astimezone().astimezone(d.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))')"
+printf '{"%s": {"day": "%s", "base": 0, "last": 0}}\n' "$RESET" "$TODAY" > "$DATA/state/week_baseline.json"
+week() { printf '{"windows": [{"kind": "seven_day", "percentUsed": %s, "resetsAt": "%s"}]}\n' "$1" "$RESET" > "$DATA/state/windows/s-guard.json"; }
+for cfg in '"enabled": true, "warn_at_percent": 80' '"enabled": false' '"enabled": true, "warn_at_percent": "80%"'; do
+  for budgets in false true; do
+    printf '{"budgets_on": %s, "hard_stop": true, "weekly_limit_percent": null, "daily_budget": {%s}}\n' "$budgets" "$cfg" > "$DATA/budget.json"
+    for pct in 5 30 45; do
+      week "$pct"
+      check "day budget: guard silent at ${pct}% of the week, budgets_on $budgets, {$cfg}" "$(tool Read "" | "$SCRIPTS/guard.sh")" ""
+    done
+  done
+done
+rm "$DATA/state/windows/s-guard.json" "$DATA/state/week_baseline.json"
+
 # Python launchers, in the module's order: a python3 that is not Python 3 (the Store
 # stub) and a python that is Python 2 are passed over for py -3
-REAL="$(for py in python3 python "py -3"; do $py -c 'import sys; sys.exit(sys.version_info[0] != 3)' 2>/dev/null && { $py -c 'import sys; print(sys.executable)'; break; }; done)"
 BIN="$TMP/bin"
 mkdir -p "$BIN"
 printf '#!/bin/sh\nexit 9009\n' > "$BIN/python3"

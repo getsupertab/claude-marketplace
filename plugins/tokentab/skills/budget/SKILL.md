@@ -20,7 +20,12 @@ Arguments: $ARGUMENTS
 
 Read the file and show, in a short list: whether `budgets_on` is on (off, or missing,
 means none of the limits below are checked), the unit in effect, its two limits (`null` means off), `warn_at_percent` and `hard_stop` (true blocks at 100%,
-false only warns). "Turn budgets on/off" means `budgets_on`.
+false only warns). "Turn budgets on/off" means `budgets_on`. Also show the daily budget
+(`daily_budget.enabled` and `daily_budget.warn_at_percent`: on Pro and Max, what is left
+of the week spread over the days left; off unless `enabled` is true, and it only shows in
+the pane and status line, never notifies or blocks, and ignores `budgets_on`) and
+`headline` (`today`, `five_hour` or `week`: which plan number leads in the pane, status
+line and reopen button).
 
 The account decides what the limits count; it is not a setting. Percent of the plan's
 usage windows (`five_hour_limit_percent`, `weekly_limit_percent`) where Claude Code reports
@@ -41,7 +46,7 @@ the user can ask for a change with `/tokentab:budget <what to change>`.
 
    Where `python3` is missing or is not Python 3 (Windows), run the same with `python`, else `py -3`, in its place.
    KEY is dotted for nested settings (`cold_resume.confirm_seconds`); VALUE is a number, `off` for a
-   limit switched off, `on`/`off` for a switch. It refuses a value that does not fit or a
+   limit switched off, `on`/`off` for a switch, `today`, `five_hour` or `week` for `headline`. It refuses a value that does not fit or a
    key that does not exist, and keeps the file's order and comments. `budget.py get` prints
    the file.
 3. Show the new values. They apply from the next prompt; no restart is needed. The same

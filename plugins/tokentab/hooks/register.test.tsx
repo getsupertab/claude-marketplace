@@ -1,7 +1,7 @@
 import { test, expect, mock } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On, RenderElement, RenderNode } from 'claude-code'
-import { at, barCells, barSvg, chevronSvg, dataDir, inUnit, int, liveLines, pct, SECTIONS, SERIES, shareCard, shareCardSvg, shareLinks, sharePageHtml, shareText, shown, stripAnsi, timedOut, toneOf, ttlOf, unitOf, usd, withNewKeys, wrapWords } from './register'
+import { at, barCells, barSvg, chevronSvg, dataDir, inUnit, int, liveLines, pct, reopenLabel, SECTIONS, SERIES, shareCard, shareCardSvg, shareLinks, sharePageHtml, shareText, shown, stripAnsi, timedOut, toneOf, ttlOf, unitOf, usd, weekBaseline, withNewKeys, wrapWords } from './register'
 import type { Report } from './register'
 
 // The world beneath the plugin: `$.fs` reaches nothing under `claude plugin test`, and
@@ -20,6 +20,8 @@ type Ui = {
   pythons: Record<string, string>; probes: string[]; launchers: string[]
   // `uname` what `uname -s` prints; `openers` the browser openers installed, each with the exit code it returns
   uname: string; openers: Record<string, number>
+  // the reopen button's headline text `--status-json` answers with, null off a plan
+  button: string | null
 }
 function world(on: On, initial: Record<string, string>, placed = { is: true }, report: { value: Report } = { value: REPORT }) {
   const fs = new Map(Object.entries(initial))
@@ -38,7 +40,7 @@ function world(on: On, initial: Record<string, string>, placed = { is: true }, r
   const ui: Ui = {
     opens: 0, commands: [], status: [], invalidates: 0, runs: [], toasts: [], config: [], store: new Map(), rows: ['tokentab.autoOpen'], surfaces: [],
     pythons: { python3: '3' }, probes: [], launchers: [],
-    uname: 'Darwin', openers: { open: 0, 'xdg-open': 0, 'explorer.exe': 1 },
+    uname: 'Darwin', openers: { open: 0, 'xdg-open': 0, 'explorer.exe': 1 }, button: null,
   }
   on('session.surfaces', () => ({ value: ui.surfaces }))
   on('session.attach', ($, e) => ({ clientId: e.clientId }))
@@ -78,7 +80,7 @@ function world(on: On, initial: Record<string, string>, placed = { is: true }, r
     ui.runs.push(argv)
     const script = (argv[1] ?? '').split('/').pop()
     let exitCode = 0, stdout = '', stderr = ''
-    if (script === 'tokentab.py') stdout = argv.includes('--status') ? STATUS + '\n' : argv.includes('--report') ? JSON.stringify(report.value) + '\n' : argv.includes('--once') ? ONCE : ''
+    if (script === 'tokentab.py') stdout = argv.includes('--status') ? STATUS + '\n' : argv.includes('--status-json') ? JSON.stringify({ line: STATUS, button: ui.button }) + '\n' : argv.includes('--report') ? JSON.stringify(report.value) + '\n' : argv.includes('--once') ? ONCE : ''
     else if (script === 'sankey.py') stdout = argv.includes('--out') ? argv[argv.indexOf('--out') + 1] + '\n' : ''
     else if (script === 'budget.py') {
       if (argv[argv.length - 1] === 'bad') { exitCode = 1; stderr = `${argv[3]}: a number is needed, not 'bad'\n` }
@@ -140,6 +142,7 @@ const REPORT: Report = {
 const BUDGET = JSON.stringify({
   _comment: 'kept', session_limit_usd: null,
   daily_limit_usd: 40, warn_at_percent: 70, hard_stop: false,
+  daily_budget: { enabled: true, warn_at_percent: 80 }, headline: 'five_hour',
   cold_resume: { confirm_seconds: 120, min_context_tokens: 100000 },
 }, null, 2)
 
@@ -593,7 +596,7 @@ test('while the pane is not placed, the status line carries the numbers', async 
   await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
   await clock.settle()
   expect(ui.opens).toBe(1)
-  expect(ui.runs.map(a => a.slice(2))).toEqual([['--status', '--session', SID]])
+  expect(ui.runs.map(a => a.slice(2))).toEqual([['--status-json', '--session', SID]])
   expect(ui.status).toEqual([STATUS])
 })
 
@@ -816,13 +819,13 @@ test('the Budget tab: auto-open through the config menu, the limits through the 
   const tree = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   const t = texts(tree)
   expect(t.some(x => x.text === 'Open pane at session start')).toBe(true)
-  expect(t.filter(x => /^[A-Z][A-Z ]+$/.test(x.text) && x.props.dimColor).map(x => x.text)).toEqual(['OPTIONS', 'LIMITS'])
+  expect(t.filter(x => /^[A-Z][A-Z ]+$/.test(x.text) && x.props.dimColor).map(x => x.text)).toEqual(['OPTIONS', 'LIMITS', 'DAILY BUDGET'])
   // the units are in the names
-  expect(t.filter(x => x.text.endsWith(')')).map(x => x.text)).toEqual(['This session (USD)', 'Today (USD)', 'Warn at (%)'])
+  expect(t.filter(x => x.text.endsWith(')')).map(x => x.text)).toEqual(['This session (USD)', 'Today (USD)', 'Warn at (%)', 'Warn at (%)'])
   expect(elements(tree, 'Button').find(b => b.key === 'auto-open')?.label).toBe('on')
   // the fields hold budget.json's values, "off" for null, grouped tokens
   const inputs = elements(tree, 'Input')
-  expect(inputs.map(i => i.key)).toEqual(['b-session_limit_usd', 'b-daily_limit_usd', 'b-warn_at_percent'])
+  expect(inputs.map(i => i.key)).toEqual(['b-session_limit_usd', 'b-daily_limit_usd', 'b-warn_at_percent', 'b-daily_budget.warn_at_percent'])
   expect(inputs.find(i => i.key === 'b-daily_limit_usd')?.value).toBe('40')
   expect(inputs.find(i => i.key === 'b-session_limit_usd')?.value).toBe('off')
   expect(elements(tree, 'Button').find(b => b.key === 'b-budgets_on')?.label).toBe('off')
@@ -842,11 +845,17 @@ test('the Budget tab: auto-open through the config menu, the limits through the 
   expect(texts(after).find(x => x.props.color === 'error')?.text.trim()).toBe("session_limit_usd: a number is needed, not 'bad'")
   await $.ui.press(press('b-hard_stop'))
   expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'hard_stop', 'on'])
+  // the daily budget: its switch, and the headline as a button that sets the next choice
+  expect(elements(tree, 'Button').find(b => b.key === 'b-daily_budget.enabled')?.label).toBe('on')
+  expect(elements(tree, 'Button').find(b => b.key === 'b-headline')?.label).toBe('five_hour')
+  await $.ui.press(press('b-headline'))
+  expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'headline', 'week'])
 
   // mobile has no Input: the values are shown
   const mobile = await $.ui.render({ surface: 'mobile', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   expect(elements(mobile, 'Input')).toEqual([])
   expect(texts(mobile).some(x => x.text === '40')).toBe(true)
+  expect(texts(mobile).some(x => x.text === 'five_hour')).toBe(true)
 })
 
 test('the limit unit follows the account: percent where the plan reports a usage window; one field per scope', () => {
@@ -859,6 +868,9 @@ test('the limit unit follows the account: percent where the plan reports a usage
   // a newer version's keys join the user's file in the shipped order, the user's values kept
   expect(withNewKeys({ a: 1, b: 2 }, { a: 0, b: 0 })).toBeUndefined()
   expect(JSON.stringify(withNewKeys({ b: 5, x: 1 }, { a: 0, b: 0, c: 3 }))).toBe('{"a":0,"b":5,"c":3,"x":1}')
+  // the daily budget's object and the headline reach a file from before them
+  expect(withNewKeys({ hard_stop: true }, { hard_stop: false, daily_budget: { enabled: true, warn_at_percent: 80 }, headline: 'five_hour' }))
+    .toEqual({ hard_stop: true, daily_budget: { enabled: true, warn_at_percent: 80 }, headline: 'five_hour' })
 })
 
 test('a first usage-window reading redraws the open Budget tab in percent, no tab switch', async ($, on) => {
@@ -896,7 +908,7 @@ test('session.measure records the usage windows; the Budget tab then shows the p
   await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   await $.ui.press(press('tab-budget'))
   const tree = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
-  expect(elements(tree, 'Input').map(i => i.key)).toEqual(['b-five_hour_limit_percent', 'b-weekly_limit_percent', 'b-warn_at_percent'])
+  expect(elements(tree, 'Input').map(i => i.key)).toEqual(['b-five_hour_limit_percent', 'b-weekly_limit_percent', 'b-warn_at_percent', 'b-daily_budget.warn_at_percent'])
   expect(elements(tree, 'Button').some(b => b.key === 'b-limit_unit')).toBe(false)
 })
 
@@ -1192,4 +1204,107 @@ test('an empty prompt is never held', async ($, on) => {
   const seen = coldWorld(on, COLD)
   expect(await $.prompt.submit({ text: ' ', wait: false, origin: { kind: 'sdk' } })).toEqual({ text: ' ' })
   expect(seen.confirms).toBe(0)
+})
+
+// Local calendar arithmetic, as the module does it: the machine's own time zone.
+const localMs = (y: number, m: number, d: number, h = 0) => new Date(y, m - 1, d, h).getTime()
+const localDay = (ms: number) => {
+  const d = new Date(ms)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+const RESET = '2026-11-21T01:00:00Z'
+
+test('the weekly baseline: seeded from the reading before, rolled at local midnight, past resets dropped', () => {
+  const now = localMs(2026, 11, 19, 14)
+  const day = localDay(now)
+  const prior = (at: number, percentUsed: number, resetsAt = RESET) => ({ at: new Date(at).toISOString(), windows: [{ kind: 'seven_day', percentUsed, resetsAt }] })
+  // first reading since this week began: the reading before it, from an earlier day, is the base
+  expect(weekBaseline({}, { percentUsed: 5, resetsAt: RESET }, prior(localMs(2026, 11, 18, 20), 3), now))
+    .toEqual({ [RESET]: { day, base: 3, last: 5 } })
+  // a reading before from earlier today is still nearer the day's start than now, so it is the base
+  expect(weekBaseline({}, { percentUsed: 5, resetsAt: RESET }, prior(localMs(2026, 11, 19, 9), 3), now))
+    .toEqual({ [RESET]: { day, base: 3, last: 5 } })
+  // the same reset spelled another way is the same week
+  expect(weekBaseline({}, { percentUsed: 5, resetsAt: RESET }, prior(localMs(2026, 11, 18, 20), 3, '2026-11-21T01:00:00.000Z'), now))
+    .toEqual({ [RESET]: { day, base: 3, last: 5 } })
+  // another week's reading says nothing about this one: now is the base
+  expect(weekBaseline({}, { percentUsed: 5, resetsAt: RESET }, prior(localMs(2026, 11, 18, 20), 3, '2026-11-14T01:00:00Z'), now))
+    .toEqual({ [RESET]: { day, base: 5, last: 5 } })
+  expect(weekBaseline({}, { percentUsed: 5, resetsAt: RESET }, undefined, now)).toEqual({ [RESET]: { day, base: 5, last: 5 } })
+  // a week that began today starts at zero
+  const fresh = new Date(localMs(2026, 11, 19, 1) + 7 * 86_400_000).toISOString()
+  expect(weekBaseline({}, { percentUsed: 2, resetsAt: fresh }, undefined, now)).toEqual({ [fresh]: { day, base: 0, last: 2 } })
+  // the same day moves `last`; a new day takes the old `last` as its base; resets already past are dropped
+  const kept = { [RESET]: { day, base: 3, last: 5 }, '2026-11-10T01:00:00Z': { day: '2026-11-09', base: 1, last: 2 } }
+  expect(weekBaseline(kept, { percentUsed: 6, resetsAt: RESET }, undefined, now)).toEqual({ [RESET]: { day, base: 3, last: 6 } })
+  const next = localMs(2026, 11, 20, 8)
+  expect(weekBaseline(kept, { percentUsed: 7, resetsAt: RESET }, undefined, next)).toEqual({ [RESET]: { day: localDay(next), base: 5, last: 7 } })
+  // a session behind another never moves `last` back; an entry kept under another spelling moves to the new one
+  expect(weekBaseline(kept, { percentUsed: 4, resetsAt: RESET }, undefined, now)).toEqual({ [RESET]: { day, base: 3, last: 5 } })
+  const spelled = '2026-11-21T01:00:00.000Z'
+  expect(weekBaseline(kept, { percentUsed: 6, resetsAt: spelled }, undefined, now)).toEqual({ [spelled]: { day, base: 3, last: 6 } })
+})
+
+test('session.measure keeps state/week_baseline.json across local midnight', async ($, on) => {
+  mock.env(on, { HOME: '/home/t' })
+  const start = localMs(2026, 11, 19, 14)
+  const clock = mock.clock(on, { now: start })
+  const before = { at: new Date(localMs(2026, 11, 18, 20)).toISOString(), windows: [{ kind: 'seven_day', percentUsed: 3, resetsAt: RESET }] }
+  const { fs } = world(on, { ...FILES, [`${DATA}/state/rate_limits.json`]: JSON.stringify(before) })
+  on('session.measure', ($, e) => ({ changed: e.changed }))
+  // no session.start: nothing draws, so no beat runs while the clock jumps past midnight
+  const measure = (percentUsed: number) => $.session.measure({
+    context: { window: 200000 }, rateLimits: [{ kind: 'five_hour', percentUsed: 1, resetsAt: '2026-11-19T18:00:00Z' }, { kind: 'seven_day', percentUsed, resetsAt: RESET }], changed: ['rateLimits'],
+  })
+  const baseline = () => JSON.parse(fs.get(`${DATA}/state/week_baseline.json`)!)
+  await measure(5)
+  expect(baseline()).toEqual({ [RESET]: { day: localDay(start), base: 3, last: 5 } })
+  await measure(6)
+  expect(baseline()[RESET]).toEqual({ day: localDay(start), base: 3, last: 6 })
+  await clock.advance(12 * 3_600_000)   // past local midnight
+  await measure(9)
+  expect(baseline()[RESET]).toEqual({ day: localDay(start + 12 * 3_600_000), base: 6, last: 9 })
+  // a failing write leaves the windows files alone
+  fs.set(`${DATA}/state/week_baseline.json`, 'not json')
+  await measure(10)
+  expect(JSON.parse(fs.get(`${DATA}/state/rate_limits.json`)!).windows[1].percentUsed).toBe(10)
+})
+
+test('the reopen button names the headline once the status run has one', () => {
+  expect(reopenLabel(undefined)).toBe('▸ TokenTab')
+  expect(reopenLabel('28% daily allowance')).toBe('▸ TokenTab · 28% daily allowance')
+})
+
+test('the headline picks the hero: today shows what was used of the day, the rest stay one line', async ($, on) => {
+  mock.env(on, { HOME: '/home/t' })
+  const clock = mock.clock(on, { now: T0 })
+  const windows = [{ scope: 'five_hour', used: 8, limit: null, frac: null, resets: '16:00' },
+                   { scope: 'seven_day', used: 21, limit: null, frac: null, resets: 'Thu 09:00' },
+                   { scope: 'today', used: 4, allowed: 5, limit: null, frac: 0.8, resets: null }] as const
+  const session = { ...REPORT.session!, unit: 'percent' as const, plan: true, windows: [...windows], limit: null, frac: null, daily_warn_at: 80 }
+  const report: { value: Report } = { value: { ...REPORT, session: { ...session, headline: 'today' } } }
+  world(on, FILES, { is: true }, report)
+  await $.session.start({ cwd: '/w', surface: 'desktop', isInteractive: true })
+  await clock.settle()
+  const draw = async () => $.ui.render({ surface: 'desktop', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
+  await draw()
+  let tree = await draw()
+  let t = texts(tree)
+  expect(t.find(x => x.text === '4%')?.props.size).toBe('title')
+  expect(t.some(x => x.text === 'of the week used today · 5% allowed')).toBe(true)
+  expect(t.some(x => x.text === '5-hour 8% · resets 16:00')).toBe(true)
+  expect(t.some(x => x.text === 'week 21% · resets Thu 09:00')).toBe(true)
+  expect(t.some(x => x.text === 'Warning · 80%')).toBe(true)
+  expect(elements(tree, 'Svg').filter(s => s.alt !== 'separator')[0]!.alt).toBe("80% of today's budget")
+
+  // a headline that is not the lead keeps today as a dim line; the first window with a reading leads
+  report.value = { ...REPORT, session: { ...session, headline: null } }
+  await $.telemetry.log(request({}))
+  await clock.advance(1000)
+  tree = await draw()
+  t = texts(tree)
+  expect(t.find(x => x.text === '8%')?.props.size).toBe('title')
+  expect(t.some(x => x.text === 'today 4% of the week · 5% allowed · 80% of budget')).toBe(true)
+  // the badge then judges only the windows it sits beside, not today's budget
+  expect(t.some(x => x.text === 'Warning · 80%')).toBe(false)
 })

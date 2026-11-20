@@ -8,8 +8,9 @@ and the budget skill alike.
   budget.py set KEY VALUE   change one existing key and write the file back, its order and
                             its _comment keys kept. VALUE: a number; "off", "none" or "" for
                             a limit that is switched off (null); on/off/true/false/yes/no
-                            for a switch. Prints the new value as JSON; a value that does
-                            not fit is refused on stderr with exit code 1, nothing written.
+                            for a switch; today, five_hour or week for headline. Prints the
+                            new value as JSON; a value that does not fit is refused on
+                            stderr with exit code 1, nothing written.
 
 A key that is not in the file is refused too, so a typo never adds one. Lists
 (context_warn_tokens) and the word scale are edited in the file itself.
@@ -21,6 +22,7 @@ import tokentab as kt  # noqa: E402
 
 PATH = os.path.join(kt.CFG, "budget.json")
 SHIPPED = os.path.join(os.path.dirname(os.path.abspath(__file__)), "budget.json")
+HEADLINES = ("today", "five_hour", "week")
 TRUE, FALSE = ("on", "true", "yes", "1"), ("off", "false", "no", "0")
 
 
@@ -55,6 +57,12 @@ def parse(key, old, raw):
     if leaf == "limit_unit":   # an old file may still hold it
         raise ValueError(f"{key}: no longer a setting; the account decides (percent on Pro and Max, else USD)")
     text = str(raw).strip().lower().replace(",", "").replace("$", "").rstrip("%").strip()
+    if leaf == "headline":
+        if text not in HEADLINES:
+            raise ValueError(f"{key}: one of {', '.join(HEADLINES)}, not {raw!r}")
+        return text
+    if isinstance(old, str):
+        raise ValueError(f"{key}: edit this one in the file")
     if isinstance(old, bool):
         if text in TRUE: return True
         if text in FALSE: return False
@@ -91,7 +99,7 @@ def main():
         cfg = load()
         if a[1] == "budgets_on" and a[1] not in cfg:
             cfg = {"budgets_on": False, **cfg}     # a file from before the switch
-        if "." not in a[1] and a[1] not in cfg:
+        if a[1].split(".")[0] not in cfg:
             cfg = upgraded(cfg)                    # a key a newer version ships
         node, leaf = lookup(cfg, a[1])
         node[leaf] = parse(a[1], node[leaf], a[2])

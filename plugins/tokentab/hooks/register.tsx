@@ -269,6 +269,10 @@ export type Report = {
     /** The hero's limit as text: `$0.82 of $1.00`, `5-hour window 42% used, limit 80%`. */
     limit: string | null; frac: number | null
     warn_at: number; hard_stop: boolean
+    /** The window budget.json's `headline` picks to lead, null when it has no reading. */
+    headline?: PlanWindow['scope'] | null
+    /** The daily budget's own warn level, percent. */
+    daily_warn_at?: number
   }
   rates?: { label: string; key: string; tokens: number; cost: number; share: number }[]
   total?: { tokens: number; cost: number }
@@ -279,10 +283,15 @@ export type Report = {
   sessions?: { sid: string; name: string; detail?: string; cost: number; share: number }[]
 }
 
-/** `limit` and `frac` are null where no limit is checked: limits off, or none set for that window. */
-export type PlanWindow = { scope: 'five_hour' | 'seven_day'; used: number; limit: number | null; frac: number | null; resets: string | null }
-const WINDOW_NAME = { five_hour: '5-hour window', seven_day: 'weekly window' } as const
-const WINDOW_SHORT = { five_hour: '5-hour', seven_day: 'week' } as const
+/** `limit` and `frac` are null where no limit is checked: limits off, or none set for that window.
+ *  `today` is the daily budget out of the weekly window, not a reported window: `used` and
+ *  `allowed` are percent of the week, `frac` is always set. */
+export type PlanWindow = {
+  scope: 'five_hour' | 'seven_day' | 'today'; used: number; allowed?: number
+  limit: number | null; frac: number | null; resets: string | null
+}
+const WINDOW_NAME = { five_hour: '5-hour window', seven_day: 'weekly window', today: "today's budget" } as const
+const WINDOW_SHORT = { five_hour: '5-hour', seven_day: 'week', today: 'today' } as const
 const percent = (n: number) => `${Math.round(n * 10) / 10}%`
 
 /** A tool, or a layer of its breakdown (Bash's program, then its subcommand). */
@@ -361,8 +370,10 @@ const TOOLS_SHOWN = 12
 // effect is percent. Every write goes through tokentab/budget.py, the one validator.
 export type Unit = 'usd' | 'percent'
 export type Setting = {
-  key: string; label: string; kind: 'limit' | 'switch'; unit?: string
+  key: string; label: string; kind: 'limit' | 'switch' | 'choice'; unit?: string
   percent?: { key: string; label: string }
+  /** A `choice` cycles through these, each press setting the next. */
+  choices?: string[]
 }
 export const SECTIONS: { title: string; toggle?: Setting; rows: Setting[] }[] = [
   { title: 'limits', toggle: { key: 'budgets_on', label: 'check the limits', kind: 'switch' }, rows: [
@@ -372,6 +383,10 @@ export const SECTIONS: { title: string; toggle?: Setting; rows: Setting[] }[] = 
       percent: { key: 'weekly_limit_percent', label: 'This week' } },
     { key: 'warn_at_percent', label: 'Warn at', unit: '%', kind: 'limit' },
     { key: 'hard_stop', label: 'Enable hard stop', kind: 'switch' },
+  ] },
+  { title: 'daily budget', toggle: { key: 'daily_budget.enabled', label: 'daily budget', kind: 'switch' }, rows: [
+    { key: 'daily_budget.warn_at_percent', label: 'Warn at', unit: '%', kind: 'limit' },
+    { key: 'headline', label: 'Headline', kind: 'choice', choices: ['today', 'five_hour', 'week'] },
   ] },
 ]
 
@@ -383,6 +398,54 @@ const WINDOWS = ['five_hour', 'seven_day']
  *  a usage window (Pro, Max), else USD. The same rule as limit_unit() in tokentab.py. */
 export function unitOf(windows: { kind: string }[]): Unit {
   return windows.some(window => WINDOWS.includes(window.kind)) ? 'percent' : 'usd'
+}
+
+const localDay = (ms: number): string => {
+  const d = new Date(ms)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+const localMidnight = (ms: number): number => {
+  const d = new Date(ms)
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+}
+
+/** Two spellings of the same weekly reset, compared to the minute. */
+const sameReset = (a: unknown, b: string): boolean =>
+  typeof a === 'string' && Math.round(Date.parse(a) / 60_000) === Math.round(Date.parse(b) / 60_000)
+
+/** state/week_baseline.json after a weekly reading: per reset, the local day, the weekly percent
+ *  when that day started (`base`) and the latest reading (`last`). The daily budget is the week's
+ *  remainder over `base`, fixed for the day. `before` is the file of readings the new one replaces:
+ *  it seeds `base` for a week first seen mid-week. Resets already past are dropped. */
+export function weekBaseline(
+  kept: Json, reading: { percentUsed: number; resetsAt: string }, before: Json | undefined, now: number,
+): Json {
+  const out: Json = {}
+  let entry: { day?: unknown; base?: unknown; last?: unknown } | undefined
+  for (const [reset, value] of Object.entries(kept)) {
+    if (!(Date.parse(reset) > now)) continue
+    // The same reset written another way (.000Z, +00:00) is the same week: take it over under the new spelling
+    if (sameReset(reset, reading.resetsAt)) entry = value as typeof entry
+    else out[reset] = value
+  }
+  const reset = Date.parse(reading.resetsAt)
+  if (!(reset > now)) return out
+  const day = localDay(now), midnight = localMidnight(now), cur = reading.percentUsed
+  if (typeof entry?.base === 'number' && typeof entry.last === 'number') {
+    // Usage only grows within a week, so a reading below `last` is a session behind another
+    const last = Math.max(entry.last, cur)
+    out[reading.resetsAt] = entry.day === day ? { ...entry, last } : { day, base: entry.last, last }
+    return out
+  }
+  const prev = Array.isArray(before?.windows)
+    ? (before.windows as { kind?: unknown; percentUsed?: unknown; resetsAt?: unknown }[])
+        .find(w => w.kind === 'seven_day' && sameReset(w.resetsAt, reading.resetsAt))
+    : undefined
+  // A week that began today starts at zero; else the reading before, even from earlier today, is nearer the day's start than now
+  const base = reset - 7 * 86_400_000 >= midnight ? 0
+    : typeof prev?.percentUsed === 'number' ? Math.min(prev.percentUsed, cur) : cur
+  out[reading.resetsAt] = { day, base, last: cur }
+  return out
 }
 
 /** A row as the unit in effect shows it: a limit's percent twin under percent. */
@@ -437,6 +500,9 @@ let columns = 60                        // the pane body's width in cells, from 
 let waiting = false                     // session.start's open left the pane undrawn: the first prompt opens it
 let showing = false                     // this session's auto-open and clock have started (startShowing)
 let closedByPerson = false              // the person closed the pane: the hint line offers it back
+let reopenText: string | undefined      // the headline, short, for the reopen button (from `--status-json`)
+/** The reopen button's label: the headline after the name once the status run has one. */
+export const reopenLabel = (text: string | undefined): string => (text ? `▸ TokenTab · ${text}` : '▸ TokenTab')
 let measured = false                    // this load has written the usage windows once
 let lastWindows: string | undefined     // the last windows file written, for a new id after /clear
 let autoOpenHere: boolean | undefined   // the switch set where /config had no row for it, `$.store`'s AUTO_OPEN
@@ -577,7 +643,9 @@ async function refreshNow($: EngineInterface): Promise<void> {
       else report = JSON.parse(await python($, 'tokentab.py', ['--report', '--session', id])) as Report
       $.ui.status(undefined)
     } else {
-      $.ui.status((await python($, 'tokentab.py', ['--status', '--session', id])).trim())
+      const out = JSON.parse(await python($, 'tokentab.py', ['--status-json', '--session', id])) as { line: string; button?: string | null }
+      $.ui.status(out.line.trim())
+      reopenText = out.button ?? undefined
     }
     if (await pageIsOpen($)) await python($, 'sankey.py', ['--session', id, '--push', pushPath(await dataRoot($), id)])
     error = undefined
@@ -794,7 +862,7 @@ export const register: Register = (on, pluginOptions) => {
     return (
       <Box>
         <Text dimColor>{e.props.hint}  </Text>
-        <Button key="reopen" label="▸ TokenTab" onPress={() => { void reopen($) }} />
+        <Button key="reopen" label={reopenLabel(reopenText)} onPress={() => { void reopen($) }} />
       </Box>
     )
   })
@@ -806,7 +874,7 @@ export const register: Register = (on, pluginOptions) => {
     if (!coldAsk) {
       if (!closedByPerson || e.surface === 'terminal') return next(e)
       const { Button } = $.ui.resolve(e)
-      return <Button key="reopen" label="▸ TokenTab" onPress={() => { void reopen($) }} />
+      return <Button key="reopen" label={reopenLabel(reopenText)} onPress={() => { void reopen($) }} />
     }
     const { Box, Text, Button } = $.ui.resolve(e)
     const ask = coldAsk
@@ -953,10 +1021,23 @@ export const register: Register = (on, pluginOptions) => {
       measured = true
       try {
         const windows = e.rateLimits.map(w => ({ kind: w.kind, percentUsed: w.percentUsed, resetsAt: w.resetsAt ?? null }))
-        const data = await dataRoot($), at = new Date(await $.clock.now()).toISOString()
+        const now = await $.clock.now()
+        const data = await dataRoot($), at = new Date(now).toISOString()
+        // The daily budget's base needs the reading before this one, so it is read before the file is replaced
+        let before: Json | undefined
+        try { before = JSON.parse(await $.fs.read(`${data}/state/rate_limits.json`)) as Json } catch { /* none yet */ }
         lastWindows = JSON.stringify({ at, windows }) + '\n'
         await $.fs.write(`${data}/state/windows/${await sid($)}.json`, lastWindows)
         await $.fs.write(`${data}/state/rate_limits.json`, lastWindows)
+        const week = windows.find(w => w.kind === 'seven_day' && w.resetsAt !== null)
+        if (week) {
+          try {
+            let kept: Json = {}
+            try { kept = JSON.parse(await $.fs.read(`${data}/state/week_baseline.json`)) as Json } catch { /* none yet */ }
+            await $.fs.write(`${data}/state/week_baseline.json`,
+              JSON.stringify(weekBaseline(kept, { percentUsed: week.percentUsed, resetsAt: week.resetsAt as string }, before, now)) + '\n')
+          } catch { /* the daily budget then reads the last baseline */ }
+        }
         // A first reading or a new login can change the unit: redraw now, not on the next 30 s beat
         if (tick !== undefined) stale = true
       } catch { /* the limits stay in the unit last read */ }
@@ -1156,18 +1237,30 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
   }
   // Under percent the window leads, limits on or off, and dollars move below; with no window reading, dollars lead
   const planWindows = s.unit === 'percent' ? s.windows ?? [] : []
-  const lead = planWindows.find(w => w.frac !== null) ?? planWindows[0]
+  // The headline setting picks the lead; without its reading, the first reported window with a limit.
+  // "today" is the daily budget, never the fallback: it has a fraction even with limits off.
+  const reported = planWindows.filter(w => w.scope !== 'today')
+  const lead = planWindows.find(w => w.scope === s.headline) ?? reported.find(w => w.frac !== null) ?? reported[0]
   const otherWindows = planWindows.filter(w => w !== lead)
   const apiRates = s.plan ? ' at API rates' : ''
   const frac = lead ? lead.frac : s.frac
-  const fracs = planWindows.flatMap(w => (w.frac === null ? [] : [w.frac]))
-  const worst = lead ? (fracs.length > 0 ? Math.max(...fracs) : null) : frac
-  const tone = worst === null ? undefined : toneOf(worst, s.warn_at)
+  const dailyWarn = s.daily_warn_at ?? 80
+  const warnOf = (w: PlanWindow) => (w.scope === 'today' ? dailyWarn : s.warn_at)
+  // The badge shows the window nearest its own warn level. Today's budget counts only as the lead,
+  // since nothing else beside the badge names it.
+  const RANK = { success: 0, warning: 1, error: 2 } as const
+  const judged = planWindows.flatMap(w => (w.frac === null || (w.scope === 'today' && w !== lead) ? []
+    : [{ frac: w.frac, tone: toneOf(w.frac, warnOf(w)) }]))
+    .sort((a, b) => RANK[b.tone] - RANK[a.tone] || b.frac - a.frac)
+  const worst = lead ? (judged[0]?.frac ?? null) : frac
+  const tone = lead ? judged[0]?.tone : frac === null ? undefined : toneOf(frac, s.warn_at)
   const badge = worst === null || tone === undefined ? undefined
     : <Text size="footnote" weight="semibold" color={tone}>
         {tone === 'error' ? `Over · ${pct(worst)}` : tone === 'warning' ? `Warning · ${pct(worst)}` : `${pct(worst)} used`}
       </Text>
-  const mode = `${s.hard_stop ? 'hard stop' : 'warn only'}, warns at ${s.warn_at}%`
+  const mode = lead?.scope === 'today' ? `never blocks, warns at ${dailyWarn}%`
+    : `${s.hard_stop ? 'hard stop' : 'warn only'}, warns at ${s.warn_at}%`
+  const budgetLine = (w: PlanWindow) => `today ${percent(w.used)} of the week · ${percent(w.allowed ?? 0)} allowed · ${pct(w.frac ?? 0)} of budget`
   const resets = (w: PlanWindow) => (w.resets ? ` · resets ${w.resets}` : '')
   const limitOf = (w: PlanWindow, sep: string) => (w.limit === null ? '' : `${sep}limit ${percent(w.limit)}`)
   const under = [
@@ -1201,17 +1294,20 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
           <Box alignItems="center" gap={1} flexShrink={1}>
             <Text size="title" weight="bold" tabular>{lead ? percent(lead.used) : usd(s.cost)}</Text>
             {lead
-              ? <Text size="footnote" dimColor>{`of ${WINDOW_NAME[lead.scope]}${limitOf(lead, ' · ')}${resets(lead)}`}</Text>
+              ? <Text size="footnote" dimColor>{lead.scope === 'today'
+                ? `of the week used today · ${percent(lead.allowed ?? 0)} allowed`
+                : `of ${WINDOW_NAME[lead.scope]}${limitOf(lead, ' · ')}${resets(lead)}`}</Text>
               : s.plan && <Text size="footnote" dimColor>at API rates</Text>}
           </Box>
           <Button key="share" label="↑ Share"
             onPress={() => { void openSharePage($, r) }} />
         </Box>
-        {frac !== null && bar($, e, [{ series: toneOf(frac, s.warn_at), frac }],
-          `${pct(frac)} of the ${lead ? WINDOW_NAME[lead.scope] : 'session'} limit`, 8)}
+        {frac !== null && bar($, e, [{ series: toneOf(frac, lead ? warnOf(lead) : s.warn_at), frac }],
+          lead?.scope === 'today' ? `${pct(frac)} of today's budget`
+            : `${pct(frac)} of the ${lead ? WINDOW_NAME[lead.scope] : 'session'} limit`, 8)}
         {otherWindows.map(w => (
           <Text key={`window-${w.scope}`} size="footnote" dimColor>
-            {`${WINDOW_SHORT[w.scope]} ${percent(w.used)}${limitOf(w, ', ')}${resets(w)}`}
+            {w.scope === 'today' ? budgetLine(w) : `${WINDOW_SHORT[w.scope]} ${percent(w.used)}${limitOf(w, ', ')}${resets(w)}`}
           </Text>
         ))}
         <Text size="footnote" dimColor>{under}</Text>
@@ -1357,6 +1453,12 @@ function budgetTab($: EngineInterface, e: RenderEvent): RenderChildren {
   const control = (s: Setting): RenderChildren => {
     const v = at(o?.budget, s.key)
     if (s.kind === 'switch') return column(toggle(`b-${s.key}`, v === true, () => { void setBudget($, s.key, v === true ? 'off' : 'on') }))
+    if (s.kind === 'choice') {
+      if (mobile) return column(<Text size="footnote" mono weight="semibold">{shown(v)}</Text>)
+      const choices = s.choices ?? []
+      const next = choices[(choices.indexOf(String(v)) + 1) % choices.length] ?? ''
+      return column(<Button key={`b-${s.key}`} label={shown(v)} variant="secondary" onPress={() => { void setBudget($, s.key, next) }} />)
+    }
     if (mobile) return column(<Text size="footnote" mono tabular weight="semibold">{shown(v)}</Text>)
     const { Input } = $.ui.resolve(e)
     return column(<Input key={`b-${s.key}`} value={shown(v)} placeholder="off" submitLabel="save" onSubmit={t => { void setBudget($, s.key, t) }} />, true)

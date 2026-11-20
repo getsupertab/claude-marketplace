@@ -12,10 +12,11 @@ per-tool attribution. No dependencies.
   tokentab.py --once          print one snapshot and exit
   tokentab.py --json          machine-readable snapshot (for hooks)
   tokentab.py --status        one plain line for a status bar (for the hooks module)
+  tokentab.py --status-json   that line and the reopen button's text, as JSON
   tokentab.py --all           live view across every project
 """
 import argparse, bisect, glob, json, os, re, shlex, sys, time
-from datetime import datetime, timezone
+from datetime import datetime, time as dtime, timedelta, timezone
 HERE = os.path.dirname(os.path.abspath(__file__))
 _T0 = time.perf_counter()     # the run's start, for the timing log
 
@@ -37,6 +38,8 @@ PRICES_PATH = os.path.join(HERE, "prices.json")
 BUDGET_PATH = os.path.join(CFG, "budget.json")
 # The plan's usage windows as the hooks module read them (session.measure), one file per session
 WINDOWS_DIR = os.path.join(CFG, "state", "windows")
+# The weekly percent when each local day started, per reset (the hooks module keeps it): the daily budget's base
+BASELINE_PATH = os.path.join(CFG, "state", "week_baseline.json")
 
 def utf8_stdio():
     """The hooks module and Claude Code speak UTF-8 on the pipes; Windows would use the ANSI code page."""
@@ -1060,6 +1063,66 @@ def reset_text(iso, now=None):
         return None
     return at.strftime("%H:%M" if at.date() == now.date() else "%a %H:%M")
 
+def _iso_ts(iso):
+    try:
+        return datetime.fromisoformat(str(iso).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+def day_budget(budget, windows, now=None):
+    """Today's allowance out of the weekly window: what is left of the week, spread evenly over the time
+    left, fixed at the start of the local day. None unless switched on, without a reading, or once reset."""
+    cfg = budget.get("daily_budget")
+    if not (isinstance(cfg, dict) and cfg.get("enabled") is True):
+        return None
+    w = windows.get("seven_day")
+    reset = _iso_ts(w.get("resetsAt")) if w else None
+    now = now or time.time()
+    if reset is None or reset <= now:
+        return None
+    cur = float(w.get("percentUsed") or 0)
+    at = datetime.fromtimestamp(now).astimezone()
+    # Real elapsed seconds between local midnights, so a 23 or 25 hour day stays right
+    mid = datetime.combine(at.date(), dtime()).astimezone().timestamp()
+    nxt = datetime.combine(at.date() + timedelta(days=1), dtime()).astimezone().timestamp()
+    week_start = reset - 7 * 86400
+    # Matched to the minute, so the same reset written another way (.000Z, +00:00) still finds its entry
+    kept = _read_json(BASELINE_PATH)
+    entry = next((v for k, v in kept.items() if (t := _iso_ts(k)) is not None and round(t / 60) == round(reset / 60)),
+                 None) if isinstance(kept, dict) else None
+    if isinstance(entry, dict) and isinstance(entry.get("base"), (int, float)):
+        last = entry.get("last")
+        # Another session may have read the week more recently; usage only grows within a week
+        if isinstance(last, (int, float)):
+            cur = max(cur, float(last))
+        base = float(entry["base"] if entry.get("day") == at.date().isoformat()
+                     else last if isinstance(last, (int, float)) else cur)
+    else:
+        base = 0.0 if week_start >= mid else cur
+    cap = budget.get("weekly_limit_percent")
+    cap = float(cap) if isinstance(cap, (int, float)) and not isinstance(cap, bool) else 100.0
+    day_start, day_end = max(mid, week_start), min(nxt, reset)
+    allowed = max(0.0, cap - base) * max(0.0, day_end - day_start) / (reset - day_start)
+    used = max(0.0, cur - base)
+    frac = used / allowed if allowed > 0 else (1.0 if used > 0 else 0.0)
+    return {"used": used, "allowed": allowed, "frac": frac, "base": base, "cap": cap}
+
+def day_warn_at(budget):
+    """The daily budget's warn level in percent: 80 when budget.json has none or a hand-edited
+    value that is not a number."""
+    cfg = budget.get("daily_budget")
+    v = cfg.get("warn_at_percent") if isinstance(cfg, dict) else None
+    return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else 80.0
+
+def _pct(x):
+    return f"{round(x, 1):g}"
+
+def plan_lead(budget, windows, day):
+    """The plan number that leads, per budget.json's headline: "today", "five_hour" or "seven_day";
+    None when the chosen one has no reading, so the caller's own order stands."""
+    pick = {"today": "today", "five_hour": "five_hour", "week": "seven_day"}.get(budget.get("headline", "five_hour"))
+    return pick if (pick == "today" and day) or (pick != "today" and pick in windows) else None
+
 def limit_rows(budget, spent, windows):
     """(unit, rows): each limit set in the unit in effect, {scope, name, frac, used, limit, parts, reset}.
     spent is {"session": usd, "today": usd}; a percent limit with no reading yet is left out."""
@@ -1328,6 +1391,10 @@ def pane_report(store, sid, prices, budget, led=None, windows=None):
                      "frac": limited[scope]["frac"] if scope in limited else None,
                      "resets": reset_text(windows[scope].get("resetsAt")) if windows[scope].get("resetsAt") else None}
                     for scope, _, _ in LIMITS["percent"] if scope in windows] if unit == "percent" else []
+    day = day_budget(budget, windows) if unit == "percent" else None
+    if day:   # not gated by budgets_on: the daily budget has its own switch
+        plan_windows.append({"scope": "today", "used": day["used"], "allowed": day["allowed"], "limit": None,
+                             "frac": day["frac"], "resets": None})
     out["session"] = {
         "title": R["session"]["title"], "cost": b.cost, "tokens": b.tokens, "msgs": b.msgs,
         "minutes": round((b.last - b.first).total_seconds() / 60) if b.first and b.last else 0,
@@ -1336,6 +1403,8 @@ def pane_report(store, sid, prices, budget, led=None, windows=None):
                  else f"{WINDOW_NAMES[row['scope']]} {row['parts'][0]}",
         "frac": row["frac"] if row else None,
         "warn_at": budget.get("warn_at_percent", 70), "hard_stop": bool(budget.get("hard_stop")),
+        "headline": plan_lead(budget, windows, day),
+        "daily_warn_at": day_warn_at(budget),
     }
     out["rates"] = [{"label": r["label"], "key": r["key"], "tokens": r["tokens"], "cost": r["cost"], "share": r["share"]}
                     for r in R["rates"]]
@@ -1353,9 +1422,9 @@ def pane_report(store, sid, prices, budget, led=None, windows=None):
     return out
 
 
-def status_line(store, sid, prices, budget, led=None):
-    """One plain line for Claude Code's status bar while the pane is not placed (the hooks
-    module runs `--status`): this session's cost and today's over every session. The same
+def status_parts(store, sid, prices, budget, led=None):
+    """(line, button): the plain line for Claude Code's status bar while the pane is not placed, and
+    the headline's short text for the reopen button (None without a plan reading). The same
     report() as the live view, so the figures agree."""
     R = report(store, sid, prices, budget, True, led)
     if R.get("total"):
@@ -1364,10 +1433,24 @@ def status_line(store, sid, prices, budget, led=None):
         sess, today = 0.0, source(store, led, sid)[1].day_total()[0]
     windows = read_windows(sid)
     dollars = f"session {money(sess)} · today {money(today)}{' at API rates' if windows else ''}"
-    plan = [f"{name} {window_used(windows[scope]):g}%" for scope, _, name in LIMITS["percent"] if scope in windows]
-    if plan and limit_unit(budget, windows) == "percent":
-        return " · ".join(plan + [dollars])                           # the budget's unit leads
-    return dollars                                                    # the engine draws the plugin name before the line
+    shorts = {"five_hour": "5-hour", "seven_day": "week"}
+    items = {scope: (f"{name} {window_used(windows[scope]):g}%", f"{window_used(windows[scope]):g}% {shorts[scope]}")
+             for scope, _, name in LIMITS["percent"] if scope in windows}
+    day = day_budget(budget, windows)
+    if day:
+        items["today"] = (f"today {day['frac']*100:.0f}% · {_pct(day['used'])}% of week",
+                          f"{day['frac']*100:.0f}% daily allowance")
+    lead = plan_lead(budget, windows, day) or next(iter(items), None)
+    order = ([lead] if lead else []) + [k for k in items if k != lead]
+    button = items[lead][1] if lead else None
+    if items and limit_unit(budget, windows) == "percent":
+        return " · ".join([items[k][0] for k in order] + [dollars]), button   # the budget's unit leads
+    return dollars, button                                            # the engine draws the plugin name before the line
+
+def status_line(store, sid, prices, budget, led=None):
+    """One plain line for Claude Code's status bar while the pane is not placed (the hooks
+    module runs `--status-json`): this session's cost and today's over every session."""
+    return status_parts(store, sid, prices, budget, led)[0]
 
 
 def main():
@@ -1377,6 +1460,8 @@ def main():
     ap.add_argument("--json", action="store_true", help="machine-readable snapshot, implies --once")
     ap.add_argument("--status", action="store_true",
                     help="one plain line (session, today) for a status bar, implies --once")
+    ap.add_argument("--status-json", action="store_true",
+                    help="the status line and the reopen button's text as JSON, implies --once")
     ap.add_argument("--report", action="store_true",
                     help="the pane's tabs as JSON (spend, tools), for the hooks module, implies --once")
     ap.add_argument("--all", action="store_true", help="include cross-project totals")
@@ -1391,7 +1476,7 @@ def main():
             note = None
         perf_log(note if isinstance(note, dict) else {"note": a.perf_note})
         return
-    mode = "report" if a.report else "json" if a.json else "status" if a.status else "once" if a.once else "live"
+    mode = "report" if a.report else "json" if a.json else "status" if a.status or a.status_json else "once" if a.once else "live"
     try:
         run(a)
     except BaseException as e:
@@ -1415,11 +1500,14 @@ def run(a):
     store, led = scanned(prices)
     sid = a.session or store.newest_session()
 
-    if a.json or a.status or a.once or a.report:
+    if a.json or a.status or a.status_json or a.once or a.report:
         if a.report:
             print(json.dumps(pane_report(store, sid, prices, budget, led)))
         elif a.json:
             print(json.dumps(snapshot(store, sid, prices, led), indent=2))
+        elif a.status_json:
+            line, button = status_parts(store, sid, prices, budget, led)
+            print(json.dumps({"line": line, "button": button}))
         elif a.status:
             print(status_line(store, sid, prices, budget, led))
         else:
