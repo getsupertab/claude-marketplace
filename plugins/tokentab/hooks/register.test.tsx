@@ -1221,9 +1221,12 @@ test('the weekly baseline: seeded from the reading before, rolled at local midni
   // a reading before from earlier today is nearer the day's start than now, so it is the base
   expect(weekBaseline({}, { percentUsed: 5, resetsAt: RESET }, prior(localMs(2026, 11, 19, 9), 3), now))
     .toEqual({ [RESET]: { day, base: 3, last: 5 } })
-  // a reading before from an earlier day misses what the week gained overnight elsewhere: now is the base
+  // a reading before from an earlier day, more than a point below: the week grew overnight elsewhere, now is the base
   expect(weekBaseline({}, { percentUsed: 5, resetsAt: RESET }, prior(localMs(2026, 11, 18, 20), 3), now))
     .toEqual({ [RESET]: { day, base: 5, last: 5 } })
+  // a point below: that is this machine's first request today, so the reading before is the base
+  expect(weekBaseline({}, { percentUsed: 4, resetsAt: RESET }, prior(localMs(2026, 11, 18, 20), 3), now))
+    .toEqual({ [RESET]: { day, base: 3, last: 4 } })
   // the same reset spelled another way is the same week
   expect(weekBaseline({}, { percentUsed: 5, resetsAt: RESET }, prior(localMs(2026, 11, 19, 9), 3, '2026-11-21T01:00:00.000Z'), now))
     .toEqual({ [RESET]: { day, base: 3, last: 5 } })
@@ -1239,7 +1242,13 @@ test('the weekly baseline: seeded from the reading before, rolled at local midni
   const kept = { [RESET]: { day, base: 3, last: 5 }, '2026-11-10T01:00:00Z': { day: '2026-11-09', base: 1, last: 2 } }
   expect(weekBaseline(kept, { percentUsed: 6, resetsAt: RESET }, undefined, now)).toEqual({ [RESET]: { day, base: 3, last: 6 } })
   const next = localMs(2026, 11, 20, 8)
-  expect(weekBaseline(kept, { percentUsed: 7, resetsAt: RESET }, undefined, next)).toEqual({ [RESET]: { day: localDay(next), base: 7, last: 7 } })
+  const first = weekBaseline(kept, { percentUsed: 7, resetsAt: RESET }, undefined, next)
+  expect(first).toEqual({ [RESET]: { day: localDay(next), base: 7, last: 7 } })
+  // later readings that day keep the day's base and count toward today
+  expect(weekBaseline(first, { percentUsed: 9, resetsAt: RESET }, undefined, next + 3_600_000))
+    .toEqual({ [RESET]: { day: localDay(next), base: 7, last: 9 } })
+  // the first reading one point up is this machine's first request today: it counts, the old `last` is the base
+  expect(weekBaseline(kept, { percentUsed: 6, resetsAt: RESET }, undefined, next)).toEqual({ [RESET]: { day: localDay(next), base: 5, last: 6 } })
   // a session behind another on a new day still starts from the newer `last`
   expect(weekBaseline(kept, { percentUsed: 4, resetsAt: RESET }, undefined, next)).toEqual({ [RESET]: { day: localDay(next), base: 5, last: 5 } })
   // a session behind another never moves `last` back; an entry kept under another spelling moves to the new one
@@ -1267,6 +1276,8 @@ test('session.measure keeps state/week_baseline.json across local midnight', asy
   await clock.advance(12 * 3_600_000)   // past local midnight
   await measure(9)
   expect(baseline()[RESET]).toEqual({ day: localDay(start + 12 * 3_600_000), base: 9, last: 9 })
+  await measure(11)
+  expect(baseline()[RESET]).toEqual({ day: localDay(start + 12 * 3_600_000), base: 9, last: 11 })
   // a failing write leaves the windows files alone
   fs.set(`${DATA}/state/week_baseline.json`, 'not json')
   await measure(10)
