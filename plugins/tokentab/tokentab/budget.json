@@ -29,6 +29,13 @@
     "confirm_seconds": 120,
     "fresh_session_tokens": 75000
   },
+  "_handoff_comment": "Shortly before a large context's prompt cache expires (write_at_minutes_1h / _5m after the last call, while the session sits idle and open), asks Claude once for a handoff note and saves it as handoff/<session>.md in the plugin's data folder. That one request reads the cache at the cheap rate. When you come back to a cold cache, the question above the prompt box offers to continue in a new chat from the note. Needs the session open and the computer awake.",
+  "handoff": {
+    "enabled": true,
+    "min_context_tokens": 100000,
+    "write_at_minutes_1h": 50,
+    "write_at_minutes_5m": 3
+  },
   "_new_session_comment": "Sends Claude the context size, cost per call and break-even for a new session with every prompt, so it can suggest one when the new prompt does not need this conversation.",
   "new_session": {
     "enabled": true,

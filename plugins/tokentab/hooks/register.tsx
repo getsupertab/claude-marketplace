@@ -1,4 +1,4 @@
-import type { EngineInterface, PluginOptions, PromptSubmitInput, Register, RenderChildren, TelemetryRecordEntry, Timer, UiOpenResult } from 'claude-code'
+import type { EngineInterface, PluginOptions, PromptSubmitInput, Register, RenderChildren, RenderSurface, TelemetryRecordEntry, Timer, UiOpenResult } from 'claude-code'
 import { TOKENS } from './tokens'
 
 // TokenTab's hooks module, three parts:
@@ -195,21 +195,27 @@ export const HELD = 'TokenTab: held back, the prompt cache has expired. Continue
 
 // The held prompt the band above the prompt box asks about. A hook may not wait on the
 // person (its 10 s budget runs on), so the prompt is dropped and Continue sends it again.
-type ColdAsk = { text: string, prompt: string, attachments: PromptSubmitInput['attachments'], failed?: string }
+// `handoff` the note written before the cache expired; `note` a line under the question (copied).
+type ColdAsk = { text: string, prompt: string, attachments: PromptSubmitInput['attachments'], failed?: string, handoff?: string, note?: string }
 let coldAsk: ColdAsk | undefined
 // Counts /clears and resumes: an answer that arrives after one belongs to the ended conversation.
 let conversation = 0
 // Continue's resend passes unchecked: Desktop hands it back as typed, not as the plugin's.
 let resending = false
 
-// The cold-cache sentence, or undefined: a warm cache, the check failed, or no surface to
-// ask on (a -p run), where the guard beneath blocks once as before.
-async function coldCheck($: EngineInterface): Promise<string | undefined> {
+// The cold-cache sentence and when the last call started (epoch seconds), or undefined: a warm
+// cache, the check failed, or no surface to ask on (a -p run), where the guard blocks once as before.
+async function coldCheck($: EngineInterface): Promise<{ text: string, started?: number } | undefined> {
   try {
-    const cold = (JSON.parse(await python($, 'guard.py', ['--cold-check', await sid($)])) as { cold?: string }).cold
+    const { cold, started } = JSON.parse(await python($, 'guard.py', ['--cold-check', await sid($)])) as { cold?: string, started?: number }
     if (!cold || (await $.session.surfaces()).length === 0) return undefined
-    return `${cold[0]!.toUpperCase()}${cold.slice(1)}`
+    return { text: `${cold[0]!.toUpperCase()}${cold.slice(1)}`, started }
   } catch { return undefined }
+}
+
+// The terminal keeps a dropped prompt in the box: once sent from here, it would go twice.
+async function emptyBox($: EngineInterface, prompt: string): Promise<void> {
+  try { if ((await $.prompt.read()).text === prompt) await $.prompt.fill({ text: '' }) } catch { /* the box stays as typed */ }
 }
 
 async function answerCold($: EngineInterface, ask: ColdAsk, send: boolean): Promise<void> {
@@ -229,6 +235,7 @@ async function answerCold($: EngineInterface, ask: ColdAsk, send: boolean): Prom
   try {
     const sent = await $.prompt.submit({ text: ask.prompt, attachments: ask.attachments, asUser: true })
     if (sent.drop !== undefined) failed('the prompt was held back', sent.drop)
+    else await emptyBox($, ask.prompt)
   } catch (err) { failed('sending failed', err) } finally { resending = false }
 }
 
@@ -237,6 +244,140 @@ async function sentAgain($: EngineInterface): Promise<void> {
   coldAsk = undefined
   $.ui.invalidate('ui.render')
   try { await python($, 'guard.py', ['--cold-confirm', await sid($)]) } catch { /* the guard then blocks once */ }
+}
+
+// ---------- the handoff note ----------
+// Between turns a timer fires shortly before the prompt cache would expire and asks a fork of
+// the conversation, one cache read, for a handoff note. A cold cache's question then offers it.
+
+export type HandoffConfig = { enabled: boolean, min_context_tokens: number, write_at_minutes_1h: number, write_at_minutes_5m: number }
+/** guard.py --idle: the last call's cache; `started` in epoch seconds. */
+export type Idle = { started: number, ctx: number, ttl_seconds: number }
+export type HandoffStep = { kind: 'wait', ms: number } | { kind: 'write' } | { kind: 'stop', why: 'off' | 'small' | 'cold' }
+
+export const HANDOFF_DEFAULTS: HandoffConfig = { enabled: true, min_context_tokens: 100_000, write_at_minutes_1h: 50, write_at_minutes_5m: 3 }
+export const HANDOFF_PROMPT = 'The user has stepped away and this conversation\'s prompt cache is about to expire. '
+  + 'Write a handoff note a fresh session can start from without this conversation, in Markdown, under 400 words: '
+  + 'the goal; what is done (files changed, commits, branch); decisions made and why; what is in progress and the exact next steps; '
+  + 'open questions for the user. Only facts from this conversation. Reply with the note alone.'
+export const HELD_HANDOFF = 'TokenTab: held back, the prompt cache has expired. A handoff note is ready: the question above the prompt box offers a new chat from it.'
+export const NEW_CHAT = 'New chat from handoff'
+export const COPY_HANDOFF = 'Copy handoff'
+export const SEND_HERE = 'Send here anyway'
+const EXPIRY_MARGIN_MS = 30_000          // a write set later than this before expiry fires this early instead
+const SETTLE_MS = 5_000                  // after a turn ends, its last ledger line has landed
+const HEADER = /^<!-- TokenTab handoff, (\S+) -->\n/
+
+/** The timer's next move at `now`: wait, write the note, or stop for this idle stretch. */
+export function handoffStep(cfg: HandoffConfig, idle: Idle | undefined, now: number): HandoffStep {
+  if (!cfg.enabled) return { kind: 'stop', why: 'off' }
+  if (!idle || idle.ctx < cfg.min_context_tokens) return { kind: 'stop', why: 'small' }
+  const started = idle.started * 1000
+  const expires = started + idle.ttl_seconds * 1000
+  const minutes = idle.ttl_seconds > 300 ? cfg.write_at_minutes_1h : cfg.write_at_minutes_5m
+  const at = Math.min(started + 60_000 * minutes, expires - EXPIRY_MARGIN_MS)
+  if (now >= expires) return { kind: 'stop', why: 'cold' }
+  if (now < at) return { kind: 'wait', ms: at - now }
+  return { kind: 'write' }
+}
+
+/** The note's body when it was written after the last call started, else undefined (stale). */
+export function freshNote(file: string, startedSeconds: number | undefined): string | undefined {
+  const m = HEADER.exec(file)
+  if (!m || startedSeconds === undefined || Date.parse(m[1]!) < startedSeconds * 1000) return undefined
+  return file.slice(m[0].length).trim() || undefined
+}
+
+/** What the new chat is sent: the note, then the prompt that was held back. */
+export const handoffPrompt = (note: string, prompt: string): string =>
+  `I'm continuing from an earlier chat whose prompt cache had expired. Its handoff note:\n\n${note}\n\n---\n\n${prompt}`
+
+export const handoffPath = (data: string, id: string): string => `${data}/handoff/${id}.md`
+
+let handoffTimer: Timer | undefined
+// Bumped by every main-loop turn start and end and by /clear: a timer or fork from an older stretch stands down.
+let stretch = 0
+
+function stopHandoff(): void {
+  handoffTimer?.cancel()
+  handoffTimer = undefined
+  stretch++
+}
+
+function scheduleHandoff($: EngineInterface, ms: number): void {
+  const mine = stretch
+  handoffTimer = $.clock.after(ms, () => { void handoffTick($, mine) })
+}
+
+async function handoffConfig($: EngineInterface): Promise<HandoffConfig> {
+  try {
+    const cfg = at(JSON.parse(await $.fs.read(`${await dataRoot($)}/budget.json`)) as Json, 'handoff')
+    return { ...HANDOFF_DEFAULTS, ...(typeof cfg === 'object' && cfg !== null ? cfg as Partial<HandoffConfig> : {}) }
+  } catch { return HANDOFF_DEFAULTS }
+}
+
+async function handoffTick($: EngineInterface, mine: number): Promise<void> {
+  if (stretch !== mine) return
+  handoffTimer = undefined
+  try {
+    const id = await sid($)
+    const read = JSON.parse(await python($, 'guard.py', ['--idle', id])) as Partial<Idle>
+    const step = handoffStep(await handoffConfig($), read.ctx === undefined ? undefined : read as Idle, await $.clock.now())
+    if (stretch !== mine) return
+    if (step.kind === 'wait') return scheduleHandoff($, step.ms)
+    if (step.kind !== 'write') return
+    // One write per stretch: the fork's own read restarts the cache's clock, so no timer follows it.
+    const reply = await $.model.fork({ prompt: HANDOFF_PROMPT })
+    if (stretch !== mine || !reply.isAnswered) return
+    const written = new Date(await $.clock.now()).toISOString()
+    await $.fs.write(handoffPath(await dataRoot($), id), `<!-- TokenTab handoff, ${written} -->\n${reply.text.trim()}\n`)
+  } catch { /* no note this stretch: the cold-cache question asks as before */ }
+}
+
+async function readHandoff($: EngineInterface, started: number | undefined): Promise<string | undefined> {
+  try { return freshNote(await $.fs.read(handoffPath(await dataRoot($), await sid($))), started) } catch { return undefined }
+}
+
+async function copyHandoff($: EngineInterface, ask: ColdAsk, surface: RenderSurface | undefined): Promise<boolean> {
+  const r = await $.ui.copy({ text: handoffPrompt(ask.handoff ?? '', ask.prompt), surface })
+  return r.isCopied
+}
+
+// /clear, then the note and the held prompt as the new chat's first prompt. Where the clear
+// does not happen, the clipboard carries them instead.
+async function newChat($: EngineInterface, ask: ColdAsk, surface: RenderSurface | undefined): Promise<void> {
+  if (coldAsk !== ask || ask.handoff === undefined) return
+  const before = await sid($)
+  let why: string | undefined
+  try { await $.command.run({ command: 'clear' }) } catch (err) { why = err instanceof Error ? err.message : String(err) }
+  if (why === undefined && (await sid($)) === before) why = 'the chat was not cleared'
+  if (why !== undefined) {
+    let copied = false
+    try { copied = await copyHandoff($, ask, surface) } catch { /* the path below still says where the note is */ }
+    coldAsk = { ...ask, failed: `couldn't start a new chat here (${why}). ${copied
+      ? 'The handoff and your prompt are on your clipboard: open a new chat and paste them.'
+      : `The note is in ${handoffPath(await dataRoot($), before)}.`}` }
+    $.ui.invalidate('ui.render')
+    return
+  }
+  // The clear's session.end has already dropped the question with the old conversation.
+  resending = true
+  try {
+    const sent = await $.prompt.submit({ text: handoffPrompt(ask.handoff, ask.prompt), attachments: ask.attachments, asUser: true })
+    if (sent.drop === undefined) await emptyBox($, ask.prompt)
+  } catch (err) { $.ui.toast(`TokenTab: sending the handoff failed: ${err instanceof Error ? err.message : String(err)}`) }
+  finally { resending = false }
+}
+
+async function pressCopy($: EngineInterface, ask: ColdAsk, surface: RenderSurface | undefined): Promise<void> {
+  if (coldAsk !== ask) return
+  let copied = false
+  try { copied = await copyHandoff($, ask, surface) } catch { /* said below */ }
+  if (coldAsk !== ask) return
+  coldAsk = copied
+    ? { ...ask, failed: undefined, note: 'Copied the handoff note and your prompt. Open a new chat and paste them there.' }
+    : { ...ask, failed: `couldn't copy here. The note is in ${handoffPath(await dataRoot($), await sid($))}.` }
+  $.ui.invalidate('ui.render')
 }
 
 export const stripAnsi = (s: string): string => s.replace(ANSI, '')
@@ -388,6 +529,7 @@ export const SECTIONS: { title: string; toggle?: Setting; rows: Setting[] }[] = 
     { key: 'daily_budget.warn_at_percent', label: 'Warn at', unit: '%', kind: 'limit' },
     { key: 'headline', label: 'Headline', kind: 'choice', choices: ['today', 'five_hour', 'week'] },
   ] },
+  { title: 'handoff note', toggle: { key: 'handoff.enabled', label: 'handoff note before the cache expires', kind: 'switch' }, rows: [] },
 ]
 
 type Json = Record<string, unknown>
@@ -830,6 +972,7 @@ export const register: Register = (on, pluginOptions) => {
       if (e.reason === 'clear' || e.reason === 'resume') {
         conversation++
         coldAsk = undefined
+        stopHandoff()
         measured = false
         pageOpenedAt = undefined
         if (tick !== undefined) stale = true
@@ -878,6 +1021,24 @@ export const register: Register = (on, pluginOptions) => {
     }
     const { Box, Text, Button } = $.ui.resolve(e)
     const ask = coldAsk
+    const hold = <Button key="cold-hold" label={DONT_SEND} plain onPress={() => { void answerCold($, ask, false) }} />
+    if (ask.handoff !== undefined) {
+      return (
+        <Box flexDirection="column" gap={1}>
+          <Text>{ask.text}</Text>
+          <Text>A handoff note was written before the cache expired. A new chat can start from it; this one stays under /resume.</Text>
+          {ask.note ? <Text dimColor>{ask.note}</Text> : null}
+          {ask.failed ? <Text color="red">TokenTab: {ask.failed}</Text> : null}
+          <Text bold>Continue in a new chat?</Text>
+          <Box gap={1}>
+            <Button key="cold-new" label={NEW_CHAT} plain variant="primary" onPress={press => { void newChat($, ask, press.surface) }} />
+            <Button key="cold-copy" label={COPY_HANDOFF} plain onPress={press => { void pressCopy($, ask, press.surface) }} />
+            <Button key="cold-send" label={SEND_HERE} plain onPress={() => { void answerCold($, ask, true) }} />
+            {hold}
+          </Box>
+        </Box>
+      )
+    }
     return (
       <Box flexDirection="column" gap={1}>
         <Text>{ask.text}</Text>
@@ -885,7 +1046,7 @@ export const register: Register = (on, pluginOptions) => {
         <Text bold>Send your prompt anyway?</Text>
         <Box gap={1}>
           <Button key="cold-send" label={CONTINUE} plain variant="primary" onPress={() => { void answerCold($, ask, true) }} />
-          <Button key="cold-hold" label={DONT_SEND} plain onPress={() => { void answerCold($, ask, false) }} />
+          {hold}
         </Box>
       </Box>
     )
@@ -1004,11 +1165,29 @@ export const register: Register = (on, pluginOptions) => {
     const at = conversation
     const cold = await coldCheck($)
     if (cold && conversation === at) {
-      coldAsk = { text: cold, prompt: e.text, attachments: e.attachments }
+      const handoff = await readHandoff($, cold.started)
+      if (conversation !== at) return next(e)
+      coldAsk = { text: cold.text, prompt: e.text, attachments: e.attachments, handoff }
       $.ui.invalidate('ui.render')
-      return { drop: HELD }
+      return { drop: handoff === undefined ? HELD : HELD_HANDOFF }
     }
     return next(e)
+  }).catch(($, e, next) => next(e))
+
+  // Main-loop turns bound an idle stretch; the handoff timer runs between them, only where
+  // someone may come back to a surface (not under `claude -p`).
+  on('turn.start', ($, e, next) => {
+    if (e.agentId === undefined) stopHandoff()
+    return next(e)
+  }).catch(($, e, next) => next(e))
+
+  on('turn.complete', async ($, e, next) => {
+    const r = await next(e)
+    if (e.agentId === undefined) {
+      stopHandoff()
+      try { if ((await $.session.surfaces()).length > 0) scheduleHandoff($, SETTLE_MS) } catch { /* no note this stretch */ }
+    }
+    return r
   }).catch(($, e, next) => next(e))
 
   // The plan's usage windows (5-hour, weekly; none off a subscription) for the guard and the

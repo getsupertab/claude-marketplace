@@ -94,10 +94,11 @@ Everything is in `budget.json` in your data folder. `null` turns a limit off. `/
 | `headline` | `five_hour` | Which plan number leads in the pane, the status line and the reopen button: `today` (the daily budget), `five_hour` or `week`. |
 | `context_warn_tokens` | `[200000, 350000]` | Tells you and Claude when the context passes each size. Re-arms after a compaction. |
 | `cold_resume` | on | Holds back the first prompt after the prompt cache has expired. See below. |
+| `handoff` | on | Writes a handoff note shortly before the cache expires, for a new chat to start from. See below. |
 | `new_session` | on | Asks Claude to suggest a new session when that would be cheaper. See below. |
 | `helpers_may_delegate` | `false` | Whether a helper agent may start or message other agents. |
 
-The last six work whether or not `budgets_on` is set.
+The last seven work whether or not `budgets_on` is set.
 
 The daily budget is the weekly limit's remainder over the days left. The cap is `weekly_limit_percent`, or 100 when it is `null`. At midnight, or at the first reading of the day, TokenTab records the week's percent so far in `state/week_baseline.json`. Today's allowance is what is left under the cap, times today's share of the time to the reset. Spending today does not change it. Unused allowance and overspend carry into tomorrow's.
 
@@ -116,6 +117,30 @@ asks first, above the prompt box, showing what it will cost against what a new s
 would; **Continue** sends it for you. Where nothing can be shown (`claude -p`), the prompt is held back once:
 send it again within two minutes to go ahead. `/compact` doesn't avoid the cost: compacting reads the whole
 context once too.
+
+### Handoff note
+
+Between turns of the main conversation, with a surface open (not under `claude -p`), a
+timer fires `write_at_minutes_1h` (50) or `write_at_minutes_5m` (3) minutes after the last
+call. On a context of `min_context_tokens` (100k) or more it forks the conversation once
+(`$.model.fork`) and asks for a handoff note, saved as `handoff/<session>.md` in the data
+folder. The fork reads the cached context at the cache-read rate, about a twentieth of a
+re-write on a 1-hour cache, and restarts the cache's clock once; nothing else is sent. A
+prompt of yours cancels the timer.
+
+When the cache has gone cold and a note written after the last call is there, the
+expired-cache question offers it:
+
+- **New chat from handoff** runs `/clear` and sends the note with your held prompt as the
+  new chat's first prompt. The old conversation stays under `/resume`. Where the clear
+  does not happen, the note and prompt go to the clipboard instead.
+- **Copy handoff** puts the note and your prompt on the clipboard, to paste into a new chat.
+- **Send here anyway** re-writes the context and sends, as Continue does.
+- **Don't send** sends nothing.
+
+A computer that sleeps stops the timer, and so does an agent waiting on a permission
+prompt (it is mid-turn). Turn it off with the pane's Budget tab (HANDOFF NOTE) or
+`handoff.enabled: false`.
 
 ### New session check
 

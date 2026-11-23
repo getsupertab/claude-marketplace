@@ -308,9 +308,22 @@ def cold_cli(args):
         return 0
     b = load(os.path.join(CFG, "budget.json"), None) or {}
     tp = glob.glob(os.path.join(ROOT, "*", f"{sid}.jsonl"))
-    c = cold_resume(b.get("cold_resume") or {}, load(os.path.join(HERE, "prices.json"), {}),
-                    last_call(tp[0], sid) if tp else None)
-    print(json.dumps({"cold": c} if c else {}))
+    last = last_call(tp[0], sid) if tp else None
+    c = cold_resume(b.get("cold_resume") or {}, load(os.path.join(HERE, "prices.json"), {}), last)
+    # started: a handoff note older than the last call is stale
+    print(json.dumps({"cold": c, "started": last[0]} if c else {}))
+    return 0
+
+def idle_cli(sid):
+    """--idle <sid>: the last call's cache for the handoff timer as JSON, {} before one:
+    started (epoch seconds), ctx (tokens), ttl_seconds."""
+    tp = glob.glob(os.path.join(ROOT, "*", f"{sid}.jsonl"))
+    last = last_call(tp[0], sid) if tp else None
+    if not last:
+        print("{}")
+        return 0
+    started, ctx, _model, ttl = last
+    print(json.dumps({"started": started, "ctx": ctx, "ttl_seconds": 3600 if ttl == "1h" else 300}))
     return 0
 
 def ago(seconds):
@@ -631,4 +644,6 @@ if __name__ == "__main__":
         sys.exit(rebuild())
     if len(sys.argv) == 3 and sys.argv[1] in ("--cold-check", "--cold-confirm"):
         sys.exit(cold_cli(sys.argv[1:]))
+    if len(sys.argv) == 3 and sys.argv[1] == "--idle":
+        sys.exit(idle_cli(sys.argv[2]))
     sys.exit(main())
