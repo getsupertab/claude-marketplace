@@ -961,6 +961,7 @@ def saved_state_case(prices):
             f.write(b"not a pickle")
         run("an unreadable file", "full", "unreadable")
         errs += both_scripts_case()
+        errs += handoff_touch_case()
         kt.perf_done("test", "case")
         with open(os.path.join(kt.CFG, "state", "perf.jsonl"), encoding="utf-8") as f:
             last = json.loads(f.readlines()[-1])
@@ -996,6 +997,44 @@ def both_scripts_case():
         kinds = []
     if kinds != ["full", "incremental", "incremental"]:
         errs.append(f"saved state: the two scripts' runs were {kinds}, want one full read then catch-ups")
+    return errs
+
+
+def handoff_touch_case():
+    """guard.py --cold-check: the handoff note's fork read the cache, so a note written after
+    the last call keeps the cache warm even when the ledger has no line for the fork."""
+    import subprocess
+    from datetime import datetime, timedelta, timezone
+    errs, cfg = [], tempfile.mkdtemp()
+    data = os.path.join(cfg, "plugins", "data", "tokentab-supertab")
+    os.makedirs(os.path.join(cfg, "projects", "p"))
+    os.makedirs(os.path.join(data, "handoff"))
+    now = datetime.now(timezone.utc)
+    iso = lambda moment: moment.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    call = dict(asst("rH", OPUS, usage(i=10, r=200_000, o=20), {"type": "text", "text": "ok"}), sessionId="s")
+    call["timestamp"] = iso(now - timedelta(minutes=70))
+    with open(os.path.join(cfg, "projects", "p", "s.jsonl"), "w", encoding="utf-8") as f:
+        f.write(json.dumps(call) + "\n")
+    with open(os.path.join(data, "budget.json"), "w", encoding="utf-8") as f:
+        json.dump({"cold_resume": {"min_context_tokens": 100000}}, f)
+    env = dict(os.environ, CLAUDE_CONFIG_DIR=cfg)
+    guard = os.path.join(PLUGIN, "tokentab", "guard.py")
+
+    def check(note_minutes_ago):
+        if note_minutes_ago is not None:
+            with open(os.path.join(data, "handoff", "s.md"), "w", encoding="utf-8") as f:
+                f.write(f"<!-- TokenTab handoff, {iso(now - timedelta(minutes=note_minutes_ago))} -->\nnote\n")
+        r = subprocess.run([sys.executable, guard, "--cold-check", "s"], env=env, capture_output=True)
+        return json.loads(r.stdout or b"null")
+
+    if "cold" not in (check(None) or {}):
+        errs.append("handoff touch: a 70-minute-old call with no note should be cold")
+    if check(20) != {}:
+        errs.append("handoff touch: a note written 20 minutes ago should keep the cache warm")
+    older = check(80) or {}
+    if "cold" not in older or abs(older.get("started", 0) - (now - timedelta(minutes=70)).timestamp()) > 1:
+        errs.append(f"handoff touch: a note older than the call changes nothing, got {older}")
+    print("[handoff touch] " + ("OK" if not errs else "FAIL"))
     return errs
 
 

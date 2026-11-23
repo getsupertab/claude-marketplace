@@ -73,9 +73,10 @@ where TokenTab comes in.
   tool calls if you ask them to. On Pro or Max they count in percent of your plan's
   5-hour and weekly windows; on the API they count in dollars. Your account decides,
   even when you switch between them. Off until you turn them on.
-- **Heads-ups that save money.** A warning before an expensive resend after the cache
-  goes cold, and a nudge to start fresh once a new session would be cheaper than carrying
-  on.
+- **Heads-ups that save money.** A handoff note written before the cache can expire, a
+  warning before an expensive resend after it goes cold with a button to continue in a
+  new chat from the note, and a nudge to start fresh once a new session would be cheaper
+  than carrying on.
 - **A card to share** what a session cost, if you're proud of it (or horrified).
 
 
@@ -206,6 +207,12 @@ The limits are off, but these checks run from the start. Each one is set in
   and asks above the prompt box before sending, with what it will cost: **Continue**
   sends it for you (shown as sent through TokenTab). Where nothing can be shown (`claude -p`), it blocks once; sending again within two minutes goes through. Nothing has been sent at that point, so holding it back costs nothing.
   Turn it off by removing `cold_resume`.
+- **Handoff note.** Shortly before a long session's cache would expire while you're away,
+  TokenTab asks Claude once for a handoff note (one cheap cache read). When you come back
+  to a cold cache, the question above the prompt box offers **New chat from handoff**,
+  which clears the chat and starts again from the note with your prompt, or **Copy
+  handoff** to paste it into a new chat yourself. The session must stay open and the
+  computer awake. Turn it off on the pane's Budget tab (HANDOFF NOTE).
 - **Helpers can't start helpers.** A helper agent that tries to start or message another
   agent is stopped. Set `helpers_may_delegate` to `true` to allow it.
 - **Notes to Claude.** When a session's context passes 200k and again 350k tokens, Claude

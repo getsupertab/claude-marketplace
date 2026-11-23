@@ -1,8 +1,8 @@
 import { test, expect, mock } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On, RenderElement, RenderNode } from 'claude-code'
-import { at, barCells, barSvg, chevronSvg, dataDir, inUnit, int, liveLines, pct, reopenLabel, SECTIONS, SERIES, shareCard, shareCardSvg, shareLinks, sharePageHtml, shareText, shown, stripAnsi, timedOut, toneOf, ttlOf, unitOf, usd, weekBaseline, withNewKeys, wrapWords } from './register'
-import type { Report } from './register'
+import { at, barCells, barSvg, chevronSvg, COPY_HANDOFF, dataDir, DONT_SEND, freshNote, HANDOFF_DEFAULTS, HANDOFF_PROMPT, handoffPrompt, handoffStep, HELD_HANDOFF, NEW_CHAT, SEND_HERE, inUnit, int, liveLines, pct, reopenLabel, SECTIONS, SERIES, shareCard, shareCardSvg, shareLinks, sharePageHtml, shareText, shown, stripAnsi, timedOut, toneOf, ttlOf, unitOf, usd, weekBaseline, withNewKeys, wrapWords } from './register'
+import type { Idle, Report } from './register'
 
 // The world beneath the plugin: `$.fs` reaches nothing under `claude plugin test`, and
 // nothing answers `telemetry.log`, `session.id`, the pane, the command, the store, the
@@ -180,6 +180,8 @@ const PRICES = {
   default: { input: 4, output: 20, cache_write_5m: 5, cache_write_1h: 8, cache_read: 0.2 },
 }
 const DATA = '/home/t/.claude/plugins/data/tokentab-supertab'
+// The engine resolves paths natively: on Windows /home/t arrives as D:\home\t.
+const posixPath = (path: string) => path.replace(/\\/g, '/').replace(/^[A-Za-z]:/, '')
 const T0 = Date.UTC(2026, 9, 15, 14, 3, 11, 412)
 const FILES = { '/tokentab/prices.json': JSON.stringify(PRICES), '/tokentab/budget.json': BUDGET }
 const press = (key: string, surface?: 'terminal' | 'desktop') => ({ plugin: 'tokentab', key, requestId: 'tokentab', ...(surface ? { surface } : {}) })
@@ -819,7 +821,7 @@ test('the Budget tab: auto-open through the config menu, the limits through the 
   const tree = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   const t = texts(tree)
   expect(t.some(x => x.text === 'Open pane at session start')).toBe(true)
-  expect(t.filter(x => /^[A-Z][A-Z ]+$/.test(x.text) && x.props.dimColor).map(x => x.text)).toEqual(['OPTIONS', 'LIMITS', 'DAILY BUDGET'])
+  expect(t.filter(x => /^[A-Z][A-Z ]+$/.test(x.text) && x.props.dimColor).map(x => x.text)).toEqual(['OPTIONS', 'LIMITS', 'DAILY BUDGET', 'HANDOFF NOTE'])
   // the units are in the names
   expect(t.filter(x => x.text.endsWith(')')).map(x => x.text)).toEqual(['This session (USD)', 'Today (USD)', 'Warn at (%)', 'Warn at (%)'])
   expect(elements(tree, 'Button').find(b => b.key === 'auto-open')?.label).toBe('on')
@@ -1353,4 +1355,217 @@ test('the headline picks the hero: today shows what was used of the day, the res
   expect(t.some(x => x.text === "today's budget 80% used · 5% of the week, 4% used so far")).toBe(true)
   // the badge then judges only the windows it sits beside, not today's budget
   expect(t.some(x => x.text === 'Warning · 80%')).toBe(false)
+})
+
+// ---------- the handoff note ----------
+
+const MIN = 60_000
+const BASE = Math.floor(T0 / 1000) * 1000
+const IDLE: Idle = { started: BASE / 1000, ctx: 300_000, ttl_seconds: 3600 }
+const NOTE = '# Handoff\nnext: tests'
+const noteFile = (at: number) => `<!-- TokenTab handoff, ${new Date(at).toISOString()} -->\n${NOTE}\n`
+
+test('the handoff timer waits until shortly before expiry, writes once, and stops when off, small or already cold', () => {
+  const cfg = HANDOFF_DEFAULTS
+  expect(handoffStep(cfg, IDLE, BASE + 10 * MIN)).toEqual({ kind: 'wait', ms: 40 * MIN })
+  expect(handoffStep(cfg, IDLE, BASE + 50 * MIN)).toEqual({ kind: 'write' })
+  expect(handoffStep(cfg, IDLE, BASE + 60 * MIN)).toEqual({ kind: 'stop', why: 'cold' })
+  expect(handoffStep({ ...cfg, enabled: false }, IDLE, BASE)).toEqual({ kind: 'stop', why: 'off' })
+  expect(handoffStep(cfg, { ...IDLE, ctx: 50_000 }, BASE)).toEqual({ kind: 'stop', why: 'small' })
+  expect(handoffStep(cfg, undefined, BASE)).toEqual({ kind: 'stop', why: 'small' })
+  // a 5-minute cache: at 3 minutes; set past expiry, 30 s before it
+  const five = { ...IDLE, ttl_seconds: 300 }
+  expect(handoffStep(cfg, five, BASE + MIN)).toEqual({ kind: 'wait', ms: 2 * MIN })
+  expect(handoffStep({ ...cfg, write_at_minutes_5m: 9 }, five, BASE + MIN)).toEqual({ kind: 'wait', ms: 3.5 * MIN })
+})
+
+test('a handoff note counts only when written after the last call started', () => {
+  expect(freshNote(noteFile(BASE + 50 * MIN), IDLE.started)).toBe(NOTE)
+  expect(freshNote(noteFile(BASE - MIN), IDLE.started)).toBeUndefined()
+  expect(freshNote(NOTE, IDLE.started)).toBeUndefined()
+  expect(freshNote(noteFile(BASE + 50 * MIN), undefined)).toBeUndefined()
+})
+
+// One idle stretch after a turn: the guard reports the last call at `started`, the fork answers NOTE.
+function timerWorld(on: On, budget: string) {
+  mock.env(on, { HOME: '/home/t' })
+  const world = { clock: mock.clock(on, { now: BASE }), fs: new Map([[`${DATA}/budget.json`, budget]]), forks: [] as string[], started: BASE / 1000 }
+  const { fs, forks } = world
+  on('fs.read', ($, e) => fs.has(posixPath(e.path)) ? { value: fs.get(posixPath(e.path))! } : { deny: `ENOENT: ${e.path}` })
+  on('fs.write', ($, e) => { fs.set(posixPath(e.path), e.text); return { value: undefined } })
+  on('session.id', () => ({ value: SID }))
+  on('session.surfaces', () => ({ value: ['desktop'] }))
+  on('process.run', ($, e) => {
+    const out = (stdout: string) => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
+    return out(e.argv.includes('-c') ? '3\n' : e.argv.includes('--idle') ? JSON.stringify({ ...IDLE, started: world.started }) : '{}')
+  })
+  on('model.fork', ($, e) => { forks.push(e.prompt); return { value: { isAnswered: true as const, text: NOTE, usage: { input_tokens: 16, output_tokens: 250, cache_read_input_tokens: 300_000, cache_creation_input_tokens: 0 } } as never } })
+  on('turn.complete', ($, e) => ({ text: e.answer } as never))
+  on('turn.start', ($, e) => ({ turnId: e.turnId }))
+  return world
+}
+
+test('after a turn the timer writes the handoff note once, shortly before the cache expires; a new turn cancels it', async ($, on) => {
+  const world = timerWorld(on, BUDGET)
+  const { clock, fs, forks } = world
+  await $.turn.complete({ turnId: 't1', reason: 'answer', answer: 'done' } as never)
+  await clock.advance(49 * MIN)
+  await clock.settle()
+  expect(forks).toEqual([])
+  await clock.advance(MIN)
+  await clock.settle()
+  expect(forks).toEqual([HANDOFF_PROMPT])
+  expect(fs.get(`${DATA}/handoff/${SID}.md`)).toBe(noteFile(BASE + 50 * MIN))
+  await clock.advance(120 * MIN)
+  await clock.settle()
+  expect(forks.length).toBe(1)
+
+  // the next stretch: the person comes back before the write
+  world.started = (BASE + 170 * MIN) / 1000
+  await $.turn.complete({ turnId: 't2', reason: 'answer', answer: 'done' } as never)
+  await clock.advance(20 * MIN)
+  await $.turn.start({ turnId: 't3', text: 'back' } as never)
+  await clock.advance(120 * MIN)
+  await clock.settle()
+  expect(forks.length).toBe(1)
+})
+
+test('with cold_resume off, nothing would offer the note, so the timer writes none', async ($, on) => {
+  const { cold_resume: _off, ...budget } = JSON.parse(BUDGET) as Record<string, unknown>
+  const { clock, forks } = timerWorld(on, JSON.stringify(budget))
+  await $.turn.complete({ turnId: 't1', reason: 'answer', answer: 'done' } as never)
+  await clock.advance(120 * MIN)
+  await clock.settle()
+  expect(forks).toEqual([])
+})
+
+// A cold cache with a note written 10 minutes before the check; the last call 70 minutes before it.
+function handoffWorld($: Engine, on: On, opts: { clears?: boolean, copies?: boolean, noteAt?: number, holdsNewChat?: string } = {}) {
+  mock.env(on, { HOME: '/home/t' })
+  const clock = mock.clock(on, { now: T0 })
+  let id = SID
+  const seen = { sent: [] as string[], copied: [] as string[], toasts: [] as string[], confirms: 0, clears: 0, clock, box: 'go on' }
+  on('ui.toast', ($, e) => { seen.toasts.push(e.text); return { value: undefined } })
+  on('prompt.read', () => ({ value: { text: seen.box, cursor: seen.box.length } }))
+  on('prompt.fill', ($, e) => { seen.box = e.text; return { isFilled: true } as never })
+  on('fs.read', ($, e) => posixPath(e.path) === `${DATA}/handoff/${SID}.md` ? { value: noteFile(opts.noteAt ?? T0 - 10 * MIN) } : { deny: `ENOENT: ${e.path}` })
+  on('fs.write', () => ({ value: undefined }))
+  on('session.id', () => ({ value: id }))
+  on('session.surfaces', () => ({ value: ['desktop'] }))
+  on('ui.invalidate', () => ({ value: undefined }))
+  on('ui.render', { component: 'AbovePrompt' }, ($, e) => { const { Box } = $.ui.resolve(e); return <Box /> })
+  on('process.run', ($, e) => {
+    const argv = [...e.argv]
+    const out = (stdout: string) => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
+    if (argv.includes('-c')) return out('3\n')
+    if (argv.includes('--cold-confirm')) { seen.confirms++; return out('{}') }
+    if (argv.includes('--cold-check') && id === SID) return out(JSON.stringify({ cold: COLD, started: (T0 - 70 * MIN) / 1000 }))
+    return out('{}')
+  })
+  on('prompt.submit', ($, e) => {
+    if (opts.holdsNewChat !== undefined && id !== SID) return { drop: opts.holdsNewChat }
+    seen.sent.push(`${e.origin.kind}: ${e.text}`)
+    return { text: e.text }
+  })
+  on('session.end', ($, e) => ({ sessionId: e.sessionId }))
+  on('command.run', { command: 'clear' }, async () => {
+    seen.clears++
+    if (opts.clears !== false) {
+      await $.session.end({ reason: 'clear', sessionId: id, resume: { id } })
+      id = 'f9e8d7c6-after-clear'
+    }
+    return { text: '' }
+  })
+  on('ui.copy', ($, e) => {
+    if (opts.copies === false) return { deny: 'no clipboard' }
+    seen.copied.push(e.text)
+    return { value: { isCopied: true as const } }
+  })
+  return seen
+}
+
+const HANDOFF_LINES = [
+  "This session's prompt cache has expired (idle 1h 10m, 1h cache). Sending now re-writes 180,000 tokens, about $3.38. A new session starts at about $1.41.",
+  'A handoff note was written before the cache expired. A new chat can start from it; this one stays under /resume.',
+  'Continue in a new chat?',
+]
+
+test('with a fresh handoff note, the cold-cache band offers a new chat from it', async ($, on) => {
+  handoffWorld($, on)
+  expect(await $.prompt.submit({ text: 'go on', wait: false, origin: { kind: 'composer' } })).toEqual({ drop: HELD_HANDOFF })
+  const tree = await $.ui.render(BAND)
+  expect(texts(tree).map(x => x.text)).toEqual(HANDOFF_LINES)
+  expect(elements(tree, 'Button').map(b => b.label)).toEqual([NEW_CHAT, COPY_HANDOFF, SEND_HERE, DONT_SEND])
+})
+
+test('a note older than the last call is not offered', async ($, on) => {
+  handoffWorld($, on, { noteAt: T0 - 80 * MIN })
+  expect(await $.prompt.submit({ text: 'go on', wait: false, origin: { kind: 'composer' } })).toEqual(HELD)
+  expect((await lines($)).at(-1)).toBe('Send your prompt anyway?')
+})
+
+test('New chat from handoff clears the chat and sends the note and the held prompt as the first prompt', async ($, on) => {
+  const seen = handoffWorld($, on)
+  await $.prompt.submit({ text: 'go on', wait: false, origin: { kind: 'composer' } })
+  await lines($)
+  await $.ui.press(bandPress('cold-new'))
+  await seen.clock.settle()
+  expect(seen.confirms).toBe(0)
+  expect(seen.sent).toEqual([`plugin: ${handoffPrompt(NOTE, 'go on')}`])
+  // the terminal kept the dropped prompt in the box: emptied, so it is not sent twice
+  expect(seen.box).toBe('')
+  expect(await lines($)).toEqual([])
+})
+
+test('a second press of New chat while the first is under way neither clears nor sends again', async ($, on) => {
+  const seen = handoffWorld($, on)
+  await $.prompt.submit({ text: 'go on', wait: false, origin: { kind: 'composer' } })
+  await lines($)
+  await Promise.all([$.ui.press(bandPress('cold-new')), $.ui.press(bandPress('cold-new'))])
+  await seen.clock.settle()
+  expect(seen.clears).toBe(1)
+  expect(seen.sent).toEqual([`plugin: ${handoffPrompt(NOTE, 'go on')}`])
+})
+
+test('a new chat that holds the handoff back says so and leaves it on the clipboard', async ($, on) => {
+  const seen = handoffWorld($, on, { holdsNewChat: 'over the hard stop' })
+  await $.prompt.submit({ text: 'go on', wait: false, origin: { kind: 'composer' } })
+  await lines($)
+  await $.ui.press(bandPress('cold-new'))
+  await seen.clock.settle()
+  expect(seen.sent).toEqual([])
+  expect(seen.copied).toEqual([handoffPrompt(NOTE, 'go on')])
+  expect(seen.toasts).toEqual(['TokenTab: the new chat did not get the handoff (it was held back: over the hard stop). The handoff and your prompt are on your clipboard: paste them to send.'])
+})
+
+test('where the chat is not cleared, the note and prompt go to the clipboard and the band says to paste them', async ($, on) => {
+  const seen = handoffWorld($, on, { clears: false })
+  await $.prompt.submit({ text: 'go on', wait: false, origin: { kind: 'composer' } })
+  await lines($)
+  await $.ui.press(bandPress('cold-new'))
+  await seen.clock.settle()
+  expect(seen.sent).toEqual([])
+  expect(seen.copied).toEqual([handoffPrompt(NOTE, 'go on')])
+  expect(await lines($)).toContain("TokenTab: couldn't start a new chat here (the chat was not cleared). The handoff and your prompt are on your clipboard: open a new chat and paste them.")
+})
+
+test('Copy handoff copies the note and the prompt; where it cannot, the band names the file', async ($, on) => {
+  const seen = handoffWorld($, on)
+  await $.prompt.submit({ text: 'go on', wait: false, origin: { kind: 'composer' } })
+  await lines($)
+  await $.ui.press(bandPress('cold-copy'))
+  await seen.clock.settle()
+  expect(seen.copied).toEqual([handoffPrompt(NOTE, 'go on')])
+  expect(seen.box).toBe('go on')
+  expect(await lines($)).toContain('Copied the handoff note and your prompt. Open a new chat and paste them there.')
+  expect(seen.sent).toEqual([])
+})
+
+test('Copy handoff with no clipboard names the note file', async ($, on) => {
+  const seen = handoffWorld($, on, { copies: false })
+  await $.prompt.submit({ text: 'go on', wait: false, origin: { kind: 'composer' } })
+  await lines($)
+  await $.ui.press(bandPress('cold-copy'))
+  await seen.clock.settle()
+  expect(await lines($)).toContain(`TokenTab: couldn't copy here. The note is in ${DATA}/handoff/${SID}.md.`)
 })
