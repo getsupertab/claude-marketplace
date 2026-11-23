@@ -180,6 +180,8 @@ const PRICES = {
   default: { input: 4, output: 20, cache_write_5m: 5, cache_write_1h: 8, cache_read: 0.2 },
 }
 const DATA = '/home/t/.claude/plugins/data/tokentab-supertab'
+// The engine resolves paths natively: on Windows /home/t arrives as D:\home\t.
+const posixPath = (path: string) => path.replace(/\\/g, '/').replace(/^[A-Za-z]:/, '')
 const T0 = Date.UTC(2026, 9, 15, 14, 3, 11, 412)
 const FILES = { '/tokentab/prices.json': JSON.stringify(PRICES), '/tokentab/budget.json': BUDGET }
 const press = (key: string, surface?: 'terminal' | 'desktop') => ({ plugin: 'tokentab', key, requestId: 'tokentab', ...(surface ? { surface } : {}) })
@@ -1376,8 +1378,8 @@ test('after a turn the timer writes the handoff note once, shortly before the ca
   const fs = new Map<string, string>()
   const forks: string[] = []
   let started = BASE / 1000
-  on('fs.read', ($, e) => fs.has(e.path) ? { value: fs.get(e.path)! } : { deny: `ENOENT: ${e.path}` })
-  on('fs.write', ($, e) => { fs.set(e.path, e.text); return { value: undefined } })
+  on('fs.read', ($, e) => fs.has(posixPath(e.path)) ? { value: fs.get(posixPath(e.path))! } : { deny: `ENOENT: ${e.path}` })
+  on('fs.write', ($, e) => { fs.set(posixPath(e.path), e.text); return { value: undefined } })
   on('session.id', () => ({ value: SID }))
   on('session.surfaces', () => ({ value: ['desktop'] }))
   on('process.run', ($, e) => {
@@ -1418,7 +1420,7 @@ function handoffWorld($: Engine, on: On, opts: { clears?: boolean, copies?: bool
   const seen = { sent: [] as string[], copied: [] as string[], confirms: 0, clock, box: 'go on' }
   on('prompt.read', () => ({ value: { text: seen.box, cursor: seen.box.length } }))
   on('prompt.fill', ($, e) => { seen.box = e.text; return { isFilled: true } as never })
-  on('fs.read', ($, e) => e.path === `${DATA}/handoff/${SID}.md` ? { value: noteFile(opts.noteAt ?? T0 - 10 * MIN) } : { deny: `ENOENT: ${e.path}` })
+  on('fs.read', ($, e) => posixPath(e.path) === `${DATA}/handoff/${SID}.md` ? { value: noteFile(opts.noteAt ?? T0 - 10 * MIN) } : { deny: `ENOENT: ${e.path}` })
   on('fs.write', () => ({ value: undefined }))
   on('session.id', () => ({ value: id }))
   on('session.surfaces', () => ({ value: ['desktop'] }))
