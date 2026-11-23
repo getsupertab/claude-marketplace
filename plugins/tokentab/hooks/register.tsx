@@ -309,11 +309,16 @@ function scheduleHandoff($: EngineInterface, ms: number): void {
   handoffTimer = $.clock.after(ms, () => { void handoffTick($, mine) })
 }
 
+// Only the cold-cache question offers the note: off with `cold_resume`, read as guard.py reads it.
 async function handoffConfig($: EngineInterface): Promise<HandoffConfig> {
+  const off = { ...HANDOFF_DEFAULTS, enabled: false }
   try {
-    const cfg = at(JSON.parse(await $.fs.read(`${await dataRoot($)}/budget.json`)) as Json, 'handoff')
+    const budget = JSON.parse(await $.fs.read(`${await dataRoot($)}/budget.json`)) as Json
+    const cold = at(budget, 'cold_resume')
+    if (typeof cold !== 'object' || cold === null || Object.keys(cold).length === 0) return off
+    const cfg = at(budget, 'handoff')
     return { ...HANDOFF_DEFAULTS, ...(typeof cfg === 'object' && cfg !== null ? cfg as Partial<HandoffConfig> : {}) }
-  } catch { return HANDOFF_DEFAULTS }
+  } catch { return off }
 }
 
 async function handoffTick($: EngineInterface, mine: number): Promise<void> {
@@ -343,30 +348,42 @@ async function copyHandoff($: EngineInterface, ask: ColdAsk, surface: RenderSurf
   return r.isCopied
 }
 
+// Where the note and prompt went once the new chat could not take them: the clipboard, else the file.
+async function handedOver($: EngineInterface, ask: ColdAsk, surface: RenderSurface | undefined, id: string, paste: string): Promise<string> {
+  let copied = false
+  try { copied = await copyHandoff($, ask, surface) } catch { /* the path below still says where the note is */ }
+  return copied ? `The handoff and your prompt are on your clipboard: ${paste}.` : `The note is in ${handoffPath(await dataRoot($), id)}.`
+}
+
 // /clear, then the note and the held prompt as the new chat's first prompt. Where the clear
 // does not happen, the clipboard carries them instead.
 async function newChat($: EngineInterface, ask: ColdAsk, surface: RenderSurface | undefined): Promise<void> {
   if (coldAsk !== ask || ask.handoff === undefined) return
+  // Claimed before the first await, so a second press finds nothing to answer.
+  coldAsk = undefined
+  $.ui.invalidate('ui.render')
+  const at = conversation
   const before = await sid($)
   let why: string | undefined
   try { await $.command.run({ command: 'clear' }) } catch (err) { why = err instanceof Error ? err.message : String(err) }
   if (why === undefined && (await sid($)) === before) why = 'the chat was not cleared'
   if (why !== undefined) {
-    let copied = false
-    try { copied = await copyHandoff($, ask, surface) } catch { /* the path below still says where the note is */ }
-    coldAsk = { ...ask, failed: `couldn't start a new chat here (${why}). ${copied
-      ? 'The handoff and your prompt are on your clipboard: open a new chat and paste them.'
-      : `The note is in ${handoffPath(await dataRoot($), before)}.`}` }
+    const where = await handedOver($, ask, surface, before, 'open a new chat and paste them')
+    if (coldAsk !== undefined || conversation !== at) return
+    coldAsk = { ...ask, failed: `couldn't start a new chat here (${why}). ${where}` }
     $.ui.invalidate('ui.render')
     return
   }
-  // The clear's session.end has already dropped the question with the old conversation.
+  // The old chat is cleared by now: a prompt that does not go through is told, never lost.
+  let lost: string | undefined
   resending = true
   try {
     const sent = await $.prompt.submit({ text: handoffPrompt(ask.handoff, ask.prompt), attachments: ask.attachments, asUser: true })
     if (sent.drop === undefined) await emptyBox($, ask.prompt)
-  } catch (err) { $.ui.toast(`TokenTab: sending the handoff failed: ${err instanceof Error ? err.message : String(err)}`) }
+    else lost = `it was held back: ${sent.drop}`
+  } catch (err) { lost = `sending failed: ${err instanceof Error ? err.message : String(err)}` }
   finally { resending = false }
+  if (lost !== undefined) $.ui.toast(`TokenTab: the new chat did not get the handoff (${lost}). ${await handedOver($, ask, surface, before, 'paste them to send')}`)
 }
 
 async function pressCopy($: EngineInterface, ask: ColdAsk, surface: RenderSurface | undefined): Promise<void> {

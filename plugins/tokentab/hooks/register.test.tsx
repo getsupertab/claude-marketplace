@@ -1372,24 +1372,28 @@ test('a handoff note counts only when written after the last call started', () =
   expect(freshNote(noteFile(BASE + 50 * MIN), undefined)).toBeUndefined()
 })
 
-test('after a turn the timer writes the handoff note once, shortly before the cache expires; a new turn cancels it', async ($, on) => {
+// One idle stretch after a turn: the guard reports the last call at `started`, the fork answers NOTE.
+function timerWorld(on: On, budget: string) {
   mock.env(on, { HOME: '/home/t' })
-  const clock = mock.clock(on, { now: BASE })
-  const fs = new Map<string, string>()
-  const forks: string[] = []
-  let started = BASE / 1000
+  const world = { clock: mock.clock(on, { now: BASE }), fs: new Map([[`${DATA}/budget.json`, budget]]), forks: [] as string[], started: BASE / 1000 }
+  const { fs, forks } = world
   on('fs.read', ($, e) => fs.has(posixPath(e.path)) ? { value: fs.get(posixPath(e.path))! } : { deny: `ENOENT: ${e.path}` })
   on('fs.write', ($, e) => { fs.set(posixPath(e.path), e.text); return { value: undefined } })
   on('session.id', () => ({ value: SID }))
   on('session.surfaces', () => ({ value: ['desktop'] }))
   on('process.run', ($, e) => {
     const out = (stdout: string) => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
-    return out(e.argv.includes('-c') ? '3\n' : e.argv.includes('--idle') ? JSON.stringify({ ...IDLE, started }) : '{}')
+    return out(e.argv.includes('-c') ? '3\n' : e.argv.includes('--idle') ? JSON.stringify({ ...IDLE, started: world.started }) : '{}')
   })
   on('model.fork', ($, e) => { forks.push(e.prompt); return { value: { isAnswered: true as const, text: NOTE, usage: { input_tokens: 16, output_tokens: 250, cache_read_input_tokens: 300_000, cache_creation_input_tokens: 0 } } as never } })
   on('turn.complete', ($, e) => ({ text: e.answer } as never))
   on('turn.start', ($, e) => ({ turnId: e.turnId }))
+  return world
+}
 
+test('after a turn the timer writes the handoff note once, shortly before the cache expires; a new turn cancels it', async ($, on) => {
+  const world = timerWorld(on, BUDGET)
+  const { clock, fs, forks } = world
   await $.turn.complete({ turnId: 't1', reason: 'answer', answer: 'done' } as never)
   await clock.advance(49 * MIN)
   await clock.settle()
@@ -1403,7 +1407,7 @@ test('after a turn the timer writes the handoff note once, shortly before the ca
   expect(forks.length).toBe(1)
 
   // the next stretch: the person comes back before the write
-  started = (BASE + 170 * MIN) / 1000
+  world.started = (BASE + 170 * MIN) / 1000
   await $.turn.complete({ turnId: 't2', reason: 'answer', answer: 'done' } as never)
   await clock.advance(20 * MIN)
   await $.turn.start({ turnId: 't3', text: 'back' } as never)
@@ -1412,12 +1416,22 @@ test('after a turn the timer writes the handoff note once, shortly before the ca
   expect(forks.length).toBe(1)
 })
 
+test('with cold_resume off, nothing would offer the note, so the timer writes none', async ($, on) => {
+  const { cold_resume: _off, ...budget } = JSON.parse(BUDGET) as Record<string, unknown>
+  const { clock, forks } = timerWorld(on, JSON.stringify(budget))
+  await $.turn.complete({ turnId: 't1', reason: 'answer', answer: 'done' } as never)
+  await clock.advance(120 * MIN)
+  await clock.settle()
+  expect(forks).toEqual([])
+})
+
 // A cold cache with a note written 10 minutes before the check; the last call 70 minutes before it.
-function handoffWorld($: Engine, on: On, opts: { clears?: boolean, copies?: boolean, noteAt?: number } = {}) {
+function handoffWorld($: Engine, on: On, opts: { clears?: boolean, copies?: boolean, noteAt?: number, holdsNewChat?: string } = {}) {
   mock.env(on, { HOME: '/home/t' })
   const clock = mock.clock(on, { now: T0 })
   let id = SID
-  const seen = { sent: [] as string[], copied: [] as string[], confirms: 0, clock, box: 'go on' }
+  const seen = { sent: [] as string[], copied: [] as string[], toasts: [] as string[], confirms: 0, clears: 0, clock, box: 'go on' }
+  on('ui.toast', ($, e) => { seen.toasts.push(e.text); return { value: undefined } })
   on('prompt.read', () => ({ value: { text: seen.box, cursor: seen.box.length } }))
   on('prompt.fill', ($, e) => { seen.box = e.text; return { isFilled: true } as never })
   on('fs.read', ($, e) => posixPath(e.path) === `${DATA}/handoff/${SID}.md` ? { value: noteFile(opts.noteAt ?? T0 - 10 * MIN) } : { deny: `ENOENT: ${e.path}` })
@@ -1434,9 +1448,14 @@ function handoffWorld($: Engine, on: On, opts: { clears?: boolean, copies?: bool
     if (argv.includes('--cold-check') && id === SID) return out(JSON.stringify({ cold: COLD, started: (T0 - 70 * MIN) / 1000 }))
     return out('{}')
   })
-  on('prompt.submit', ($, e) => { seen.sent.push(`${e.origin.kind}: ${e.text}`); return { text: e.text } })
+  on('prompt.submit', ($, e) => {
+    if (opts.holdsNewChat !== undefined && id !== SID) return { drop: opts.holdsNewChat }
+    seen.sent.push(`${e.origin.kind}: ${e.text}`)
+    return { text: e.text }
+  })
   on('session.end', ($, e) => ({ sessionId: e.sessionId }))
   on('command.run', { command: 'clear' }, async () => {
+    seen.clears++
     if (opts.clears !== false) {
       await $.session.end({ reason: 'clear', sessionId: id, resume: { id } })
       id = 'f9e8d7c6-after-clear'
@@ -1482,6 +1501,27 @@ test('New chat from handoff clears the chat and sends the note and the held prom
   // the terminal kept the dropped prompt in the box: emptied, so it is not sent twice
   expect(seen.box).toBe('')
   expect(await lines($)).toEqual([])
+})
+
+test('a second press of New chat while the first is under way neither clears nor sends again', async ($, on) => {
+  const seen = handoffWorld($, on)
+  await $.prompt.submit({ text: 'go on', wait: false, origin: { kind: 'composer' } })
+  await lines($)
+  await Promise.all([$.ui.press(bandPress('cold-new')), $.ui.press(bandPress('cold-new'))])
+  await seen.clock.settle()
+  expect(seen.clears).toBe(1)
+  expect(seen.sent).toEqual([`plugin: ${handoffPrompt(NOTE, 'go on')}`])
+})
+
+test('a new chat that holds the handoff back says so and leaves it on the clipboard', async ($, on) => {
+  const seen = handoffWorld($, on, { holdsNewChat: 'over the hard stop' })
+  await $.prompt.submit({ text: 'go on', wait: false, origin: { kind: 'composer' } })
+  await lines($)
+  await $.ui.press(bandPress('cold-new'))
+  await seen.clock.settle()
+  expect(seen.sent).toEqual([])
+  expect(seen.copied).toEqual([handoffPrompt(NOTE, 'go on')])
+  expect(seen.toasts).toEqual(['TokenTab: the new chat did not get the handoff (it was held back: over the hard stop). The handoff and your prompt are on your clipboard: paste them to send.'])
 })
 
 test('where the chat is not cleared, the note and prompt go to the clipboard and the band says to paste them', async ($, on) => {

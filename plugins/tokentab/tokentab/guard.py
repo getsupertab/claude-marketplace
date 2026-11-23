@@ -278,6 +278,19 @@ def last_call(transcript, sid):
                 found[0] = start
     return tuple(found)
 
+def handoff_touched(sid, last):
+    """`last` with its start moved to the handoff note's write time when that is later:
+    the note's fork read the cache and restarted its clock, ledger line or not."""
+    if not last:
+        return last
+    try:
+        with open(os.path.join(CFG, "handoff", sid + ".md"), encoding="utf-8") as fh:
+            header = re.match(r"<!-- TokenTab handoff, (\S+) -->", fh.readline())
+        written = datetime.fromisoformat(header.group(1).replace("Z", "+00:00")).timestamp() if header else None
+    except (OSError, ValueError):
+        return last
+    return (written,) + tuple(last[1:]) if written and written > last[0] else last
+
 def cold_resume(cold, prices, last):
     """The cold-cache sentence when the cache has expired on a large context, else None."""
     if not cold or not last:
@@ -309,7 +322,8 @@ def cold_cli(args):
     b = load(os.path.join(CFG, "budget.json"), None) or {}
     tp = glob.glob(os.path.join(ROOT, "*", f"{sid}.jsonl"))
     last = last_call(tp[0], sid) if tp else None
-    c = cold_resume(b.get("cold_resume") or {}, load(os.path.join(HERE, "prices.json"), {}), last)
+    c = cold_resume(b.get("cold_resume") or {}, load(os.path.join(HERE, "prices.json"), {}),
+                    handoff_touched(sid, last))
     # started: a handoff note older than the last call is stale
     print(json.dumps({"cold": c, "started": last[0]} if c else {}))
     return 0
@@ -513,7 +527,7 @@ def main():
     # confirm window goes ahead. This blocks even in warn-only mode: a warning
     # that arrives with the prompt arrives after the money is spent.
     cold = b.get("cold_resume") or {}
-    c = cold_resume(cold, prices, last) if event == "UserPromptSubmit" else None
+    c = cold_resume(cold, prices, handoff_touched(sid, last)) if event == "UserPromptSubmit" else None
     if c:
         blocked = st.get("cold_block_at")
         if blocked and time.time() - float(blocked) <= float(cold.get("confirm_seconds", 120)):
