@@ -257,7 +257,11 @@ def day_budget_case():
         want("day 1 unused", day({}, win(0, reset), now), 100 / 6, 0)
         entries(reset, "2026-11-19", 0, 20)
         want("day 1 used 20%", day({}, win(20, reset), now), 80 / 6, 0)
-        want("day 1 used 20%, 3 more today", day({}, win(23, reset), now), 80 / 6, 3)
+        # The week grew 3% overnight on another machine: that use is not today's, so today starts at 23
+        got = day({}, win(23, reset), now)
+        want("day 1 used 20%, 3 more overnight", got, 77 / 6, 0)
+        if got and got["base"] != 23:
+            errs.append(f"day_budget overnight use: base {got['base']}, want 23")
         # The budget is fixed for the day: spending today does not change it
         entries(reset, "2026-11-20", 20, 20)
         a, b = (day({}, win(p, reset), now) for p in (21, 30))

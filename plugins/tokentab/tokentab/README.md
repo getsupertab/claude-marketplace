@@ -99,7 +99,7 @@ Everything is in `budget.json` in your data folder. `null` turns a limit off. `/
 
 The last six work whether or not `budgets_on` is set.
 
-The daily budget is the weekly limit's remainder over the days left. The cap is `weekly_limit_percent`, or 100 when it is `null`. At midnight, or at the first reading of the day, TokenTab records the week's percent so far in `state/week_baseline.json`. Today's allowance is what is left under the cap, times today's share of the time to the reset. Spending today does not change it. Unused allowance and overspend carry into tomorrow's.
+The daily budget is the weekly limit's remainder over the days left. The cap is `weekly_limit_percent`, or 100 when it is `null`. At the first reading of each local day, TokenTab records the week's percent so far in `state/week_baseline.json`. Use on claude.ai or another machine before that reading counts toward no day, not toward today. Today's allowance is what is left under the cap, times today's share of the time to the reset. Spending today does not change it. Unused allowance and overspend carry into tomorrow's.
 
 Each session keeps its own usage-window reading in `state/windows/<session>.json`. The
 latest reading of any session also goes to `state/rate_limits.json`, for the budget skill;
