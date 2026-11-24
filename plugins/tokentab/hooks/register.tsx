@@ -572,10 +572,19 @@ const localMidnight = (ms: number): number => {
 const sameReset = (a: unknown, b: string): boolean =>
   typeof a === 'string' && Math.round(Date.parse(a) / 60_000) === Math.round(Date.parse(b) / 60_000)
 
+/** A new day's `base` from the week's last reading of an earlier day and the day's first reading,
+ *  which comes after this machine's first request. A rise of one point or less is that request, so the
+ *  old reading is the base. A larger rise is use on claude.ai or another machine overnight: it belongs
+ *  to no day, and the first reading is the base, so that first request counts toward no day either. */
+function dayStart(earlier: number, first: number): number {
+  return first - earlier <= 1 ? Math.min(earlier, first) : first
+}
+
 /** state/week_baseline.json after a weekly reading: per reset, the local day, the weekly percent
  *  when that day started (`base`) and the latest reading (`last`). The daily budget is the week's
  *  remainder over `base`, fixed for the day. `before` is the file of readings the new one replaces:
- *  it seeds `base` for a week first seen mid-week. Resets already past are dropped. */
+ *  it seeds `base` for a week first seen mid-week, through dayStart when it is from an earlier day.
+ *  Resets already past are dropped. */
 export function weekBaseline(
   kept: Json, reading: { percentUsed: number; resetsAt: string }, before: Json | undefined, now: number,
 ): Json {
@@ -593,16 +602,18 @@ export function weekBaseline(
   if (typeof entry?.base === 'number' && typeof entry.last === 'number') {
     // Usage only grows within a week, so a reading below `last` is a session behind another
     const last = Math.max(entry.last, cur)
-    out[reading.resetsAt] = entry.day === day ? { ...entry, last } : { day, base: entry.last, last }
+    out[reading.resetsAt] = entry.day === day ? { ...entry, last } : { day, base: dayStart(entry.last, last), last }
     return out
   }
   const prev = Array.isArray(before?.windows)
     ? (before.windows as { kind?: unknown; percentUsed?: unknown; resetsAt?: unknown }[])
         .find(w => w.kind === 'seven_day' && sameReset(w.resetsAt, reading.resetsAt))
     : undefined
-  // A week that began today starts at zero; else the reading before, even from earlier today, is nearer the day's start than now
+  const earlierToday = Date.parse(String(before?.at)) >= midnight
+  // A week that began today starts at zero; else a reading before from earlier today is nearer the day's start than now
   const base = reset - 7 * 86_400_000 >= midnight ? 0
-    : typeof prev?.percentUsed === 'number' ? Math.min(prev.percentUsed, cur) : cur
+    : typeof prev?.percentUsed !== 'number' ? cur
+    : earlierToday ? Math.min(prev.percentUsed, cur) : dayStart(prev.percentUsed, cur)
   out[reading.resetsAt] = { day, base, last: cur }
   return out
 }

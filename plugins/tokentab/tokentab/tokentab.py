@@ -1095,6 +1095,8 @@ def day_budget(budget, windows, now=None):
         # Another session may have read the week more recently; usage only grows within a week
         if isinstance(last, (int, float)):
             cur = max(cur, float(last))
+        # An entry from an earlier day means the hook has not written today's yet, or its write failed.
+        # The old `last` stays the base: the live reading would make today's use always 0
         base = float(entry["base"] if entry.get("day") == at.date().isoformat()
                      else last if isinstance(last, (int, float)) else cur)
     else:

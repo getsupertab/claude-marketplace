@@ -257,7 +257,13 @@ def day_budget_case():
         want("day 1 unused", day({}, win(0, reset), now), 100 / 6, 0)
         entries(reset, "2026-11-19", 0, 20)
         want("day 1 used 20%", day({}, win(20, reset), now), 80 / 6, 0)
-        want("day 1 used 20%, 3 more today", day({}, win(23, reset), now), 80 / 6, 3)
+        # No entry for today yet, or the hook's write failed: yesterday's `last` stays the base, so the
+        # readings that follow still count toward today instead of each becoming the base
+        for p in (23, 30):
+            got = day({}, win(p, reset), now)
+            want(f"stale entry, reading {p}", got, 80 / 6, p - 20)
+            if got and got["base"] != 20:
+                errs.append(f"day_budget stale entry: base {got['base']}, want 20")
         # The budget is fixed for the day: spending today does not change it
         entries(reset, "2026-11-20", 20, 20)
         a, b = (day({}, win(p, reset), now) for p in (21, 30))
