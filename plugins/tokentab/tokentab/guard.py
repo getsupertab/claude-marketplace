@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """TokenTab budget guard - a Claude Code hook that warns, and stops if asked to.
 
-Two scopes, most restrictive wins:
-  session this conversation.
-  daily   every session today, across every project.
+One budget at a time, budget.json's budget_type for the account's unit:
+  USD (API billing)  session (this conversation) or today (every session, every project).
+  percent (Pro, Max) today (a share of the week), week, five_hour, or session (dollars at API rates).
 
 Wired to PreToolUse (the brake inside a turn) and UserPromptSubmit (the stop
 between turns). Config: budget.json in the plugin's data folder (/tokentab:budget)
@@ -63,7 +63,7 @@ def tally(transcript, prices, st, others=frozenset()):
     # are derived from them at the current prices every time, so a price change
     # re-prices history. The tamper check runs on raw counts, which only grow.
     keep = {k: st.get(k) for k in ("band_session", "band_today", "band_five_hour", "band_seven_day",
-                                   "reset_five_hour", "reset_seven_day", "ctx_band", "cold_block_at",
+                                   "reset_five_hour", "reset_seven_day", "reset_today", "ctx_band", "cold_block_at",
                                    "turn_base_cost", "turn_base_tokens",
                                    "health_warned", "health_warned_at", "recent", "subs")}
     if "raw" not in st or st.get("v") != FORMAT:   # old format: re-read the transcript once
@@ -475,7 +475,7 @@ def main():
     l_dc += float(backfilled.get(today) or 0.0) if isinstance(backfilled, dict) else 0.0
     day_c, day_t = max(day_c, l_dc), max(day_t, l_dt)
 
-    _, limits = limit_rows(b, {"session": cost, "today": day_c}, read_windows(sid)) if on else (None, [])
+    unit, limits = limit_rows(b, {"session": cost, "today": day_c}, read_windows(sid)) if on else (None, [])
 
     marks = [100 - left for left in WARN_LEFT]
     hard    = bool(b.get("hard_stop", False))
@@ -495,9 +495,15 @@ def main():
         if frac >= 1.0 and hard:
             st[band_key] = 100
             scope = {"session": "session", "today": "daily", "five_hour": "5-hour", "seven_day": "weekly"}[name]
+            # On Pro and Max today's budget has no limit of its own: it is spread from the week's cap
+            if unit == "percent" and name == "today":
+                fix = ("Raise the week cap (weekly_limit_percent) in budget.json (/tokentab:budget) to continue, "
+                       "or wait for tomorrow's budget." if isinstance(b.get("weekly_limit_percent"), (int, float))
+                       else "Tomorrow brings a new budget; /tokentab:budget changes the budget type.")
+            else:
+                fix = f"Raise the {scope} limit in budget.json (/tokentab:budget) to continue."
             return ("deny",
-                f"TokenTab: {scope} budget exhausted. {detail} ({pct}%). Raise the "
-                f"{scope} limit in budget.json (/tokentab:budget) to continue.",
+                f"TokenTab: {scope} budget exhausted. {detail} ({pct}%). {fix}",
                 f"The {scope} budget is exhausted: {detail}. No further tool calls are "
                 f"permitted. Stop work, tell the user, and do not attempt to raise the "
                 f"limit or edit the budget file yourself.")
@@ -505,9 +511,11 @@ def main():
         if band <= int(st.get(band_key, 0)):
             return None                           # once per mark
         st[band_key] = band
+        # Counted as what is left, as the pane and the status line count it
+        left = max(0, 100 - pct)
         if not hard:
             # Warn-only mode: say so, and never ask Claude to cut work short.
-            head = f"{label} limit reached" if band == 100 else f"{pct}% of {label} budget used"
+            head = f"{label} limit reached" if band == 100 else f"{left}% of {label} budget left"
             told, asked = (f"TokenTab: {head} ({detail}). Warning only, nothing is blocked.",
                 "Claude has been asked to use fewer calls.")
             ask = (f"BUDGET NOTICE: {head} ({detail}). This is a soft limit: nothing is "
@@ -515,12 +523,12 @@ def main():
                 f"calls where you can: every call in this conversation re-reads its whole "
                 f"context.")
         else:
-            told, asked = (f"TokenTab: {pct}% of {label} budget used ({detail}). At 100% tool calls stop.",
+            told, asked = (f"TokenTab: {left}% of {label} budget left ({detail}). At the limit tool calls stop.",
                 "Claude has been asked to wrap up.")
-            ask = (f"BUDGET NOTICE: {pct}% of {label} budget is gone ({detail}). Start "
+            ask = (f"BUDGET NOTICE: only {left}% of {label} budget is left ({detail}). Start "
                 f"wrapping up. Prefer cheap actions, avoid re-reading large files or "
                 f"taking screenshots, keep responses short, and finish what is in "
-                f"flight rather than starting new work. At 100% tool calls stop.")
+                f"flight rather than starting new work. At the limit tool calls stop.")
         # Without spend_less the warning is the user's alone; Claude hears nothing.
         if not spend_less:
             return ("note", f"{told} /tokentab:budget changes the limit.", None)

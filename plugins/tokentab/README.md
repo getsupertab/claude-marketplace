@@ -173,36 +173,50 @@ session set `tokentab.autoOpen` in `/config`.
 
 ## Budgets
 
-Budgets are off until you turn them on, with `/tokentab:budget` or on the Options tab.
-You can also just ask: "raise my daily limit to 30", "hard stop on".
+Budgets are off until you turn them on, with `/tokentab:budget` or Enable budget on the
+Options tab. You can also just ask: "raise my daily limit to 30", "stop at the limit".
 
-Once on, the defaults are $25 per session and $40 per day. TokenTab warns with 10%, 5% and
-2% of a limit left, and at 100%. It only warns unless you switch on `hard_stop`, which blocks tool calls
-past the limit. Whether Claude hears the warnings too is `spend_less` (beta, "Ask Claude to spend
-less" on the Options tab): on, Claude is asked to spend less, or to wrap up under a hard stop; off,
-the warnings are yours alone. Until you set it, it follows `hard_stop`, so a hard stop warns Claude
-before blocking it and a warn-only budget tells only you. With `hard_stop` on and `spend_less` off,
-Claude hears nothing until its tool calls are blocked at 100%. 1.8.0 and 1.9.0 wrote `false` as their
-default; 1.10.0 puts it back to following `hard_stop` once, so if you had chosen off, switch it off again.
+One budget is checked at a time. Pick its type and limit on the Options tab (the rows show
+once the budget is on) or ask: "make my budget the session, $5".
 
-On a Pro or Max plan the limits count in percent of the plan's 5-hour and weekly usage
-windows instead, 80% and 90% by default. TokenTab picks the unit from your account: percent
-where Claude Code reports usage windows, dollars otherwise. It's not a setting: your
-account decides.
+- **API billing (Enterprise, API key)** counts dollars: `today` (every session, every
+  project, $40 by default) or `session` ($25 by default).
+- **Pro and Max** count percent of the plan's usage: `today` (the daily budget below),
+  `week` (90% of the weekly window by default), `five_hour` (80% of the 5-hour window) or
+  `session` (dollars at API rates, $25 by default).
+
+TokenTab picks the unit from your account: percent where Claude Code reports usage windows,
+dollars otherwise. It's not a setting. Each unit keeps its own type, so an account switch
+loads that account's budget and switching back restores the other.
+
+TokenTab warns with 10%, 5% and 2% of the budget left, and at the limit, counted as what is
+left ("10% of today's budget left"). It only warns unless you switch on Stop at limit
+(`hard_stop`), which blocks tool calls past the limit. Whether Claude hears the warnings too is
+`spend_less` (beta, "Ask Claude to spend less near the limit" on the Options tab): on, Claude is
+asked to spend less, or to wrap up when it will be stopped; off, the warnings are yours alone.
+Until you set it, it follows `hard_stop`, so stopping at the limit warns Claude first and a
+warn-only budget tells only you. With `hard_stop` on and `spend_less` off, Claude hears nothing
+until its tool calls are blocked. 1.8.0 and 1.9.0 wrote `false` as their default; 1.10.0 puts
+it back to following `hard_stop` once, so if you had chosen off, switch it off again.
+
+**Changed in 1.11.0.** Before, both limits of a unit were checked at once (session and today,
+or the 5-hour and weekly windows), and the daily budget only showed a number. Now only the
+budget type is checked, and the daily budget is a type that warns and stops like the others.
+A `budget.json` from before keeps its values; its type comes from the limits it had set:
+`today` in USD unless only the session limit was set, and on Pro and Max `today` if the daily
+budget was on, else `week` unless only the 5-hour limit was set. With the daily budget on and
+the budget off, the daily budget still leads as the headline, as before, but sends no notice.
 
 ### Daily budget
 
-On Pro and Max, TokenTab can also spread what is left of the week over the days left: a
-daily allowance, fixed at the start of each local day. It is off by default. Turn it on
-with the daily budget switch in the pane's Options tab (shown once the plan has reported
-its usage, since a USD account has no week to share out), or ask: "turn the daily budget on".
-Once on, the pane, the status line and the button that brings a closed pane back show
-how much of it is left, and the pane's badge turns amber with 10% of it left. It only shows the
-number: it sends no notice, tells Claude nothing, and never blocks, with budgets on or
-off. `daily_budget.enabled` in `budget.json` sets it.
+On Pro and Max, budget type `today` spreads what is left of the week over the days left: a
+daily allowance, fixed at the start of each local day. Its limit field is the week's cap
+(`weekly_limit_percent`, or 100 when off). The pane, the status line and the button that
+brings a closed pane back show how much of it is left. You can lead with it as the headline
+without making it the budget; it is then only a number.
 
-**Carry over (beta).** With `daily_budget.carry_over` on (the switch beside it in the
-pane, or ask: "turn on budget carry-over"), each day gets a seventh of the week, about
+**Carry over (beta).** With `daily_budget.carry_over` on (Carry over under Beta, shown wherever the
+daily budget shows, or ask: "turn on budget carry-over"), each day gets a seventh of the week, about
 14%, plus whatever earlier days of the week left unused, minus what they overspent. Skip a
 day and the next one has about 28%; overspend and tomorrow's shrinks. The week rarely
 resets at midnight, so the days it starts and ends on get the part of a seventh that falls
@@ -217,16 +231,15 @@ a closed pane back, counted as what is left, the same way the warnings count:
 `auto` (the default), `session`, `today`, `five_hour` or `week`. Set it in the Options tab
 or ask: "make the week my headline".
 
-- `auto` follows the budget that is on: the daily budget, else the limit you set (the
-  5-hour one when it is the only one). With none, the week leads on Pro and Max and today's
-  spend in USD.
+- `auto` follows the budget type while the budget is on. With it off, the week leads on
+  Pro and Max (the daily budget, if an older file had it switched on) and today's spend in USD.
 - `today` is the daily budget on Pro and Max and today's spend over every session in USD.
 - `session` is this session's spend (at API rates on Pro and Max).
 - `five_hour` and `week` are Pro and Max only. A choice the account has no reading for
   falls back to `auto`.
 
-The status line shows at most two figures: the headline, then the budget that is on (the
-daily budget, else the window limit nearest its end), else the account's next figure
+The status line shows at most two figures: the headline, then the budget, else the
+account's next figure
 (`week 59% left · today's budget 38% left`, `today 40% left of $40.00 · session $3.10`).
 A `budget.json` from before 1.9.0 has `five_hour` saved, so the 5-hour window keeps leading
 there until you pick another.

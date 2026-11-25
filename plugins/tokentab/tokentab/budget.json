@@ -1,21 +1,25 @@
 {
-  "_budgets_comment": "Master switch for budgets: the limits below. false (the default) checks none of them and keeps their values for when you turn it on (/tokentab:budget or the pane).",
+  "_budgets_comment": "Master switch for the budget: the type and limit below. false (the default) checks nothing and keeps the values for when you turn it on (/tokentab:budget or the pane, where it is Enable budget).",
   "budgets_on": false,
-  "_unit_comment": "Your account decides what the limits count: percent of the plan's 5-hour and weekly usage windows on Pro and Max, else USD (session and today, priced from prices.json). Only that pair is checked.",
-  "_comment": "One limit per scope in each unit. null disables that one.",
+  "_unit_comment": "Your account decides what a budget counts: percent of the plan's usage windows on Pro and Max, else USD (priced from prices.json). Only the budget type picked for that unit is checked.",
+  "_type_comment": "The one budget checked, per unit, so switching accounts keeps each one's pick. usd: today (daily_limit_usd) or session (session_limit_usd). percent: today (the daily budget below, its cap weekly_limit_percent), week (weekly_limit_percent), five_hour (five_hour_limit_percent) or session (session_limit_usd, dollars at API rates). null (the default) takes the limit you had set: today in USD unless only the session limit is set; on Pro and Max today if the old daily budget switch was on, else week unless only the 5-hour limit is set.",
+  "budget_type": {
+    "usd": null,
+    "percent": null
+  },
+  "_comment": "Each budget type's limit; null disables it. Only the limit of the type in effect is checked.",
   "session_limit_usd": 25,
   "daily_limit_usd": 40,
   "five_hour_limit_percent": 80,
   "weekly_limit_percent": 90,
   "hard_stop": false,
-  "_spend_less_comment": "Beta. true also asks Claude to spend less (cheaper actions, shorter replies, and with hard_stop on, to wrap up) at each warning. false only warns you. null (the default) follows hard_stop, so a hard stop never cuts Claude off unwarned.",
+  "_spend_less_comment": "Beta. true also asks Claude to spend less (cheaper actions, shorter replies, and with hard_stop on, to wrap up) at each warning. false only warns you. null (the default) follows hard_stop, so stopping at the limit never cuts Claude off unwarned.",
   "spend_less": null,
-  "_daily_comment": "On Pro and Max: what is left of the week, spread evenly over the time left, fixed at the start of each local day. Off by default; the pane's switch or /tokentab:budget turns it on. It only shows in the pane, the status line and the reopen button, which turn amber with 10% of it left: it sends no notice and never blocks, whatever budgets_on and hard_stop say. The week's own limit (weekly_limit_percent, else 100) is its cap. carry_over (beta) instead gives each full day a seventh of the cap (the days the week starts and ends on their part of one) plus what earlier days of the week left unused, minus what they overspent: a day unused makes the next one twice as large.",
+  "_daily_comment": "On Pro and Max, budget type today: what is left of the week, spread evenly over the time left, fixed at the start of each local day. The week's own limit (weekly_limit_percent, else 100) is its cap. carry_over (beta) instead gives each full day a seventh of the cap (the days the week starts and ends on their part of one) plus what earlier days of the week left unused, minus what they overspent: a day unused makes the next one twice as large.",
   "daily_budget": {
-    "enabled": false,
     "carry_over": false
   },
-  "_headline_comment": "Which figure leads in the pane, the status line and the reopen button, counted as what is left: auto, session, today, five_hour or week. auto (the default) follows the budget that is on (the daily budget, else the limit you set), else the week on Pro and Max and today in USD. today is the daily budget on Pro and Max and today's spend in USD; five_hour and week are Pro and Max only, and a pick this account has no reading for falls back to auto. The status line shows at most two figures: the headline, then the budget that is on, else the next figure.",
+  "_headline_comment": "Which figure leads in the pane, the status line and the reopen button, counted as what is left: auto, session, today, five_hour or week. auto (the default) follows the budget type while the budget is on, else the week on Pro and Max (the daily budget if an older file's daily_budget.enabled is on) and today in USD. today is the daily budget on Pro and Max and today's spend in USD; five_hour and week are Pro and Max only, and a pick this account has no reading for falls back to auto. The status line shows at most two figures: the headline, then the budget, else the next figure.",
   "headline": "auto",
   "_context_comment": "Context size of the last call. Every call re-reads it all, so this is what each call costs. Warns once per threshold; resets after a compact.",
   "context_warn_tokens": [

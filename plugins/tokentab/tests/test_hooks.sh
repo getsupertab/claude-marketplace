@@ -109,8 +109,8 @@ for cmd in \
   check "guard denies a look-alike: $cmd" "$(tool Bash "$cmd" | "$SCRIPTS/guard.sh")" '"permissionDecision": "deny"'
 done
 
-# Daily budget: it only shows in the pane and status line. The guard says nothing about it,
-# under, at or over 100%, switched on or off, whatever budgets_on and hard_stop say.
+# Daily budget: budget type today on Pro and Max, checked like any budget while the budget is on.
+# The week resets in three days, so today's budget is a third of it (33%).
 REAL="$(for py in python3 python "py -3"; do $py -c 'import sys; sys.exit(sys.version_info[0] != 3)' 2>/dev/null && { $py -c 'import sys; print(sys.executable)'; break; }; done)"
 pyline() { "$REAL" -c "import datetime as d; $1"; }
 TODAY="$(pyline 'print(d.date.today().isoformat())')"
@@ -125,15 +125,32 @@ check "guard counts today's backfilled calls against the daily limit" \
   "$(tool Read "" | "$SCRIPTS/guard.sh")" '"permissionDecision": "deny"'
 rm "$DATA/state/backfill.json"
 week() { printf '{"windows": [{"kind": "seven_day", "percentUsed": %s, "resetsAt": "%s"}]}\n' "$1" "$RESET" > "$DATA/state/windows/s-guard.json"; }
-for cfg in '"enabled": true' '"enabled": false' '"enabled": true, "warn_at_percent": 80'; do
-  for budgets in false true; do
-    printf '{"budgets_on": %s, "hard_stop": true, "weekly_limit_percent": null, "daily_budget": {%s}}\n' "$budgets" "$cfg" > "$DATA/budget.json"
-    for pct in 5 30 45; do
-      week "$pct"
-      check "day budget: guard silent at ${pct}% of the week, budgets_on $budgets, {$cfg}" "$(tool Read "" | "$SCRIPTS/guard.sh")" ""
-    done
-  done
+# The type picked, and a file from before budget_type whose old daily switch was on
+for typed in '"budget_type": {"usd": null, "percent": "today"}' '"daily_budget": {"enabled": true}'; do
+  rm -f "$DATA/state/s-guard.json"   # the same day warns once per mark: start each case unwarned
+  printf '{"budgets_on": false, "hard_stop": true, "weekly_limit_percent": null, %s}\n' "$typed" > "$DATA/budget.json"
+  week 45
+  check "day budget: guard silent with the budget off, {$typed}" "$(tool Read "" | "$SCRIPTS/guard.sh")" ""
+  printf '{"budgets_on": true, "hard_stop": true, "weekly_limit_percent": null, %s}\n' "$typed" > "$DATA/budget.json"
+  week 5
+  check "day budget: guard silent at 5% of the week, {$typed}" "$(tool Read "" | "$SCRIPTS/guard.sh")" ""
+  week 31
+  check "day budget: guard warns with what is left at 31% of the week, {$typed}" \
+    "$(tool Read "" | "$SCRIPTS/guard.sh")" "of today's budget left"
+  week 45
+  out="$(tool Read "" | "$SCRIPTS/guard.sh")"
+  check "day budget: guard stops past today's budget, {$typed}" "$out" '"permissionDecision": "deny"'
+  # No week cap to raise: the stop names tomorrow, not a daily limit Pro and Max have none of
+  check "day budget: the stop without a week cap points to tomorrow, {$typed}" "$out" "Tomorrow brings a new budget"
 done
+# With a week cap the stop names it: 90% over the three days left is 30% today, and 45% is past it
+rm -f "$DATA/state/s-guard.json"
+printf '{"budgets_on": true, "hard_stop": true, "weekly_limit_percent": 90, "budget_type": {"percent": "today"}}\n' > "$DATA/budget.json"
+check "day budget: the stop names the week cap" "$(tool Read "" | "$SCRIPTS/guard.sh")" "Raise the week cap (weekly_limit_percent)"
+# Only the type picked is checked: the week has no limit here, so today's overspend says nothing
+printf '{"budgets_on": true, "hard_stop": true, "weekly_limit_percent": null, "budget_type": {"percent": "week"}, "daily_budget": {"enabled": true}}\n' > "$DATA/budget.json"
+week 45
+check "day budget: guard silent while another type is the budget" "$(tool Read "" | "$SCRIPTS/guard.sh")" ""
 rm "$DATA/state/windows/s-guard.json" "$DATA/state/week_baseline.json"
 
 # Warnings reach Claude only with spend_less: each case is a new 5-hour window, so it warns afresh

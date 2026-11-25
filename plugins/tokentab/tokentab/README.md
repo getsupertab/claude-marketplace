@@ -90,15 +90,16 @@ Everything is in `budget.json` in your data folder. `null` turns a limit off. `/
 
 | Setting | Default | What it does |
 |---|---|---|
-| `budgets_on` | `false` | Switches the limits below on or off. Their values are kept while it's off. |
-| `session_limit_usd` | `25` | Limit for one session, in US dollars. Resets with a new session. |
+| `budgets_on` | `false` | Enable budget: switches the budget below on or off. Its values are kept while it's off. |
+| `budget_type` | from your limits | The one budget checked, per unit: `usd` is `today` or `session`; `percent` (Pro, Max) is `today` (the daily budget), `week`, `five_hour` or `session` (dollars at API rates). `null` takes it from the limits set: `today` in USD unless only the session limit is set; on Pro and Max `today` if the old `daily_budget.enabled` is on, else `week` unless only the 5-hour limit is set. |
+| `session_limit_usd` | `25` | Limit for one session, in US dollars (at API rates on Pro and Max). Resets with a new session. |
 | `daily_limit_usd` | `40` | Limit across all sessions and projects, in US dollars. Resets at midnight. |
 | `five_hour_limit_percent` | `80` | Limit on the plan's 5-hour usage window. Resets with the window. |
-| `weekly_limit_percent` | `90` | Limit on the plan's weekly usage window. Resets with the window. |
-| `hard_stop` | `false` | `true` stops Claude at 100%; `false` only warns. Either way TokenTab warns once each at 10%, 5% and 2% of a limit left; that is fixed. |
+| `weekly_limit_percent` | `90` | Limit on the plan's weekly usage window, and the daily budget's cap. Resets with the window. |
+| `hard_stop` | `false` | Stop at limit: `true` stops Claude at the limit; `false` only warns. Either way TokenTab warns once each at 10%, 5% and 2% of the budget left; that is fixed. |
 | `spend_less` | `null` | Beta. `true` also asks Claude, with each warning, to spend less: cheaper actions and shorter replies, and with `hard_stop` on, to wrap up. `false` warns only you. `null` follows `hard_stop`; `/tokentab:budget` takes `auto` to set it back. A `false` that 1.8.0 or 1.9.0 wrote as their default becomes `null` once. |
-| `daily_budget` | off | On Pro and Max: what is left of the week, spread evenly over the time left, fixed at the start of each local day. `enabled` switches it on; `carry_over` (beta, off) instead gives each full day a seventh of the cap (the week's first and last days their part of one) plus what earlier days of the week left unused, minus what they overspent. The pane's badge turns amber with 10% of it left. It only shows in the pane, the status line and the reopen button: it sends no notice, never blocks, and ignores `budgets_on`. |
-| `headline` | `auto` | Which figure leads in the pane, the status line and the reopen button, counted as what is left: `auto`, `session`, `today` (the daily budget on Pro and Max, today's spend in USD), `five_hour` or `week`. `auto` follows the budget that is on, else the week on Pro and Max and today in USD; a choice without a reading falls back to it. The status line shows at most two figures: the headline, then the budget that is on, else the next figure. |
+| `daily_budget` | | Budget type `today` on Pro and Max: what is left of the week, spread evenly over the time left, fixed at the start of each local day. `carry_over` (beta, off) instead gives each full day a seventh of the cap (the week's first and last days their part of one) plus what earlier days of the week left unused, minus what they overspent. An older file's `enabled` picks the default type and, with the budget off, keeps it the `auto` headline. |
+| `headline` | `auto` | Which figure leads in the pane, the status line and the reopen button, counted as what is left: `auto`, `session`, `today` (the daily budget on Pro and Max, today's spend in USD), `five_hour` or `week`. `auto` follows the budget type while the budget is on, else the week on Pro and Max (the daily budget if an older file's `daily_budget.enabled` is on) and today in USD; a choice without a reading falls back to it. The status line shows at most two figures: the headline, then the budget, else the next figure. |
 | `context_warn_tokens` | `[200000, 350000]` | Tells you and Claude when the context passes each size. Re-arms after a compaction. |
 | `cold_resume` | on | Holds back the first prompt after the prompt cache has expired. See below. |
 | `handoff` | on | Writes a handoff note shortly before the cache expires, for a new chat to start from. See below. |
