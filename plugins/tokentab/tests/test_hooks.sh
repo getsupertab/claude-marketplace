@@ -73,7 +73,7 @@ check "guard denies a tool call past a hard session limit" \
 mkdir -p "$DATA/state/windows"
 W85='[{"kind": "five_hour", "percentUsed": 85, "resetsAt": "2999-01-01T00:00:00Z"}]'
 cat > "$DATA/budget.json" <<'EOF'
-{"budgets_on": true, "session_limit_usd": 0.000001, "five_hour_limit_percent": 90, "weekly_limit_percent": null, "warn_at_percent": 70, "hard_stop": true}
+{"budgets_on": true, "session_limit_usd": 0.000001, "five_hour_limit_percent": 90, "weekly_limit_percent": null, "hard_stop": true}
 EOF
 # Before the session's own reading, the last one written (maybe another login's) is not used
 printf '{"windows": %s}\n' "$W85" > "$DATA/state/rate_limits.json"
@@ -114,7 +114,7 @@ TODAY="$(pyline 'print(d.date.today().isoformat())')"
 RESET="$(pyline 'print(d.datetime.combine(d.date.today() + d.timedelta(3), d.time()).astimezone().astimezone(d.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))')"
 printf '{"%s": {"day": "%s", "base": 0, "last": 0}}\n' "$RESET" "$TODAY" > "$DATA/state/week_baseline.json"
 week() { printf '{"windows": [{"kind": "seven_day", "percentUsed": %s, "resetsAt": "%s"}]}\n' "$1" "$RESET" > "$DATA/state/windows/s-guard.json"; }
-for cfg in '"enabled": true, "warn_at_percent": 80' '"enabled": false' '"enabled": true, "warn_at_percent": "80%"'; do
+for cfg in '"enabled": true' '"enabled": false' '"enabled": true, "warn_at_percent": 80'; do
   for budgets in false true; do
     printf '{"budgets_on": %s, "hard_stop": true, "weekly_limit_percent": null, "daily_budget": {%s}}\n' "$budgets" "$cfg" > "$DATA/budget.json"
     for pct in 5 30 45; do

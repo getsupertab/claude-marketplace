@@ -1,6 +1,6 @@
 ---
 name: budget
-description: Show or change TokenTab's spending limits (session, daily, warnings, hard stop). Use when the user asks, in the same prompt, to see or change a TokenTab limit, e.g. "raise my daily limit to 30" or "hard stop on". Never change a limit unasked.
+description: Show or change TokenTab's spending limits (session, daily, hard stop). Use when the user asks, in the same prompt, to see or change a TokenTab limit, e.g. "raise my daily limit to 30" or "hard stop on". Never change a limit unasked.
 argument-hint: "[what to change]"
 ---
 
@@ -19,9 +19,9 @@ Arguments: $ARGUMENTS
 ## No arguments: show the limits
 
 Read the file and show, in a short list: whether `budgets_on` is on (off, or missing,
-means none of the limits below are checked), the unit in effect, its two limits (`null` means off), `warn_at_percent` and `hard_stop` (true blocks at 100%,
-false only warns). "Turn budgets on/off" means `budgets_on`. Also show the daily budget
-(`daily_budget.enabled` and `daily_budget.warn_at_percent`: on Pro and Max, what is left
+means none of the limits below are checked), the unit in effect, its two limits (`null` means off) and `hard_stop` (true blocks at 100%,
+false only warns; warnings come at 10%, 5% and 2% of a limit left, fixed, not a setting). "Turn budgets on/off" means `budgets_on`. Also show the daily budget
+(`daily_budget.enabled`: on Pro and Max, what is left
 of the week spread over the days left; off unless `enabled` is true, and it only shows in
 the pane and status line, never notifies or blocks, and ignores `budgets_on`) and
 `headline` (`today`, `five_hour` or `week`: which plan number leads in the pane, status

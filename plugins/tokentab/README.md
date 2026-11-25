@@ -176,8 +176,8 @@ session set `tokentab.autoOpen` in `/config`.
 Budgets are off until you turn them on, with `/tokentab:budget` or on the Budget tab.
 You can also just ask: "raise my daily limit to 30", "hard stop on".
 
-Once on, the defaults are $25 per session and $40 per day. TokenTab warns at 70% and at
-100% of a limit. It only warns unless you switch on `hard_stop`, which blocks tool calls
+Once on, the defaults are $25 per session and $40 per day. TokenTab warns with 10%, 5% and
+2% of a limit left, and at 100%. It only warns unless you switch on `hard_stop`, which blocks tool calls
 past the limit.
 
 On a Pro or Max plan the limits count in percent of the plan's 5-hour and weekly usage
@@ -191,9 +191,9 @@ On Pro and Max, TokenTab can also spread what is left of the week over the days 
 daily allowance, fixed at the start of each local day. It is off by default. Turn it on
 with the daily budget switch in the pane's settings, or ask: "turn the daily budget on".
 Once on, the pane, the status line and the button that brings a closed pane back show
-how much of it is used, and the pane's badge turns amber at 80%. It only shows the
+how much of it is used, and the pane's badge turns amber with 10% of it left. It only shows the
 number: it sends no notice, tells Claude nothing, and never blocks, with budgets on or
-off. `daily_budget.enabled` and `daily_budget.warn_at_percent` in `budget.json` set it.
+off. `daily_budget.enabled` in `budget.json` sets it.
 `headline` (`today`, `five_hour` or `week`) picks which plan number leads; the default
 is `five_hour`.
 

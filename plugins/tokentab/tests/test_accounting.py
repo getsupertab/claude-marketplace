@@ -277,11 +277,6 @@ def day_budget_case():
             json.dump({reset.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z"):
                        {"day": "2026-11-20", "base": 20, "last": 20}}, f)
         want("reset spelled with milliseconds", day({}, win(23, reset), now), 80 / 6, 3)
-        # The warn level: 80 when absent or not a number
-        for cfg, warn in (({}, 80), ({"daily_budget": False}, 80), ({"daily_budget": {"warn_at_percent": None}}, 80),
-                          ({"daily_budget": {"warn_at_percent": "80%"}}, 80), ({"daily_budget": {"warn_at_percent": 60}}, 60)):
-            if kt.day_warn_at(cfg) != warn:
-                errs.append(f"day_warn_at {cfg}: {kt.day_warn_at(cfg)}, want {warn}")
         # An odd-hour reset: the second to last day spreads over the 37 hours left, the last day gets what is left
         odd = L(11, 21, 13)
         entries(odd, "2026-11-19", 4, 4)
@@ -377,11 +372,11 @@ def day_budget_pane_case(store, prices):
             elif (today[0]["limit"], today[0]["resets"], today[0]["used"]) != (None, None, 3) \
                     or today[0]["frac"] != day["frac"] or today[0]["allowed"] != day["allowed"]:
                 errs.append(f"pane today window: {today[0]}")
-            if s["headline"] != "five_hour" or s["daily_warn_at"] != 80:
-                errs.append(f"pane headline: {s['headline']} {s['daily_warn_at']}")
-        s = kt.pane_report(store, "fx", prices, {"headline": "today", "daily_budget": {**ON, "warn_at_percent": 60}}, windows=windows)["session"]
-        if s["headline"] != "today" or s["daily_warn_at"] != 60:
-            errs.append(f"pane headline today: {s['headline']} {s['daily_warn_at']}")
+            if s["headline"] != "five_hour" or "daily_warn_at" in s or "warn_at" in s:
+                errs.append(f"pane headline: {s['headline']}, warn levels {s.get('warn_at')} {s.get('daily_warn_at')}")
+        s = kt.pane_report(store, "fx", prices, {"headline": "today", "daily_budget": ON}, windows=windows)["session"]
+        if s["headline"] != "today":
+            errs.append(f"pane headline today: {s['headline']}")
         s = kt.pane_report(store, "fx", prices, {"daily_budget": {"enabled": False}, "headline": "today"}, windows=windows)["session"]
         if "today" in [w["scope"] for w in s["windows"]] or s["headline"] is not None:
             errs.append(f"pane today window: disabled should have none and no headline: {s['windows']} {s['headline']}")
@@ -470,7 +465,7 @@ def pane_check(store, prices):
     """`--report`, what the pane draws: JSON, the session against its limit, the rates
     summing to the total, tools with the three draws; this month counts only this month."""
     errs = []
-    budget = {"budgets_on": True, "session_limit_usd": 0.0001, "warn_at_percent": 70}
+    budget = {"budgets_on": True, "session_limit_usd": 0.0001}
     rep = json.loads(json.dumps(kt.pane_report(store, "fx", prices, budget, windows={})))
     s = rep["session"]
     if not s or s["unit"] != "usd" or not s["limit"].endswith("of $0.00") or not s["frac"] or s["frac"] < 1:
@@ -774,7 +769,7 @@ def page_case(store, prices):
     from, and the Sankey ends in the pane's three parts and balances with any set of columns
     hidden."""
     errs = []
-    budget = {"budgets_on": True, "session_limit_usd": 0.0001, "warn_at_percent": 70,
+    budget = {"budgets_on": True, "session_limit_usd": 0.0001,
               "five_hour_limit_percent": 80, "weekly_limit_percent": 50}
     b = store.sessions["fx"]
     R = kt.report(store, "fx", prices, budget, True)

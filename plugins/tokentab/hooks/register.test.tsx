@@ -119,7 +119,7 @@ const REPORT: Report = {
     { sid: 'f9e8d7c6-other', name: 'Ledger rewrite', detail: 'deleted', cost: 24.767, share: 0.8727 },
     { sid: 'a0b1c2d3-session', name: 'Token type sidebar', cost: 3.613, share: 0.1273 },
   ],
-  session: { title: 'Token type sidebar', cost: 3.613, tokens: 532533, msgs: 47, limits_on: true, unit: 'usd', limit: '$3.61 of $2.00', frac: 1.8065, warn_at: 70, hard_stop: false },
+  session: { title: 'Token type sidebar', cost: 3.613, tokens: 532533, msgs: 47, limits_on: true, unit: 'usd', limit: '$3.61 of $2.00', frac: 1.8065, hard_stop: false },
   rates: [
     { label: 'input', key: 'input', tokens: 5134, cost: 0.0205, share: 0.0057 },
     { label: 'cache write 1h', key: 'cache_write_1h', tokens: 226784, cost: 1.8143, share: 0.5022 },
@@ -141,8 +141,8 @@ const REPORT: Report = {
 }
 const BUDGET = JSON.stringify({
   _comment: 'kept', session_limit_usd: null,
-  daily_limit_usd: 40, warn_at_percent: 70, hard_stop: false,
-  daily_budget: { enabled: true, warn_at_percent: 80 }, headline: 'five_hour',
+  daily_limit_usd: 40, hard_stop: false,
+  daily_budget: { enabled: true }, headline: 'five_hour',
   cold_resume: { confirm_seconds: 120, min_context_tokens: 100000 },
 }, null, 2)
 
@@ -321,7 +321,7 @@ test('records that are not api_request, and a failure in the module, leave the r
 test('the share card: the session figures, its title behind the switch, escaped in the Svg', async () => {
   const r = {
     sid: 'abc', prices_verified: true, today: 0, month: 0, overhead: 0,
-    session: { title: 'Fix <tabs> & bars', cost: 0.73, tokens: 148210, msgs: 12, minutes: 42, limits_on: false, unit: 'usd', limit: null, frac: null, warn_at: 70, hard_stop: false },
+    session: { title: 'Fix <tabs> & bars', cost: 0.73, tokens: 148210, msgs: 12, minutes: 42, limits_on: false, unit: 'usd', limit: null, frac: null, hard_stop: false },
     models: [{ name: 'claude-opus-5-5', msgs: 12, cost: 0.73, share: 1 }],
     tools: [{ name: 'Bash', calls: 18, cost: 0, ask: 0, ctx: 0, read: 0, ctx_tokens: 0 }],
   } as Report
@@ -340,7 +340,7 @@ test('the share card: the session figures, its title behind the switch, escaped 
 test('the figures as the design writes them, and the bars in Svg and in cells', async () => {
   expect([usd(3.613), usd(3.613, 4), usd(1234.5), int(5561099)]).toEqual(['$3.61', '$3.6130', '$1,234.50', '5,561,099'])
   expect(pct(1.8065)).toBe('181%')
-  expect([toneOf(1.81, 70), toneOf(0.75, 70), toneOf(0.1, 70)]).toEqual(['error', 'warning', 'success'])
+  expect([toneOf(1.81), toneOf(0.92), toneOf(0.1)]).toEqual(['error', 'warning', 'success'])
   // a track the full width, the parts on it; past the end a part is cut at the track's end;
   // light and dark fills by class, no ground of its own
   const svg = barSvg([{ series: 'ask', frac: 0.5 }, { series: 'ctx', frac: 0.8 }])
@@ -435,7 +435,7 @@ test('an interactive session opens the pane and draws the Spend tab', async ($, 
   expect(find('SESSION SPEND')?.props).toEqual({ size: 'footnote', dimColor: true })
   expect(find('$3.61')?.props).toEqual({ size: 'title', weight: 'bold', tabular: true })
   expect(find('Over · 181%')?.props).toEqual({ size: 'footnote', weight: 'semibold', color: 'error' })
-  expect(find('$3.61 of $2.00 · 532,533 tokens · warn only, warns at 70%')).toBeDefined()
+  expect(find('$3.61 of $2.00 · 532,533 tokens · warn only, warns at 10%, 5%, 2% left')).toBeDefined()
   // the breakdown: a row per rate with its dot in the series colour, the total, the note;
   // then the tools' legend
   expect(t.filter(x => x.text === '● ').map(x => x.props.color)).toEqual(
@@ -499,7 +499,7 @@ test('Spend on a percent budget leads with the window; dollars below, at API rat
   expect(t.some(x => x.text === 'PLAN USAGE')).toBe(true)
   expect(t.find(x => x.text === '8%')?.props.size).toBe('title')
   for (const line of ['of 5-hour window · limit 80% · resets 16:00', 'week 21%, limit 90% · resets Thu 09:00',
-    '$3.61 at API rates · 532,533 tokens · hard stop, warns at 70%', '23% used']) expect(t.some(x => x.text === line)).toBe(true)
+    '$3.61 at API rates · 532,533 tokens · hard stop, warns at 10%, 5%, 2% left', '23% used']) expect(t.some(x => x.text === line)).toBe(true)
   expect(elements(tree, 'Svg').filter(s => s.alt !== 'separator' && !String(s.alt).startsWith('chevron'))[0]!.alt).toBe('10% of the 5-hour window limit')
 
   // a USD budget on a subscription: dollars lead, labelled as API rates
@@ -823,11 +823,11 @@ test('the Budget tab: auto-open through the config menu, the limits through the 
   expect(t.some(x => x.text === 'Open pane at session start')).toBe(true)
   expect(t.filter(x => /^[A-Z][A-Z ]+$/.test(x.text) && x.props.dimColor).map(x => x.text)).toEqual(['OPTIONS', 'LIMITS', 'DAILY BUDGET', 'HANDOFF NOTE'])
   // the units are in the names
-  expect(t.filter(x => x.text.endsWith(')')).map(x => x.text)).toEqual(['This session (USD)', 'Today (USD)', 'Warn at (%)', 'Warn at (%)'])
+  expect(t.filter(x => x.text.endsWith(')')).map(x => x.text)).toEqual(['This session (USD)', 'Today (USD)'])
   expect(elements(tree, 'Button').find(b => b.key === 'auto-open')?.label).toBe('on')
   // the fields hold budget.json's values, "off" for null, grouped tokens
   const inputs = elements(tree, 'Input')
-  expect(inputs.map(i => i.key)).toEqual(['b-session_limit_usd', 'b-daily_limit_usd', 'b-warn_at_percent', 'b-daily_budget.warn_at_percent'])
+  expect(inputs.map(i => i.key)).toEqual(['b-session_limit_usd', 'b-daily_limit_usd'])
   expect(inputs.find(i => i.key === 'b-daily_limit_usd')?.value).toBe('40')
   expect(inputs.find(i => i.key === 'b-session_limit_usd')?.value).toBe('off')
   expect(elements(tree, 'Button').find(b => b.key === 'b-budgets_on')?.label).toBe('off')
@@ -871,8 +871,8 @@ test('the limit unit follows the account: percent where the plan reports a usage
   expect(withNewKeys({ a: 1, b: 2 }, { a: 0, b: 0 })).toBeUndefined()
   expect(JSON.stringify(withNewKeys({ b: 5, x: 1 }, { a: 0, b: 0, c: 3 }))).toBe('{"a":0,"b":5,"c":3,"x":1}')
   // the daily budget's object and the headline reach a file from before them
-  expect(withNewKeys({ hard_stop: true }, { hard_stop: false, daily_budget: { enabled: true, warn_at_percent: 80 }, headline: 'five_hour' }))
-    .toEqual({ hard_stop: true, daily_budget: { enabled: true, warn_at_percent: 80 }, headline: 'five_hour' })
+  expect(withNewKeys({ hard_stop: true }, { hard_stop: false, daily_budget: { enabled: true }, headline: 'five_hour' }))
+    .toEqual({ hard_stop: true, daily_budget: { enabled: true }, headline: 'five_hour' })
 })
 
 test('a first usage-window reading redraws the open Budget tab in percent, no tab switch', async ($, on) => {
@@ -910,7 +910,7 @@ test('session.measure records the usage windows; the Budget tab then shows the p
   await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   await $.ui.press(press('tab-budget'))
   const tree = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
-  expect(elements(tree, 'Input').map(i => i.key)).toEqual(['b-five_hour_limit_percent', 'b-weekly_limit_percent', 'b-warn_at_percent', 'b-daily_budget.warn_at_percent'])
+  expect(elements(tree, 'Input').map(i => i.key)).toEqual(['b-five_hour_limit_percent', 'b-weekly_limit_percent'])
   expect(elements(tree, 'Button').some(b => b.key === 'b-limit_unit')).toBe(false)
 })
 
@@ -1296,8 +1296,8 @@ test('the headline picks the hero: today shows what was used of the day, the res
   const clock = mock.clock(on, { now: T0 })
   const windows = [{ scope: 'five_hour', used: 8, limit: null, frac: null, resets: '16:00' },
                    { scope: 'seven_day', used: 21, limit: null, frac: null, resets: 'Thu 09:00' },
-                   { scope: 'today', used: 4, allowed: 5, limit: null, frac: 0.8, resets: null }] as const
-  const session = { ...REPORT.session!, unit: 'percent' as const, plan: true, windows: [...windows], limit: null, frac: null, daily_warn_at: 80 }
+                   { scope: 'today', used: 4, allowed: 5, limit: null, frac: 0.9, resets: null }] as const
+  const session = { ...REPORT.session!, unit: 'percent' as const, plan: true, windows: [...windows], limit: null, frac: null }
   const report: { value: Report } = { value: { ...REPORT, session: { ...session, headline: 'today' } } }
   world(on, FILES, { is: true }, report)
   await $.session.start({ cwd: '/w', surface: 'desktop', isInteractive: true })
@@ -1307,12 +1307,12 @@ test('the headline picks the hero: today shows what was used of the day, the res
   let tree = await draw()
   let t = texts(tree)
   // the hero is the share of today's budget, the one percent the bar, button and status line show too
-  expect(t.find(x => x.text === '80%')?.props.size).toBe('title')
+  expect(t.find(x => x.text === '90%')?.props.size).toBe('title')
   expect(t.some(x => x.text === "of today's budget used")).toBe(true)
   expect(t.some(x => x.text === "today's budget is 5% of the week, 4% used so far")).toBe(true)
   expect(t.some(x => x.text === '5-hour 8% · resets 16:00')).toBe(true)
   expect(t.some(x => x.text === 'week 21% · resets Thu 09:00')).toBe(true)
-  expect(elements(tree, 'Svg').filter(s => s.alt !== 'separator')[0]!.alt).toBe("80% of today's budget")
+  expect(elements(tree, 'Svg').filter(s => s.alt !== 'separator')[0]!.alt).toBe("90% of today's budget")
   // the badge gives the state only, not the hero's number again
   expect(t.some(x => x.text === 'Warning')).toBe(true)
   expect(t.some(x => /^(Warning|Over) · |% used$/.test(x.text))).toBe(false)
@@ -1328,7 +1328,7 @@ test('the headline picks the hero: today shows what was used of the day, the res
 
   // a 5-hour limit beside today's hero: no second percent, and the badge names the window past its warn level
   const badgeWith = async (fiveHour: number, today: number) => {
-    report.value = { ...REPORT, session: { ...session, headline: 'today', warn_at: 70, windows: [
+    report.value = { ...REPORT, session: { ...session, headline: 'today', windows: [
       { ...windows[0], used: fiveHour * 80, limit: 80, frac: fiveHour }, windows[1],
       { ...windows[2], used: today * 5, frac: today }] } }
     await $.telemetry.log(request({}))
@@ -1336,14 +1336,16 @@ test('the headline picks the hero: today shows what was used of the day, the res
     return texts(await draw()).filter(x => /Warning|Over|% used$/.test(x.text)).map(x => x.text)
   }
   expect(await badgeWith(0.4, 0.06)).toEqual([])
-  expect(await badgeWith(0.75, 0.06)).toEqual(['5-hour · Warning'])
+  // warnings start with 10% left
+  expect(await badgeWith(0.89, 0.06)).toEqual([])
+  expect(await badgeWith(0.92, 0.06)).toEqual(['5-hour · Warning'])
   expect(await badgeWith(1.1, 0.85)).toEqual(['5-hour · Over'])
-  expect(await badgeWith(0.4, 0.85)).toEqual(['Warning'])
+  expect(await badgeWith(0.4, 0.95)).toEqual(['Warning'])
   // both past their warn level in the same state: the limit, which can hard-stop, takes the badge, whichever reads higher
-  expect(await badgeWith(0.9, 0.85)).toEqual(['5-hour · Warning'])
-  expect(await badgeWith(0.75, 0.95)).toEqual(['5-hour · Warning'])
+  expect(await badgeWith(0.97, 0.92)).toEqual(['5-hour · Warning'])
+  expect(await badgeWith(0.92, 0.97)).toEqual(['5-hour · Warning'])
   // a worse state still wins: today over its budget beats a 5-hour warning
-  expect(await badgeWith(0.75, 1.2)).toEqual(['Over'])
+  expect(await badgeWith(0.92, 1.2)).toEqual(['Over'])
 
   // a headline that is not the lead keeps today as a dim line; the first window with a reading leads
   report.value = { ...REPORT, session: { ...session, headline: null } }
@@ -1352,9 +1354,9 @@ test('the headline picks the hero: today shows what was used of the day, the res
   tree = await draw()
   t = texts(tree)
   expect(t.find(x => x.text === '8%')?.props.size).toBe('title')
-  expect(t.some(x => x.text === "today's budget 80% used · 5% of the week, 4% used so far")).toBe(true)
+  expect(t.some(x => x.text === "today's budget 90% used · 5% of the week, 4% used so far")).toBe(true)
   // the badge then judges only the windows it sits beside, not today's budget
-  expect(t.some(x => x.text === 'Warning · 80%')).toBe(false)
+  expect(t.some(x => x.text === 'Warning · 90%')).toBe(false)
 })
 
 // ---------- the handoff note ----------

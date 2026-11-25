@@ -11,7 +11,7 @@ between turns). Config: budget.json in the plugin's data folder (/tokentab:budge
 import glob, json, os, re, sys, time
 from datetime import datetime
 
-from tokentab import ROOT, data_dir, limit_rows, read_windows, utf8_stdio   # noqa: E402  (same folder; env var, else the folder in use)
+from tokentab import ROOT, WARN_LEFT, data_dir, limit_rows, read_windows, utf8_stdio   # noqa: E402  (same folder; env var, else the folder in use)
 CFG   = data_dir()  # plugin: data in the plugin's data folder, shipped files next to this script
 HERE  = os.path.dirname(os.path.abspath(__file__))
 STATE = os.path.join(CFG, "state")
@@ -472,7 +472,7 @@ def main():
 
     _, limits = limit_rows(b, {"session": cost, "today": day_c}, read_windows(sid)) if on else (None, [])
 
-    warn_at = float(b.get("warn_at_percent", 70)) / 100.0
+    marks = [100 - left for left in WARN_LEFT]
     hard    = bool(b.get("hard_stop", False))
 
     # Each scope is judged on its own and keeps its own warn band, so a scope
@@ -494,11 +494,9 @@ def main():
                 f"The {scope} budget is exhausted: {detail}. No further tool calls are "
                 f"permitted. Stop work, tell the user, and do not attempt to raise the "
                 f"limit or edit the budget file yourself.")
-        if frac < warn_at:
-            return None
-        band = 100 if frac >= 1.0 else min(90, int(frac * 10) * 10)
+        band = 100 if frac >= 1.0 else max((m for m in marks if frac * 100 >= m), default=0)
         if band <= int(st.get(band_key, 0)):
-            return None                           # once per 10% band
+            return None                           # once per mark
         st[band_key] = band
         if not hard:
             # Warn-only mode: say so, and never ask Claude to cut work short.
