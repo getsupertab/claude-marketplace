@@ -24,8 +24,9 @@ false only warns; warnings come at 10%, 5% and 2% of a limit left, fixed, not a 
 (`daily_budget.enabled`: on Pro and Max, what is left
 of the week spread over the days left; off unless `enabled` is true, and it only shows in
 the pane and status line, never notifies or blocks, and ignores `budgets_on`), its beta
-`daily_budget.carry_over` (on: each day gets a seventh of the week plus what earlier days left
-unused, minus what they overspent, so a day unused doubles the next) and
+`daily_budget.carry_over` (on: each full day gets a seventh of the week, the days the week starts and
+ends on their part of one, plus what earlier days left unused, minus what they overspent,
+so a day unused doubles the next) and
 `headline` (`today`, `five_hour` or `week`: which plan number leads in the pane, status
 line and reopen button).
 

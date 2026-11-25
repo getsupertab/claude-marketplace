@@ -348,6 +348,9 @@ def day_budget_case():
         got = day(CARRY, win(41, reset), now)
         if not got or got["allowed"] != 0 or got["frac"] != 1.0 or got["carried"] >= -got["daily"]:
             errs.append(f"day_budget carry-over overspent past today's share: {got}")
+        got = day(CARRY, win(40, reset), now)
+        if not got or got["allowed"] != 0 or got["used"] != 0 or got["frac"] != 1.0:
+            errs.append(f"day_budget carry-over overspent, nothing used yet today: {got}")
         entries(reset, "2026-11-20", 10, 10)
         got = day({**CARRY, "weekly_limit_percent": 70}, win(10, reset), now)
         want("carry-over with a 70% cap", got, 140 / 7 - 10, 0)
@@ -370,6 +373,9 @@ def day_budget_case():
     if up.get("daily_budget") != {"enabled": True, "carry_over": False} or up.get("hard_stop") is not True \
             or up.get("mine") != 1 or list(up)[-1] != "mine":
         errs.append(f"budget.upgraded: nested key not added: {up}")
+    up = budget.upgraded({"_daily_comment": "old", "_mine": "note"})
+    if "carry_over" not in up["_daily_comment"] or up.get("_mine") != "note":
+        errs.append(f"budget.upgraded: shipped comment not refreshed: {up}")
     return errs
 
 

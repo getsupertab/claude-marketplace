@@ -8,7 +8,7 @@
   "five_hour_limit_percent": 80,
   "weekly_limit_percent": 90,
   "hard_stop": false,
-  "_daily_comment": "On Pro and Max: what is left of the week, spread evenly over the time left, fixed at the start of each local day. Off by default; the pane's switch or /tokentab:budget turns it on. It only shows in the pane, the status line and the reopen button, which turn amber with 10% of it left: it sends no notice and never blocks, whatever budgets_on and hard_stop say. The week's own limit (weekly_limit_percent, else 100) is its cap. carry_over (beta) instead gives each day a seventh of the cap plus what earlier days of the week left unused, minus what they overspent: a day unused makes the next one twice as large.",
+  "_daily_comment": "On Pro and Max: what is left of the week, spread evenly over the time left, fixed at the start of each local day. Off by default; the pane's switch or /tokentab:budget turns it on. It only shows in the pane, the status line and the reopen button, which turn amber with 10% of it left: it sends no notice and never blocks, whatever budgets_on and hard_stop say. The week's own limit (weekly_limit_percent, else 100) is its cap. carry_over (beta) instead gives each full day a seventh of the cap (the days the week starts and ends on their part of one) plus what earlier days of the week left unused, minus what they overspent: a day unused makes the next one twice as large.",
   "daily_budget": {
     "enabled": false,
     "carry_over": false

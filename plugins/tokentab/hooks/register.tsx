@@ -627,15 +627,18 @@ export function inUnit(s: Setting, unit: Unit): Setting {
 }
 
 /** The user's budget.json with the keys a newer shipped file has added, in the shipped
- *  order, one level into objects (daily_budget.carry_over); undefined when nothing is missing. */
-export function withNewKeys(user: Json, shipped: Json): Json | undefined {
-  const isObject = (v: unknown): v is Json => typeof v === 'object' && v !== null && !Array.isArray(v)
+ *  order, one level into objects (daily_budget.carry_over), like budget.py's upgraded(), and
+ *  the shipped `_comment` texts; undefined when nothing changes. */
+export function withNewKeys(user: Json, shipped: Json, nested = false): Json | undefined {
+  const isObject = (candidate: unknown): candidate is Json =>
+    typeof candidate === 'object' && candidate !== null && !Array.isArray(candidate)
   const out: Json = {}
   let added = false
   for (const [key, value] of Object.entries(shipped)) {
-    if (!(key in user)) { out[key] = value; added = true; continue }
+    const isComment = key.startsWith('_') && typeof value === 'string'
+    if (!(key in user) || (isComment && user[key] !== value)) { out[key] = value; added = true; continue }
     const mine = user[key]
-    const inner = isObject(value) && isObject(mine) ? withNewKeys(mine, value) : undefined
+    const inner = !nested && isObject(value) && isObject(mine) ? withNewKeys(mine, value, true) : undefined
     if (inner) added = true
     out[key] = inner ?? mine
   }
@@ -1484,7 +1487,8 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
   const mode = lead?.scope === 'today' ? `never blocks, amber at ${WARN_LEFT[0]}% left`
     : `${s.hard_stop ? 'hard stop' : 'warn only'}, ${WARN_TEXT}`
   // Today's budget is always read as a share of itself; the week's figures follow, named as such
-  const carriedText = (w: PlanWindow) => (w.carried === undefined ? ''
+  // Under 0.05 rounds to "0%", which names nothing (a week's first day)
+  const carriedText = (w: PlanWindow) => (w.carried === undefined || Math.abs(w.carried) < 0.05 ? ''
     : ` (${percent(w.daily ?? 0)} a day ${w.carried < 0 ? '−' : '+'} ${percent(Math.abs(w.carried))} ${w.carried < 0 ? 'overspent' : 'carried over'})`)
   const ofWeek = (w: PlanWindow) => `${percent(w.allowed ?? 0)} of the week${carriedText(w)}, ${percent(w.used)} used so far`
   const weekShare = (w: PlanWindow) => `today's budget is ${ofWeek(w)}`

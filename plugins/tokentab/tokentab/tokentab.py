@@ -1114,7 +1114,8 @@ def day_budget(budget, windows, now=None):
     else:
         allowed = max(0.0, cap - base) * max(0.0, day_end - day_start) / (reset - day_start)
     used = max(0.0, cur - base)
-    frac = used / allowed if allowed > 0 else (1.0 if used > 0 else 0.0)
+    # A carry-over day that starts overspent has nothing left: full, not 0% used, before its first request
+    frac = used / allowed if allowed > 0 else (1.0 if used > 0 or carry else 0.0)
     out = {"used": used, "allowed": allowed, "frac": frac, "base": base, "cap": cap}
     if carry:
         out.update(daily=daily, carried=carried)

@@ -884,6 +884,12 @@ test('the limit unit follows the account: percent where the plan reports a usage
     .toEqual({ daily_budget: { enabled: true, carry_over: false }, headline: 'today' })
   expect(withNewKeys({ daily_budget: { enabled: true, carry_over: true } }, { daily_budget: { enabled: false, carry_over: false } }))
     .toBeUndefined()
+  // one level only, as budget.py's upgraded()
+  expect(withNewKeys({ handoff: { opts: {} } }, { handoff: { opts: { deep: 1 } } })).toBeUndefined()
+  // the shipped comments replace older texts, the user's own comment keys stay
+  expect(withNewKeys({ _daily_comment: 'old', _mine: 'note', hard_stop: true }, { _daily_comment: 'new', hard_stop: false }))
+    .toEqual({ _daily_comment: 'new', hard_stop: true, _mine: 'note' })
+  expect(withNewKeys({ _daily_comment: 'new' }, { _daily_comment: 'new' })).toBeUndefined()
 })
 
 test('a first usage-window reading redraws the open Budget tab in percent, no tab switch', async ($, on) => {
@@ -1381,6 +1387,9 @@ test('the headline picks the hero: today shows what was used of the day, the res
   expect(t.some(x => x.text === "today's budget is 28.6% of the week (14.3% a day + 14.3% carried over), 4% used so far")).toBe(true)
   t = await carry(8.6, 14.3, -5.7, null)
   expect(t.some(x => x.text === "today's budget 90% used · 8.6% of the week (14.3% a day − 5.7% overspent), 4% used so far")).toBe(true)
+  // nothing carried, or float noise around zero, names no carry
+  t = await carry(14.3, 14.3, -0.01, 'today')
+  expect(t.some(x => x.text === "today's budget is 14.3% of the week, 4% used so far")).toBe(true)
 })
 
 // ---------- the handoff note ----------
