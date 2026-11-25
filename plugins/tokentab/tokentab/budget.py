@@ -8,7 +8,7 @@ and the budget skill alike.
   budget.py set KEY VALUE   change one existing key and write the file back, its order and
                             its _comment keys kept. VALUE: a number; "off", "none" or "" for
                             a limit that is switched off (null); on/off/true/false/yes/no
-                            for a switch; today, five_hour or week for headline. Prints the
+                            for a switch; auto, session, today, five_hour or week for headline. Prints the
                             new value as JSON; a value that does not fit is refused on
                             stderr with exit code 1, nothing written.
 
@@ -22,7 +22,7 @@ import tokentab as kt  # noqa: E402
 
 PATH = os.path.join(kt.CFG, "budget.json")
 SHIPPED = os.path.join(os.path.dirname(os.path.abspath(__file__)), "budget.json")
-HEADLINES = ("today", "five_hour", "week")
+HEADLINES = ("auto", "session", "today", "five_hour", "week")
 TRUE, FALSE = ("on", "true", "yes", "1"), ("off", "false", "no", "0")
 
 

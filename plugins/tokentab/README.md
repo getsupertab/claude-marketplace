@@ -195,7 +195,7 @@ daily allowance, fixed at the start of each local day. It is off by default. Tur
 with the daily budget switch in the pane's Options tab (shown once the plan has reported
 its usage, since a USD account has no week to share out), or ask: "turn the daily budget on".
 Once on, the pane, the status line and the button that brings a closed pane back show
-how much of it is used, and the pane's badge turns amber with 10% of it left. It only shows the
+how much of it is left, and the pane's badge turns amber with 10% of it left. It only shows the
 number: it sends no notice, tells Claude nothing, and never blocks, with budgets on or
 off. `daily_budget.enabled` in `budget.json` sets it.
 
@@ -205,12 +205,29 @@ pane, or ask: "turn on budget carry-over"), each day gets a seventh of the week,
 day and the next one has about 28%; overspend and tomorrow's shrinks. The week rarely
 resets at midnight, so the days it starts and ends on get the part of a seventh that falls
 in them. The status line then names the day's size and what moved it
-(`today 10% of budget (28% of week, +14% carried)`, or `−6% overspent`), and the pane
+(`today's budget 90% left (28% of week, +14% carried)`, or `−6% overspent`), and the pane
 shows how it is made up (`14.3% a day + 14.3% carried over`).
 
-`headline` (`today`, `five_hour` or `week`) picks which plan number leads; the default
-is `five_hour`. With the daily budget on and another number leading, the status line and
-the reopen button name the budget after it (`▸ TokenTab · 13% 5-hour · 40% today`).
+### Headline
+
+`headline` picks the figure that leads the pane, the status line and the button that brings
+a closed pane back, counted as what is left, the same way the warnings count:
+`auto` (the default), `session`, `today`, `five_hour` or `week`. Set it in the Options tab
+or ask: "make the week my headline".
+
+- `auto` follows the budget that is on: the daily budget, else the limit you set (the
+  5-hour one when it is the only one). With none, the week leads on Pro and Max and today's
+  spend in USD.
+- `today` is the daily budget on Pro and Max and today's spend over every session in USD.
+- `session` is this session's spend (at API rates on Pro and Max).
+- `five_hour` and `week` are Pro and Max only. A choice the account has no reading for
+  falls back to `auto`.
+
+The status line shows at most two figures: the headline, then the budget that is on (the
+daily budget, else the window limit nearest its end), else the account's next figure
+(`week 59% left · today's budget 38% left`, `today 40% left of $40.00 · session $3.10`).
+A `budget.json` from before 1.9.0 has `five_hour` saved, so the 5-hour window keeps leading
+there until you pick another.
 
 ### What it does with budgets off
 

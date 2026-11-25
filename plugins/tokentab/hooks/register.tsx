@@ -427,8 +427,9 @@ export type Report = {
     /** The hero's limit as text: `$0.82 of $1.00`, `5-hour window 42% used, limit 80%`. */
     limit: string | null; frac: number | null
     hard_stop: boolean
-    /** The window budget.json's `headline` picks to lead, null when it has no reading. */
-    headline?: PlanWindow['scope'] | null
+    /** What leads, budget.json's `headline` resolved for this account: a window, today (the daily
+     *  budget under percent, today's spend in USD) or this session's spend. Null from an older report. */
+    headline?: PlanWindow['scope'] | 'session' | null
   }
   rates?: { label: string; key: string; tokens: number; cost: number; share: number }[]
   total?: { tokens: number; cost: number }
@@ -552,10 +553,19 @@ export const SECTIONS: { title: string; unit?: Unit; toggle?: Setting; rows: Set
   { title: 'daily budget', unit: 'percent', toggle: { key: 'daily_budget.enabled', label: 'daily budget', kind: 'switch' }, rows: [
     { key: 'daily_budget.carry_over', label: 'Carry over (beta)', kind: 'switch',
       note: "Unused budget rolls into the next day of this week; overspend shrinks it." },
-    { key: 'headline', label: 'Headline', kind: 'choice', choices: ['today', 'five_hour', 'week'] },
   ] },
   { title: 'handoff note', toggle: { key: 'handoff.enabled', label: 'handoff note before the cache expires', kind: 'switch' }, rows: [] },
 ]
+
+/** The figure that leads the pane, the status line and the reopen button. Its choices follow the account. */
+export const HEADLINE: Setting = { key: 'headline', label: 'Headline', kind: 'choice',
+  note: 'The figure the pane and the status line lead with, as what is left. auto follows the budget that is on.' }
+
+/** The headline words this account can show: today is the daily budget on Pro and Max, so only while it is on. */
+export function headlineChoices(unit: Unit, dailyOn: boolean): string[] {
+  return unit === 'usd' ? ['auto', 'today', 'session']
+    : ['auto', ...(dailyOn ? ['today'] : []), 'week', 'five_hour', 'session']
+}
 
 type Json = Record<string, unknown>
 
@@ -1464,13 +1474,19 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
   }
   // Under percent the window leads, limits on or off, and dollars move below; with no window reading, dollars lead
   const planWindows = s.unit === 'percent' ? s.windows ?? [] : []
-  // The headline setting picks the lead; without its reading, the first reported window with a limit.
-  // "today" is the daily budget, never the fallback: it has a fraction even with limits off.
+  // The headline setting picks the lead; session leads with dollars. An older report's null takes the
+  // first reported window with a limit; "today" is the daily budget, never that fallback.
   const reported = planWindows.filter(w => w.scope !== 'today')
-  const lead = planWindows.find(w => w.scope === s.headline) ?? reported.find(w => w.frac !== null) ?? reported[0]
+  const lead = s.headline === 'session' ? undefined
+    : planWindows.find(w => w.scope === s.headline) ?? reported.find(w => w.frac !== null) ?? reported[0]
   const otherWindows = planWindows.filter(w => w !== lead)
+  // In USD the headline today leads with today's spend over every session
+  const todaySpend = !lead && s.unit === 'usd' && s.headline === 'today'
   const apiRates = s.plan ? ' at API rates' : ''
   const frac = lead ? lead.frac : s.frac
+  // Every figure counts what is left, as the warnings do
+  const leftOf = (share: number) => pct(Math.max(0, 1 - share))
+  const windowLeft = (w: PlanWindow) => percent(Math.max(0, 100 - w.used))
   // The badge shows the window nearest the warn level. Today's budget counts only as the lead,
   // since nothing else beside the badge names it.
   const RANK = { success: 0, warning: 1, error: 2 } as const
@@ -1478,8 +1494,8 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
     : [{ w, frac: w.frac, tone: toneOf(w.frac) }]))
     // On the same state a limit beats today's budget: it can hard-stop, and today's hero and bar show their own colour
     .sort((a, b) => RANK[b.tone] - RANK[a.tone] || Number(a.w.scope === 'today') - Number(b.w.scope === 'today') || b.frac - a.frac)
-  const worst = lead ? (judged[0]?.frac ?? null) : frac
-  const tone = lead ? judged[0]?.tone : frac === null ? undefined : toneOf(frac)
+  const worst = planWindows.length > 0 ? (judged[0]?.frac ?? null) : frac
+  const tone = planWindows.length > 0 ? judged[0]?.tone : frac === null ? undefined : toneOf(frac)
   // With today's budget as the hero, a second percent beside it reads as a rival figure for the day. The badge
   // then shows only a state, past a warn level, and names the window when it is not today's budget.
   const todayLeads = lead?.scope === 'today'
@@ -1487,7 +1503,7 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
   const badge = worst === null || tone === undefined || (todayLeads && tone === 'success') ? undefined
     : <Text size="footnote" weight="semibold" color={tone}>
         {todayLeads ? `${named}${tone === 'error' ? 'Over' : 'Warning'}`
-          : tone === 'error' ? `Over · ${pct(worst)}` : tone === 'warning' ? `Warning · ${pct(worst)}` : `${pct(worst)} used`}
+          : tone === 'error' ? 'Over' : tone === 'warning' ? `Warning · ${leftOf(worst)} left` : `${leftOf(worst)} left`}
       </Text>
   const mode = lead?.scope === 'today' ? 'never blocks'
     : s.hard_stop ? 'hard stop' : 'warn only'
@@ -1497,14 +1513,16 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
     : ` (${percent(w.daily ?? 0)} a day ${w.carried < 0 ? '−' : '+'} ${percent(Math.abs(w.carried))} ${w.carried < 0 ? 'overspent' : 'carried over'})`)
   const ofWeek = (w: PlanWindow) => `${percent(w.allowed ?? 0)} of the week${carriedText(w)}, ${percent(w.used)} used so far`
   const weekShare = (w: PlanWindow) => `today's budget is ${ofWeek(w)}`
-  const budgetLine = (w: PlanWindow) => `today's budget ${pct(w.frac ?? 0)} used · ${ofWeek(w)}`
+  const budgetLine = (w: PlanWindow) => `today's budget ${leftOf(w.frac ?? 0)} left · ${ofWeek(w)}`
   const resets = (w: PlanWindow) => (w.resets ? ` · resets ${w.resets}` : '')
   const limitOf = (w: PlanWindow, sep: string) => (w.limit === null ? '' : `${sep}limit ${percent(w.limit)}`)
   const under = [
     lead ? `${usd(s.cost)}${apiRates}` : s.limit ?? '',
+    todaySpend ? `this session ${usd(s.cost)}` : '',
     `${int(s.tokens)} tokens`,
-    frac !== null ? mode : !s.limits_on ? 'limits off'
-      : s.unit === 'percent' ? 'no window limit set or no reading yet' : 'no session limit set',
+    // Session leading a plan keeps the windows' limits below it
+    frac !== null || (!lead && planWindows.length > 0 && s.limits_on) ? mode : !s.limits_on ? 'limits off'
+      : s.unit === 'percent' ? 'no window limit set or no reading yet' : todaySpend ? 'no daily limit set' : 'no session limit set',
   ].filter(x => x !== '').join(' · ')
   const rates = r.rates ?? []
   const series = (key: string) => (SERIES[key] ? key : 'input')
@@ -1524,30 +1542,31 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
     <Box flexDirection="column" gap={1}>
       <Box key="hero" flexDirection="column" gap="xs">
         <Box justifyContent="space-between" alignItems="center">
-          {label($, e, lead ? 'plan usage' : 'session spend')}
+          {label($, e, lead ? 'plan usage' : todaySpend ? "today's spend" : 'session spend')}
           {badge}
         </Box>
         <Box justifyContent="space-between" alignItems="center">
           <Box alignItems="center" gap={1} flexShrink={1}>
             <Text size="title" weight="bold" tabular>
-              {!lead ? usd(s.cost) : lead.scope === 'today' ? pct(lead.frac ?? 0) : percent(lead.used)}
+              {!lead ? usd(todaySpend ? r.today : s.cost) : lead.scope === 'today' ? leftOf(lead.frac ?? 0) : windowLeft(lead)}
             </Text>
             {lead
               ? <Text size="footnote" dimColor>{lead.scope === 'today'
-                ? "of today's budget used"
-                : `of ${WINDOW_NAME[lead.scope]}${limitOf(lead, ' · ')}${resets(lead)}`}</Text>
-              : s.plan && <Text size="footnote" dimColor>at API rates</Text>}
+                ? "of today's budget left"
+                : `left of ${WINDOW_NAME[lead.scope]}${limitOf(lead, ' · ')}${resets(lead)}`}</Text>
+              : todaySpend ? <Text size="footnote" dimColor>today, every session</Text>
+                : s.plan && <Text size="footnote" dimColor>at API rates</Text>}
           </Box>
           <Button key="share" label="↑ Share"
             onPress={() => { void openSharePage($, r) }} />
         </Box>
         {frac !== null && bar($, e, [{ series: toneOf(frac), frac }],
-          lead?.scope === 'today' ? `${pct(frac)} of today's budget`
-            : `${pct(frac)} of the ${lead ? WINDOW_NAME[lead.scope] : 'session'} limit`, 8)}
+          lead?.scope === 'today' ? `${pct(frac)} of today's budget used`
+            : `${pct(frac)} of the ${lead ? WINDOW_NAME[lead.scope] : todaySpend ? 'daily' : 'session'} limit`, 8)}
         {lead?.scope === 'today' && <Text key="week-share" size="footnote" dimColor>{weekShare(lead)}</Text>}
         {otherWindows.map(w => (
           <Text key={`window-${w.scope}`} size="footnote" dimColor>
-            {w.scope === 'today' ? budgetLine(w) : `${WINDOW_SHORT[w.scope]} ${percent(w.used)}${limitOf(w, ', ')}${resets(w)}`}
+            {w.scope === 'today' ? budgetLine(w) : `${WINDOW_SHORT[w.scope]} ${windowLeft(w)} left${limitOf(w, ', ')}${resets(w)}`}
           </Text>
         ))}
         <Text size="footnote" dimColor>{under}</Text>
@@ -1694,10 +1713,12 @@ function optionsTab($: EngineInterface, e: RenderEvent): RenderChildren {
     const v = at(o?.budget, s.key)
     if (s.kind === 'switch') return column(toggle(`b-${s.key}`, v === true, () => { void setBudget($, s.key, v === true ? 'off' : 'on') }))
     if (s.kind === 'choice') {
-      if (mobile) return column(<Text size="footnote" mono weight="semibold">{shown(v)}</Text>)
-      const choices = s.choices ?? []
-      const next = choices[(choices.indexOf(String(v)) + 1) % choices.length] ?? ''
-      return column(<Button key={`b-${s.key}`} label={shown(v)} variant="secondary" onPress={() => { void setBudget($, s.key, next) }} />)
+      const choices = s.key === HEADLINE.key ? headlineChoices(unit, at(o?.budget, 'daily_budget.enabled') === true) : s.choices ?? []
+      // A value this account cannot show falls back to the first choice, as tokentab.py does
+      const current = choices.includes(String(v)) ? String(v) : choices[0] ?? shown(v)
+      if (mobile) return column(<Text size="footnote" mono weight="semibold">{current}</Text>)
+      const next = choices[(choices.indexOf(current) + 1) % choices.length] ?? ''
+      return column(<Button key={`b-${s.key}`} label={current} variant="secondary" onPress={() => { void setBudget($, s.key, next) }} />)
     }
     if (mobile) return column(<Text size="footnote" mono tabular weight="semibold">{shown(v)}</Text>)
     const { Input } = $.ui.resolve(e)
@@ -1726,6 +1747,7 @@ function optionsTab($: EngineInterface, e: RenderEvent): RenderChildren {
     <Box flexDirection="column" gap={1}>
       {section('options', undefined, [
         row('auto-open', 'Open pane at session start', column(toggle('auto-open', autoOpen(), () => {}))),
+        row(HEADLINE.key, HEADLINE.label, control(HEADLINE), o?.errors[HEADLINE.key], HEADLINE.note),
       ])}
       {o?.error !== undefined && <Text size="footnote" color="error">{o.error}</Text>}
       {SECTIONS.filter(settingsSection => settingsSection.unit === undefined || settingsSection.unit === unit).flatMap(settingsSection => [
