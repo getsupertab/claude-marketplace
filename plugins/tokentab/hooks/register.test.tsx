@@ -848,8 +848,8 @@ test('the Budget tab: auto-open through the config menu, the limits through the 
   await $.ui.press(press('b-hard_stop'))
   expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'hard_stop', 'on'])
   // spend_less sits under it, off where the file has no such key yet
-  expect(t.some(x => x.text === 'Ask Claude to spend less')).toBe(true)
-  expect(elements(tree, 'Button').find(b => b.key === 'b-spend_less')?.label).toBe('off')
+  expect(t.some(text => text.text === 'Ask Claude to spend less')).toBe(true)
+  expect(elements(tree, 'Button').find(button => button.key === 'b-spend_less')?.label).toBe('off')
   await $.ui.press(press('b-spend_less'))
   expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'spend_less', 'on'])
   // the daily budget: its switch, and the headline as a button that sets the next choice
