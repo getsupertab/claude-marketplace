@@ -27,7 +27,7 @@ on; false only warns the user; null, the default, follows `hard_stop`, and `auto
 to null). "Turn budgets on/off" means `budgets_on`. Also show `headline` (`auto`, `session`,
 `today`, `five_hour` or `week`: which figure leads in the pane, status line and reopen button,
 as what is left; `auto` follows the budget type while the budget is on, else the week on Pro
-and Max and today in USD; `five_hour` and `week` are Pro and Max only).
+and Max (the daily budget if an older file's `daily_budget.enabled` is on) and today in USD; `five_hour` and `week` are Pro and Max only).
 
 Only one budget is checked: `budget_type.usd` or `budget_type.percent`, whichever unit is in
 effect. Each type has one limit key:

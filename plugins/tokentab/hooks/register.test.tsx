@@ -955,6 +955,13 @@ test('the limit unit follows the account: percent where the plan reports a usage
     ['budget', 'budget_type.percent', 'session_limit_usd', 'hard_stop'], ['handoff note'], ['beta', 'spend_less']])
   expect(keys({ budgets_on: true, budget_type: { percent: 'today' } }, 'percent')).toEqual([
     ['budget', 'budget_type.percent', 'weekly_limit_percent', 'hard_stop'], ['handoff note'], ['beta', 'daily_budget.carry_over', 'spend_less']])
+  // carry over sizes the daily budget wherever it shows: as the headline, or auto's lead from an older file's switch
+  expect(keys({ headline: 'today' }, 'percent')).toEqual([['budget'], ['handoff note'], ['beta', 'daily_budget.carry_over']])
+  expect(keys({ daily_budget: { enabled: true } }, 'percent')).toEqual([['budget'], ['handoff note'], ['beta', 'daily_budget.carry_over']])
+  expect(keys({ headline: 'week', daily_budget: { enabled: true } }, 'percent')).toEqual([['budget'], ['handoff note']])
+  expect(keys({ budgets_on: true, budget_type: { percent: 'week' }, daily_budget: { enabled: true } }, 'percent')).toEqual([
+    ['budget', 'budget_type.percent', 'weekly_limit_percent', 'hard_stop'], ['handoff note'], ['beta', 'spend_less']])
+  expect(keys({ headline: 'today' }, 'usd')).toEqual([['budget'], ['handoff note']])
   expect(sections({ budgets_on: true, budget_type: { percent: 'session' } }, 'percent')[0]!.rows[1]!.unit).toBe('USD at API rates')
   // spend_less follows hard_stop until it is set either way
   const spendLess = sections({ budgets_on: true }, 'usd').flatMap(section => section.rows).find(row => row.key === 'spend_less')!

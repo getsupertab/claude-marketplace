@@ -472,7 +472,7 @@ def main():
     # Other sessions today may send telemetry even if this one does not.
     day_c, day_t = max(day_c, l_dc), max(day_t, l_dt)
 
-    _, limits = limit_rows(b, {"session": cost, "today": day_c}, read_windows(sid)) if on else (None, [])
+    unit, limits = limit_rows(b, {"session": cost, "today": day_c}, read_windows(sid)) if on else (None, [])
 
     marks = [100 - left for left in WARN_LEFT]
     hard    = bool(b.get("hard_stop", False))
@@ -492,9 +492,15 @@ def main():
         if frac >= 1.0 and hard:
             st[band_key] = 100
             scope = {"session": "session", "today": "daily", "five_hour": "5-hour", "seven_day": "weekly"}[name]
+            # On Pro and Max today's budget has no limit of its own: it is spread from the week's cap
+            if unit == "percent" and name == "today":
+                fix = ("Raise the week cap (weekly_limit_percent) in budget.json (/tokentab:budget) to continue, "
+                       "or wait for tomorrow's budget." if isinstance(b.get("weekly_limit_percent"), (int, float))
+                       else "Tomorrow brings a new budget; /tokentab:budget changes the budget type.")
+            else:
+                fix = f"Raise the {scope} limit in budget.json (/tokentab:budget) to continue."
             return ("deny",
-                f"TokenTab: {scope} budget exhausted. {detail} ({pct}%). Raise the "
-                f"{scope} limit in budget.json (/tokentab:budget) to continue.",
+                f"TokenTab: {scope} budget exhausted. {detail} ({pct}%). {fix}",
                 f"The {scope} budget is exhausted: {detail}. No further tool calls are "
                 f"permitted. Stop work, tell the user, and do not attempt to raise the "
                 f"limit or edit the budget file yourself.")

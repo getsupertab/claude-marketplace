@@ -587,12 +587,28 @@ export function budgetTypeOf(budget: Json | undefined, unit: Unit): string {
 
 export type Section = { title: string; toggle?: Setting; rows: Setting[]; tone?: 'warning' }
 
+/** Whether the daily budget shows on Pro and Max, as headline() and pane_report() in tokentab.py: as the
+ *  budget, as the headline picked, or as auto's lead from an older file's daily budget switch. */
+export function dailyShown(budget: Json | undefined, unit: Unit): boolean {
+  if (unit !== 'percent') return false
+  const on = at(budget, 'budgets_on') === true
+  const headline = at(budget, 'headline')
+  if (on && budgetTypeOf(budget, unit) === 'today') return true
+  const auto = !['today', 'week', 'five_hour', 'session'].includes(String(headline))
+  return headline === 'today' || (auto && !on && at(budget, 'daily_budget.enabled') === true)
+}
+
 /** The Options tab's settings below Display, for this file and account. The budget's rows show only
- *  while it is on, and only its type's limit; each unit keeps its own type. The beta switches act
- *  on the budget, so they show with it. */
+ *  while it is on, and only its type's limit; each unit keeps its own type. Spend less acts on the
+ *  budget, so it shows with it; carry over wherever the daily budget shows, since it sizes it. */
 export function sections(budget: Json | undefined, unit: Unit): Section[] {
   const on = at(budget, 'budgets_on') === true
   const type = budgetTypeOf(budget, unit)
+  const beta: Setting[] = [
+    ...(dailyShown(budget, unit) ? [{ key: 'daily_budget.carry_over', label: 'Carry over', kind: 'switch' as const,
+      note: 'Unused budget rolls into the next day of this week; overspend shrinks it.' }] : []),
+    ...(on ? [{ key: 'spend_less', label: 'Ask Claude to spend less near the limit', kind: 'switch' as const, follows: 'hard_stop' }] : []),
+  ]
   return [
     { title: 'budget', toggle: { key: 'budgets_on', label: 'Enable budget', kind: 'switch' }, rows: on ? [
       { key: `budget_type.${unit}`, label: 'Budget type', kind: 'choice', choices: BUDGET_TYPES[unit] },
@@ -600,12 +616,7 @@ export function sections(budget: Json | undefined, unit: Unit): Section[] {
       { key: 'hard_stop', label: 'Stop at limit', kind: 'switch' },
     ] : [] },
     { title: 'handoff note', toggle: { key: 'handoff.enabled', label: 'handoff note before the cache expires', kind: 'switch' }, rows: [] },
-    ...(on ? [{ title: 'beta', tone: 'warning' as const, rows: [
-      // A share of the weekly window, which only the daily budget on Pro and Max has
-      ...(unit === 'percent' && type === 'today' ? [{ key: 'daily_budget.carry_over', label: 'Carry over', kind: 'switch' as const,
-        note: 'Unused budget rolls into the next day of this week; overspend shrinks it.' }] : []),
-      { key: 'spend_less', label: 'Ask Claude to spend less near the limit', kind: 'switch' as const, follows: 'hard_stop' },
-    ] }] : []),
+    ...(beta.length > 0 ? [{ title: 'beta', tone: 'warning' as const, rows: beta }] : []),
   ]
 }
 

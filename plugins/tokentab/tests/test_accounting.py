@@ -420,6 +420,12 @@ def day_budget_case():
         got = [(r["scope"], r["frac"]) for r in kt.limit_rows(cfg, {"session": 0.5, "today": 3}, {})[1]]
         if got != want:
             errs.append(f"limit_rows for {cfg}: {got}, want {want}")
+    # Today's limit resets with the local day, so a session past midnight warns afresh; a session's never does
+    noon = kt.datetime(2026, 3, 4, 12).timestamp()
+    resets = [kt.limit_rows({**both, "budget_type": {"usd": typed}}, {"session": 0.5, "today": 3}, {}, noon)[1][0]["reset"]
+              for typed in ("today", "session")]
+    if resets != ["2026-03-04", None]:
+        errs.append(f"limit_rows: today resets with the day, the session never: {resets}")
     five = {"five_hour": {"kind": "five_hour", "percentUsed": 40, "resetsAt": "2999-01-01T00:00:00Z"},
             "seven_day": {"kind": "seven_day", "percentUsed": 45, "resetsAt": "2999-01-01T00:00:00Z"}}
     plan = {"five_hour_limit_percent": 80, "weekly_limit_percent": 90, "session_limit_usd": 2}
@@ -503,7 +509,9 @@ def day_budget_pane_case(store, prices):
                                    ({"budgets_on": True, "five_hour_limit_percent": 80, "weekly_limit_percent": 90}, windows, "seven_day"),
                                    ({"budgets_on": True, "budget_type": {"percent": "five_hour"}}, windows, "five_hour"),
                                    ({"budgets_on": True, "daily_budget": {"enabled": True}}, windows, "today"),
-                                   ({"budgets_on": False, "daily_budget": {"enabled": True}}, windows, "seven_day"),
+                                   # An older file's daily switch kept the daily budget leading with the budget off
+                                   ({"budgets_on": False, "daily_budget": {"enabled": True}}, windows, "today"),
+                                   ({"budgets_on": True, "budget_type": {"percent": "week"}, "daily_budget": {"enabled": True}}, windows, "seven_day"),
                                    ({"headline": "week"}, {}, "today"),
                                    ({"budgets_on": True, "session_limit_usd": 5, "daily_limit_usd": None}, {}, "session"),
                                    ({"budgets_on": True, "budget_type": {"usd": "session"}}, {}, "session"),

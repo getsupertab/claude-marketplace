@@ -12,9 +12,8 @@ and the budget skill alike.
                             auto, session, today, five_hour or week for headline;
                             budget_type.usd: today or session; budget_type.percent: today,
                             week, five_hour or session (auto for either: from the limits set).
-                            Prints the
-                            new value as JSON; a value that does not fit is refused on
-                            stderr with exit code 1, nothing written.
+                            Prints the new value as JSON; a value that does not fit is
+                            refused on stderr with exit code 1, nothing written.
 
 A key that is not in the file is refused too, so a typo never adds one. Lists
 (context_warn_tokens) and the word scale are edited in the file itself.

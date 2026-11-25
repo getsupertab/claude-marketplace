@@ -204,7 +204,8 @@ or the 5-hour and weekly windows), and the daily budget only showed a number. No
 budget type is checked, and the daily budget is a type that warns and stops like the others.
 A `budget.json` from before keeps its values; its type comes from the limits it had set:
 `today` in USD unless only the session limit was set, and on Pro and Max `today` if the daily
-budget was on, else `week` unless only the 5-hour limit was set.
+budget was on, else `week` unless only the 5-hour limit was set. With the daily budget on and
+the budget off, the daily budget still leads as the headline, as before, but sends no notice.
 
 ### Daily budget
 
@@ -214,8 +215,8 @@ daily allowance, fixed at the start of each local day. Its limit field is the we
 brings a closed pane back show how much of it is left. You can lead with it as the headline
 without making it the budget; it is then only a number.
 
-**Carry over (beta).** With `daily_budget.carry_over` on (Carry over under Beta, shown with the
-daily budget, or ask: "turn on budget carry-over"), each day gets a seventh of the week, about
+**Carry over (beta).** With `daily_budget.carry_over` on (Carry over under Beta, shown wherever the
+daily budget shows, or ask: "turn on budget carry-over"), each day gets a seventh of the week, about
 14%, plus whatever earlier days of the week left unused, minus what they overspent. Skip a
 day and the next one has about 28%; overspend and tomorrow's shrinks. The week rarely
 resets at midnight, so the days it starts and ends on get the part of a seventh that falls
@@ -231,7 +232,7 @@ a closed pane back, counted as what is left, the same way the warnings count:
 or ask: "make the week my headline".
 
 - `auto` follows the budget type while the budget is on. With it off, the week leads on
-  Pro and Max and today's spend in USD.
+  Pro and Max (the daily budget, if an older file had it switched on) and today's spend in USD.
 - `today` is the daily budget on Pro and Max and today's spend over every session in USD.
 - `session` is this session's spend (at API rates on Pro and Max).
 - `five_hour` and `week` are Pro and Max only. A choice the account has no reading for

@@ -130,8 +130,15 @@ for typed in '"budget_type": {"usd": null, "percent": "today"}' '"daily_budget":
   check "day budget: guard warns with what is left at 31% of the week, {$typed}" \
     "$(tool Read "" | "$SCRIPTS/guard.sh")" "of today's budget left"
   week 45
-  check "day budget: guard stops past today's budget, {$typed}" "$(tool Read "" | "$SCRIPTS/guard.sh")" '"permissionDecision": "deny"'
+  out="$(tool Read "" | "$SCRIPTS/guard.sh")"
+  check "day budget: guard stops past today's budget, {$typed}" "$out" '"permissionDecision": "deny"'
+  # No week cap to raise: the stop names tomorrow, not a daily limit Pro and Max have none of
+  check "day budget: the stop without a week cap points to tomorrow, {$typed}" "$out" "Tomorrow brings a new budget"
 done
+# With a week cap the stop names it: 90% over the three days left is 30% today, and 45% is past it
+rm -f "$DATA/state/s-guard.json"
+printf '{"budgets_on": true, "hard_stop": true, "weekly_limit_percent": 90, "budget_type": {"percent": "today"}}\n' > "$DATA/budget.json"
+check "day budget: the stop names the week cap" "$(tool Read "" | "$SCRIPTS/guard.sh")" "Raise the week cap (weekly_limit_percent)"
 # Only the type picked is checked: the week has no limit here, so today's overspend says nothing
 printf '{"budgets_on": true, "hard_stop": true, "weekly_limit_percent": null, "budget_type": {"percent": "week"}, "daily_budget": {"enabled": true}}\n' > "$DATA/budget.json"
 week 45

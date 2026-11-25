@@ -1038,10 +1038,14 @@ def budget_type(budget, unit):
         return pick
     if unit == "usd":
         return "session" if budget.get("session_limit_usd") and not budget.get("daily_limit_usd") else "today"
-    daily = budget.get("daily_budget")
-    if isinstance(daily, dict) and daily.get("enabled") is True:
+    if legacy_daily(budget):
         return "today"
     return "five_hour" if budget.get("five_hour_limit_percent") and not budget.get("weekly_limit_percent") else "week"
+
+def legacy_daily(budget):
+    """An older file's daily budget switch, which led the pane whether or not the budget was on."""
+    daily = budget.get("daily_budget")
+    return isinstance(daily, dict) and daily.get("enabled") is True
 
 WINDOW_NAMES = {"five_hour": "5-hour window", "seven_day": "weekly window"}
 
@@ -1156,10 +1160,11 @@ HEADLINE_SCOPES = {"session": "session", "today": "today", "five_hour": "five_ho
 def headline(budget, windows, day):
     """The figure that leads the pane, the status line and the reopen button: "session", "today",
     "five_hour" or "seven_day". budget.json's pick when this account has a reading for it, else auto:
-    the budget type while the budget is on, else the week on Pro and Max and today in USD."""
+    the budget type while the budget is on, else the week on Pro and Max and today in USD. An older
+    file's daily budget switch keeps the daily budget leading with the budget off, as it did before."""
     on = budget.get("budgets_on") is True
     unit = limit_unit(budget, windows)
-    typed = TYPE_LIMITS[unit, budget_type(budget, unit)][0] if on else None
+    typed = TYPE_LIMITS[unit, budget_type(budget, unit)][0] if on else "today" if legacy_daily(budget) else None
     if unit == "usd":
         readable = ("session", "today")
         auto = typed or "today"
@@ -1179,14 +1184,14 @@ def limit_rows(budget, spent, windows, now=None):
     unit = limit_unit(budget, windows)
     scope, key = TYPE_LIMITS[unit, budget_type(budget, unit)]
     name, plan = TYPE_NAMES[scope], unit == "percent"
+    # The day itself is today's reset, so each day warns afresh
+    when = datetime.fromtimestamp(now or time.time()).astimezone().date().isoformat()
     if plan and scope == "today":
         day = day_budget(budget, windows, now)
         if day is None:
             return unit, []
-        # The day itself is the reset, so each day warns afresh
-        when = datetime.fromtimestamp(now or time.time()).astimezone().date().isoformat()
         return unit, [{"scope": scope, "name": name, "frac": day["frac"], "used": day["used"], "limit": day["allowed"],
-                       "parts": [f"{day['used']:.1f}% of the week used, today's budget {day['allowed']:.1f}%"],
+                       "parts": [f"{day['used']:.1f}% of the week used today, today's budget {day['allowed']:.1f}%"],
                        "reset": when, "resets": None}]
     lim = budget.get(key)
     if not lim:
@@ -1202,6 +1207,8 @@ def limit_rows(budget, spent, windows, now=None):
     else:
         return unit, []
     resets = reset_text(reset) if reset else None
+    if scope == "today":
+        reset = when
     return unit, [{"scope": scope, "name": name, "frac": used / lim, "used": used, "limit": lim,
                    "parts": [detail] + ([f"resets {resets}"] if resets else []), "reset": reset, "resets": resets}]
 
