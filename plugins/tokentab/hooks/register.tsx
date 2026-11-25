@@ -426,7 +426,7 @@ export type Report = {
     windows?: PlanWindow[]
     /** The hero's limit as text: `$0.82 of $1.00`, `5-hour window 42% used, limit 80%`. */
     limit: string | null; frac: number | null
-    /** In USD, the checked limit the hero does not lead with: `$4.80 of $5.00`. */
+    /** The budget in dollars the hero does not lead with: `$4.80 of $5.00` (at API rates on Pro and Max). */
     other_limit?: { scope: 'session' | 'today'; limit: string; frac: number } | null
     hard_stop: boolean
     /** What leads, budget.json's `headline` resolved for this account: a window, today (the daily
@@ -442,9 +442,9 @@ export type Report = {
   sessions?: { sid: string; name: string; detail?: string; cost: number; share: number }[]
 }
 
-/** `limit` and `frac` are null where no limit is checked: limits off, or none set for that window.
+/** `limit` and `frac` are null where no limit is checked: budget off, or another type checked.
  *  `today` is the daily budget out of the weekly window, not a reported window: `used` and
- *  `allowed` are percent of the week, `frac` is always set. With carry-over (beta), `daily` is
+ *  `allowed` are percent of the week, `frac` is always set and `limit` only while it is the budget. With carry-over (beta), `daily` is
  *  the day's even share and `carried` what earlier days left (below zero: overspent). */
 export type PlanWindow = {
   scope: 'five_hour' | 'seven_day' | 'today'; used: number; allowed?: number
@@ -527,15 +527,13 @@ export const TABS: { view: View; label: string }[] = [
 ]
 const TOOLS_SHOWN = 12
 
-// The budget limits the Options tab edits, in budget.json's keys (dotted below the
-// top level), as sections of rows: a limit is an Input, a switch an on/off Button.
-// A section's `toggle` sits in its heading.
-// A limit with a `percent` twin is one field: the twin stands in while the unit in
-// effect is percent. Every write goes through tokentab/budget.py, the one validator.
+// The settings the Options tab edits, in budget.json's keys (dotted below the top level),
+// as sections of rows: a limit is an Input, a switch an on/off Button, a choice a Button
+// that sets the next. A section's `toggle` sits in its heading. Every write goes through
+// tokentab/budget.py, the one validator.
 export type Unit = 'usd' | 'percent'
 export type Setting = {
   key: string; label: string; kind: 'limit' | 'switch' | 'choice'; unit?: string
-  percent?: { key: string; label: string }
   /** A `choice` cycles through these, each press setting the next. */
   choices?: string[]
   /** One line under the row saying what the setting does. */
@@ -550,43 +548,77 @@ export function switchOn(budget: Json | undefined, setting: Setting): boolean {
   return setting.follows !== undefined && at(budget, setting.follows) === true
 }
 
+/** A followed switch by its label in the pane. */
+const FOLLOWED: Record<string, string> = { hard_stop: 'Stop at limit' }
+
 /** The line under a row; a switch with `follows` says whether it follows or was set, and how back. */
 export function noteOf(budget: Json | undefined, setting: Setting): string | undefined {
   if (setting.follows === undefined) return setting.note
-  const followed = setting.follows.replace(/_/g, ' ')
+  const followed = FOLLOWED[setting.follows] ?? setting.follows.replace(/_/g, ' ')
   return typeof at(budget, setting.key) === 'boolean'
     ? `Set by you; /tokentab:budget ${setting.key} auto follows ${followed} again.`
     : `Follows ${followed} until you set it.`
 }
 
-/** A section with a `unit` shows only under that unit. */
-export const SECTIONS: { title: string; unit?: Unit; toggle?: Setting; rows: Setting[] }[] = [
-  { title: 'limits', toggle: { key: 'budgets_on', label: 'check the limits', kind: 'switch' }, rows: [
-    { key: 'session_limit_usd', label: 'This session', unit: 'USD', kind: 'limit',
-      percent: { key: 'five_hour_limit_percent', label: '5-hour window' } },
-    { key: 'daily_limit_usd', label: 'Today', unit: 'USD', kind: 'limit',
-      percent: { key: 'weekly_limit_percent', label: 'This week' } },
-    { key: 'hard_stop', label: 'Enable hard stop', kind: 'switch' },
-    { key: 'spend_less', label: 'Ask Claude to spend less (beta)', kind: 'switch', follows: 'hard_stop' },
-  ] },
-  // A share of the weekly window, which USD accounts do not have
-  { title: 'daily budget', unit: 'percent', toggle: { key: 'daily_budget.enabled', label: 'daily budget', kind: 'switch' }, rows: [
-    { key: 'daily_budget.carry_over', label: 'Carry over (beta)', kind: 'switch',
-      note: "Unused budget rolls into the next day of this week; overspend shrinks it." },
-  ] },
-  { title: 'handoff note', toggle: { key: 'handoff.enabled', label: 'handoff note before the cache expires', kind: 'switch' }, rows: [] },
-]
+/** The budget types each unit offers, as BUDGET_TYPES in tokentab.py. */
+export const BUDGET_TYPES: Record<Unit, string[]> = { usd: ['today', 'session'], percent: ['today', 'week', 'five_hour', 'session'] }
+
+/** The limit field of each budget type, as TYPE_LIMITS in tokentab.py. On Pro and Max a session
+ *  budget is dollars at API rates, and today's is spread from the week's cap. */
+const TYPE_LIMITS: Record<string, Setting> = {
+  'usd:today': { key: 'daily_limit_usd', label: 'Limit', unit: 'USD', kind: 'limit' },
+  'usd:session': { key: 'session_limit_usd', label: 'Limit', unit: 'USD', kind: 'limit' },
+  'percent:today': { key: 'weekly_limit_percent', label: 'Week cap', unit: '%', kind: 'limit',
+    note: "Today's budget is what is left of the cap, spread over the days left." },
+  'percent:week': { key: 'weekly_limit_percent', label: 'Limit', unit: '% of the week', kind: 'limit' },
+  'percent:five_hour': { key: 'five_hour_limit_percent', label: 'Limit', unit: '% of 5 hours', kind: 'limit' },
+  'percent:session': { key: 'session_limit_usd', label: 'Limit', unit: 'USD at API rates', kind: 'limit' },
+}
+
+/** The one budget type checked in this unit, as budget_type() in tokentab.py: budget_type's pick,
+ *  else, for a file from before it, the limit the user had set. */
+export function budgetTypeOf(budget: Json | undefined, unit: Unit): string {
+  const pick = at(budget, `budget_type.${unit}`)
+  if (typeof pick === 'string' && BUDGET_TYPES[unit].includes(pick)) return pick
+  if (unit === 'usd') return at(budget, 'session_limit_usd') && !at(budget, 'daily_limit_usd') ? 'session' : 'today'
+  if (at(budget, 'daily_budget.enabled') === true) return 'today'
+  return at(budget, 'five_hour_limit_percent') && !at(budget, 'weekly_limit_percent') ? 'five_hour' : 'week'
+}
+
+export type Section = { title: string; toggle?: Setting; rows: Setting[]; tone?: 'warning' }
+
+/** The Options tab's settings below Display, for this file and account. The budget's rows show only
+ *  while it is on, and only its type's limit; each unit keeps its own type. The beta switches act
+ *  on the budget, so they show with it. */
+export function sections(budget: Json | undefined, unit: Unit): Section[] {
+  const on = at(budget, 'budgets_on') === true
+  const type = budgetTypeOf(budget, unit)
+  return [
+    { title: 'budget', toggle: { key: 'budgets_on', label: 'Enable budget', kind: 'switch' }, rows: on ? [
+      { key: `budget_type.${unit}`, label: 'Budget type', kind: 'choice', choices: BUDGET_TYPES[unit] },
+      TYPE_LIMITS[`${unit}:${type}`]!,
+      { key: 'hard_stop', label: 'Stop at limit', kind: 'switch' },
+    ] : [] },
+    { title: 'handoff note', toggle: { key: 'handoff.enabled', label: 'handoff note before the cache expires', kind: 'switch' }, rows: [] },
+    ...(on ? [{ title: 'beta', tone: 'warning' as const, rows: [
+      // A share of the weekly window, which only the daily budget on Pro and Max has
+      ...(unit === 'percent' && type === 'today' ? [{ key: 'daily_budget.carry_over', label: 'Carry over', kind: 'switch' as const,
+        note: 'Unused budget rolls into the next day of this week; overspend shrinks it.' }] : []),
+      { key: 'spend_less', label: 'Ask Claude to spend less near the limit', kind: 'switch' as const, follows: 'hard_stop' },
+    ] }] : []),
+  ]
+}
 
 /** The figure that leads the pane, the status line and the reopen button. Its choices follow the account. */
 export const HEADLINE: Setting = { key: 'headline', label: 'Headline', kind: 'choice',
   note: 'The figure the pane and the status line lead with, as what is left. auto follows the budget that is on.' }
 
 /** The headline words this account can show, as headline() in tokentab.py: a window only with its reading,
- *  and today (the daily budget on Pro and Max) only while it is on and the week has a reading. */
-export function headlineChoices(unit: Unit, dailyOn: boolean, kinds: string[]): string[] {
+ *  and today (the daily budget on Pro and Max) only while the week has a reading. */
+export function headlineChoices(unit: Unit, kinds: string[]): string[] {
   if (unit === 'usd') return ['auto', 'today', 'session']
   const week = kinds.includes('seven_day')
-  return ['auto', ...(dailyOn && week ? ['today'] : []), ...(week ? ['week'] : []),
+  return ['auto', ...(week ? ['today', 'week'] : []),
     ...(kinds.includes('five_hour') ? ['five_hour'] : []), 'session']
 }
 
@@ -657,11 +689,6 @@ export function weekBaseline(
     : earlierToday ? Math.min(prev.percentUsed, cur) : dayStart(prev.percentUsed, cur)
   out[reading.resetsAt] = { day, base, last: cur }
   return out
-}
-
-/** A row as the unit in effect shows it: a limit's percent twin under percent. */
-export function inUnit(s: Setting, unit: Unit): Setting {
-  return unit === 'percent' && s.percent ? { ...s, key: s.percent.key, label: s.percent.label, unit: '%' } : s
 }
 
 /** 1.8.0–1.9.0 shipped `spend_less: false` under this comment, where false was the default, not a choice. */
@@ -1362,9 +1389,10 @@ function rule($: EngineInterface, e: RenderEvent, key?: string): RenderChildren 
 }
 
 /** A section's small capitals label, as the frames set them. */
-function label($: EngineInterface, e: RenderEvent, text: string): RenderChildren {
+function label($: EngineInterface, e: RenderEvent, text: string, tone?: 'warning'): RenderChildren {
   const { Text } = $.ui.resolve(e)
-  return <Text size="footnote" dimColor>{text.toUpperCase()}</Text>
+  return tone ? <Text size="footnote" weight="semibold" color={tone}>{text.toUpperCase()}</Text>
+    : <Text size="footnote" dimColor>{text.toUpperCase()}</Text>
 }
 
 /** A mono heading with a dim note beside it: `SESSION 47 msgs`, `TOOLS 8 tools · 27 calls`. */
@@ -1519,28 +1547,29 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
   // The badge shows the window nearest the warn level. Today's budget counts only as the lead,
   // since nothing else beside the badge names it.
   const RANK = { success: 0, warning: 1, error: 2 } as const
-  const judged = planWindows.flatMap(w => (w.frac === null || (w.scope === 'today' && w !== lead) ? []
+  const judged = planWindows.flatMap(w => (w.frac === null || (w.scope === 'today' && w !== lead && w.limit === null) ? []
     : [{ w, frac: w.frac, tone: toneOf(w.frac) }]))
     // On the same state a limit beats today's budget: it can hard-stop, and today's hero and bar show their own colour
     .sort((a, b) => RANK[b.tone] - RANK[a.tone] || Number(a.w.scope === 'today') - Number(b.w.scope === 'today') || b.frac - a.frac)
-  // In USD the limit the hero does not lead with counts too, and the badge names it when it is the nearer one
-  const other = s.unit === 'usd' ? s.other_limit ?? null : null
-  const otherNearer = other !== null && (frac === null || other.frac > frac)
-  const usdWorst = otherNearer ? other.frac : frac
-  const worst = planWindows.length > 0 ? (judged[0]?.frac ?? null) : usdWorst
-  const tone = planWindows.length > 0 ? judged[0]?.tone : usdWorst === null ? undefined : toneOf(usdWorst)
+  // A budget in dollars the hero does not lead with counts too, and the badge names it when it is the nearer one
+  const other = s.other_limit ?? null
+  const nearest = planWindows.length > 0 ? (judged[0]?.frac ?? null) : frac
+  const otherNearer = other !== null && (nearest === null || other.frac > nearest)
+  const worst = otherNearer ? other.frac : nearest
+  const tone = worst === null ? undefined : toneOf(worst)
   // With today's budget as the hero, a second percent beside it reads as a rival figure for the day. The badge
   // then shows only a state, past a warn level, and names the window when it is not today's budget.
   const todayLeads = lead?.scope === 'today'
-  const named = todayLeads && judged[0] && judged[0].w !== lead ? `${WINDOW_SHORT[judged[0].w.scope]} · `
-    : otherNearer ? `${other.scope} · ` : ''
+  const named = otherNearer ? `${other.scope} · `
+    : todayLeads && judged[0] && judged[0].w !== lead ? `${WINDOW_SHORT[judged[0].w.scope]} · ` : ''
   const badge = worst === null || tone === undefined || (todayLeads && tone === 'success') ? undefined
     : <Text size="footnote" weight="semibold" color={tone}>
         {todayLeads ? `${named}${tone === 'error' ? 'Over' : 'Warning'}`
           : `${named}${tone === 'error' ? 'Over' : tone === 'warning' ? `Warning · ${leftOf(worst)} of limit left` : `${leftOf(worst)} of limit left`}`}
       </Text>
-  const mode = lead?.scope === 'today' ? 'never blocks'
-    : s.hard_stop ? 'hard stop' : 'warn only'
+  const mode = s.hard_stop ? 'stops at limit' : 'warn only'
+  // Today's budget as the headline only is no budget: it shows, but is not checked
+  const checked = s.frac !== null || other !== null || planWindows.some(w => w.frac !== null && (w.scope !== 'today' || w.limit !== null))
   // Today's budget is always read as a share of itself; the week's figures follow, named as such
   // Under 0.05 rounds to "0%", which names nothing (a week's first day)
   const carriedText = (w: PlanWindow) => (w.carried === undefined || Math.abs(w.carried) < 0.05 ? ''
@@ -1552,13 +1581,12 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
   // A limit is read the way its window is, as what is left of the window when it stops
   const limitOf = (w: PlanWindow, sep: string) => (w.limit === null ? '' : `${sep}limit at ${percent(Math.max(0, 100 - w.limit))} left`)
   const under = [
-    lead ? `${usd(s.cost)}${apiRates}` : s.limit ?? '',
+    lead ? (other?.scope === 'session' ? '' : `${usd(s.cost)}${apiRates}`) : s.limit ?? '',
     todaySpend ? `this session ${other?.scope === 'session' ? other.limit : usd(s.cost)}`
       : other ? `${other.scope} ${other.limit}` : '',
     `${int(s.tokens)} tokens`,
-    // Session leading a plan keeps the windows' limits below it
-    frac !== null || other !== null || (!lead && planWindows.some(window => window.scope !== 'today' && window.frac !== null)) ? mode : !s.limits_on ? 'limits off'
-      : s.unit === 'percent' ? 'no window limit set or no reading yet' : todaySpend ? 'no daily limit set' : 'no session limit set',
+    checked ? mode : !s.limits_on ? 'budget off'
+      : s.unit === 'percent' ? 'no limit set or no reading yet' : todaySpend ? 'no daily limit set' : 'no session limit set',
   ].filter(x => x !== '').join(' · ')
   const rates = r.rates ?? []
   const series = (key: string) => (SERIES[key] ? key : 'input')
@@ -1729,8 +1757,8 @@ function toolRow($: EngineInterface, e: RenderEvent, t: ToolRow, path: string, t
 }
 
 /** Options, Figma's "TokenTab / Limits", set like Spend: the pane's auto-open switch
- *  (the manifest's `userConfig` field, as in /config) first, then the budget limits
- *  over budget.json, a label on the left and its control on the right: a limit as an
+ *  (the manifest's `userConfig` field, as in /config) and the headline under Display, then
+ *  sections() over budget.json, a label on the left and its control on the right: a limit as an
  *  Input with "save", a switch as an on/off Button. Mobile has no Input, so it shows
  *  the values. */
 function optionsTab($: EngineInterface, e: RenderEvent): RenderChildren {
@@ -1752,9 +1780,10 @@ function optionsTab($: EngineInterface, e: RenderEvent): RenderChildren {
       return column(toggle(`b-${s.key}`, isOn, () => { void setBudget($, s.key, isOn ? 'off' : 'on') }))
     }
     if (s.kind === 'choice') {
-      const choices = s.key === HEADLINE.key ? headlineChoices(unit, at(o?.budget, 'daily_budget.enabled') === true, (o?.windows ?? []).map(window => window.kind)) : s.choices ?? []
-      // A value this account cannot show falls back to the first choice, as tokentab.py does
-      const current = choices.includes(String(v)) ? String(v) : choices[0] ?? shown(v)
+      const choices = s.key === HEADLINE.key ? headlineChoices(unit, (o?.windows ?? []).map(window => window.kind)) : s.choices ?? []
+      // The budget type shows the one in effect while unset; a headline this account cannot show falls back to auto, as tokentab.py does
+      const picked = s.key.startsWith('budget_type.') ? budgetTypeOf(o?.budget, unit) : String(v)
+      const current = choices.includes(picked) ? picked : choices[0] ?? shown(v)
       if (mobile) return column(<Text size="footnote" mono weight="semibold">{current}</Text>)
       const next = choices[(choices.indexOf(current) + 1) % choices.length] ?? ''
       return column(<Button key={`b-${s.key}`} label={current} variant="secondary" onPress={() => { void setBudget($, s.key, next) }} />)
@@ -1773,10 +1802,10 @@ function optionsTab($: EngineInterface, e: RenderEvent): RenderChildren {
       {error !== undefined && <Text size="footnote" color="error">{error}</Text>}
     </Box>
   )
-  const section = (title: string, head: RenderChildren, rows: RenderChildren[]) => (
+  const section = (title: string, head: RenderChildren, rows: RenderChildren[], tone?: 'warning') => (
     <Box key={`section-${title}`} flexDirection="column" gap="xs">
       <Box justifyContent="space-between" alignItems="center">
-        {label($, e, title)}
+        {label($, e, title, tone)}
         {head}
       </Box>
       {rows}
@@ -1784,18 +1813,18 @@ function optionsTab($: EngineInterface, e: RenderEvent): RenderChildren {
   )
   return (
     <Box flexDirection="column" gap={1}>
-      {section('options', undefined, [
+      {section('display', undefined, [
         row('auto-open', 'Open pane at session start', column(toggle('auto-open', autoOpen(), () => {}))),
         row(HEADLINE.key, HEADLINE.label, control(HEADLINE), o?.errors[HEADLINE.key], HEADLINE.note),
       ])}
       {o?.error !== undefined && <Text size="footnote" color="error">{o.error}</Text>}
-      {SECTIONS.filter(settingsSection => settingsSection.unit === undefined || settingsSection.unit === unit).flatMap(settingsSection => [
+      {sections(o?.budget, unit).flatMap(settingsSection => [
         rule($, e, `rule-${settingsSection.title}`),
         section(settingsSection.title, settingsSection.toggle && control(settingsSection.toggle), [
-          ...settingsSection.rows.map(r => inUnit(r, unit)).map(s => row(s.key, s.unit === undefined ? s.label : `${s.label} (${s.unit})`, control(s), o?.errors[s.key], noteOf(o?.budget, s))),
+          ...settingsSection.rows.map(s => row(s.key, s.unit === undefined ? s.label : `${s.label} (${s.unit})`, control(s), o?.errors[s.key], noteOf(o?.budget, s))),
           settingsSection.toggle !== undefined && o?.errors[settingsSection.toggle.key] !== undefined
             && <Text size="footnote" key="toggle-error" color="error">{o.errors[settingsSection.toggle.key]}</Text>,
-        ]),
+        ], settingsSection.tone),
       ])}
     </Box>
   )

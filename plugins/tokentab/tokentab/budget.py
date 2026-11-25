@@ -9,7 +9,10 @@ and the budget skill alike.
                             its _comment keys kept. VALUE: a number; "off", "none" or "" for
                             a limit that is switched off (null); on/off/true/false/yes/no
                             for a switch (auto puts spend_less back to following hard_stop);
-                            auto, session, today, five_hour or week for headline. Prints the
+                            auto, session, today, five_hour or week for headline;
+                            budget_type.usd: today or session; budget_type.percent: today,
+                            week, five_hour or session (auto for either: from the limits set).
+                            Prints the
                             new value as JSON; a value that does not fit is refused on
                             stderr with exit code 1, nothing written.
 
@@ -78,7 +81,15 @@ def parse(key, old, raw):
         raise ValueError(f"{key}: no longer a setting; the account decides (percent on Pro and Max, else USD)")
     if leaf == "warn_at_percent":
         raise ValueError(f"{key}: no longer a setting; TokenTab {kt.WARN_TEXT} of a limit")
+    if key == "daily_budget.enabled":
+        raise ValueError(f"{key}: no longer a setting; the daily budget is budget_type.percent today")
     text = str(raw).strip().lower().replace(",", "").replace("$", "").rstrip("%").strip()
+    if key.startswith("budget_type."):
+        if text in AUTO:
+            return None
+        if text not in kt.BUDGET_TYPES.get(leaf, ()):
+            raise ValueError(f"{key}: one of {', '.join(kt.BUDGET_TYPES.get(leaf, ()))} or auto, not {raw!r}")
+        return text
     if leaf == "headline":
         if text not in HEADLINES:
             raise ValueError(f"{key}: one of {', '.join(HEADLINES)}, not {raw!r}")

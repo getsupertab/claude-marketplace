@@ -1,7 +1,7 @@
 import { test, expect, mock } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On, RenderElement, RenderNode } from 'claude-code'
-import { at, barCells, barSvg, chevronSvg, COPY_HANDOFF, dataDir, DONT_SEND, freshNote, HANDOFF_DEFAULTS, HANDOFF_PROMPT, handoffPrompt, handoffStep, HELD_HANDOFF, NEW_CHAT, SEND_HERE, inUnit, int, liveLines, noteOf, pct, reopenLabel, SECTIONS, SERIES, shareCard, shareCardSvg, shareLinks, sharePageHtml, shareText, shown, SPEND_LESS_1_8_COMMENT, stripAnsi, switchOn, timedOut, toneOf, ttlOf, unitOf, usd, weekBaseline, withNewKeys, wrapWords } from './register'
+import { at, barCells, barSvg, chevronSvg, COPY_HANDOFF, dataDir, DONT_SEND, freshNote, HANDOFF_DEFAULTS, HANDOFF_PROMPT, handoffPrompt, handoffStep, HELD_HANDOFF, NEW_CHAT, SEND_HERE, budgetTypeOf, int, liveLines, noteOf, pct, reopenLabel, SERIES, shareCard, shareCardSvg, shareLinks, sharePageHtml, sections, shareText, shown, SPEND_LESS_1_8_COMMENT, stripAnsi, switchOn, timedOut, toneOf, ttlOf, unitOf, usd, weekBaseline, withNewKeys, wrapWords } from './register'
 import type { Idle, Report } from './register'
 
 // The world beneath the plugin: `$.fs` reaches nothing under `claude plugin test`, and
@@ -141,7 +141,7 @@ const REPORT: Report = {
 }
 const BUDGET = JSON.stringify({
   _comment: 'kept', session_limit_usd: null,
-  daily_limit_usd: 40, hard_stop: false,
+  daily_limit_usd: 40, hard_stop: false, budgets_on: true,
   daily_budget: { enabled: true }, headline: 'five_hour',
   cold_resume: { confirm_seconds: 120, min_context_tokens: 100000 },
 }, null, 2)
@@ -500,7 +500,7 @@ test('Spend on a percent budget leads with the window; dollars below, at API rat
   // every figure counts what is left, as the warnings do
   expect(t.find(x => x.text === '92%')?.props.size).toBe('title')
   for (const line of ['left of 5-hour window · limit at 20% left · resets 16:00', 'week 79% left, limit at 10% left · resets Thu 09:00',
-    '$3.61 at API rates · 532,533 tokens · hard stop', '77% of limit left']) expect(t.some(x => x.text === line)).toBe(true)
+    '$3.61 at API rates · 532,533 tokens · stops at limit', '77% of limit left']) expect(t.some(x => x.text === line)).toBe(true)
   expect(elements(tree, 'Svg').filter(s => s.alt !== 'separator' && !String(s.alt).startsWith('chevron'))[0]!.alt).toBe('10% of the 5-hour window limit')
 
   // a USD budget on a subscription: dollars lead, labelled as API rates
@@ -530,7 +530,7 @@ test('Spend without a limit has no bar and no badge; before the first call it sa
   await $.telemetry.log(request({}))
   await clock.advance(1000)
   const off = await $.ui.render({ surface: 'desktop', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
-  expect(texts(off).some(x => x.text === '532,533 tokens · limits off')).toBe(true)
+  expect(texts(off).some(x => x.text === '532,533 tokens · budget off')).toBe(true)
 
   report.value = { ...REPORT, session: null, tools: [] }
   await $.telemetry.log(request({}))
@@ -811,10 +811,10 @@ test('on Linux without xdg-open, the toast says the page could not be opened and
   expect(ui.store.get(`pageOpenedAt:${SID}`)).toBeUndefined()
 })
 
-test('the Options tab: auto-open through the config menu, the limits through the validator', async ($, on) => {
+test('the Options tab: auto-open through the config menu, the budget through the validator', async ($, on) => {
   mock.env(on, { HOME: '/home/t' })
   const clock = mock.clock(on, { now: T0 })
-  const { ui } = world(on, FILES)
+  const { ui } = world(on, { ...FILES, '/tokentab/budget.json': JSON.stringify({ ...JSON.parse(BUDGET), budgets_on: true }) })
   await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
   await clock.settle()
   await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
@@ -822,17 +822,21 @@ test('the Options tab: auto-open through the config menu, the limits through the
   const tree = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   const t = texts(tree)
   expect(t.some(x => x.text === 'Open pane at session start')).toBe(true)
-  expect(t.filter(x => /^[A-Z][A-Z ]+$/.test(x.text) && x.props.dimColor).map(x => x.text)).toEqual(['OPTIONS', 'LIMITS', 'HANDOFF NOTE'])
-  // the units are in the names
-  expect(t.filter(x => x.text.endsWith('(USD)')).map(x => x.text)).toEqual(['This session (USD)', 'Today (USD)'])
+  expect(t.filter(x => /^[A-Z][A-Z ]+$/.test(x.text) && x.props.dimColor).map(x => x.text)).toEqual(['DISPLAY', 'BUDGET', 'HANDOFF NOTE'])
+  // the beta group stands apart in colour
+  expect(t.find(x => x.text === 'BETA')?.props.color).toBe('warning')
   expect(elements(tree, 'Button').find(b => b.key === 'auto-open')?.label).toBe('on')
-  // the fields hold budget.json's values, "off" for null, grouped tokens
+  // one budget type; the file had only today's limit, so today is the type, and its limit the one field
+  expect(elements(tree, 'Button').find(b => b.key === 'b-budget_type.usd')?.label).toBe('today')
+  expect(t.filter(x => x.text.endsWith('(USD)')).map(x => x.text)).toEqual(['Limit (USD)'])
   const inputs = elements(tree, 'Input')
-  expect(inputs.map(i => i.key)).toEqual(['b-session_limit_usd', 'b-daily_limit_usd'])
-  expect(inputs.find(i => i.key === 'b-daily_limit_usd')?.value).toBe('40')
-  expect(inputs.find(i => i.key === 'b-session_limit_usd')?.value).toBe('off')
-  expect(elements(tree, 'Button').find(b => b.key === 'b-budgets_on')?.label).toBe('off')
+  expect(inputs.map(i => i.key)).toEqual(['b-daily_limit_usd'])
+  expect(inputs[0]?.value).toBe('40')
+  expect(elements(tree, 'Button').find(b => b.key === 'b-budgets_on')?.label).toBe('on')
+  expect(t.some(x => x.text === 'Stop at limit')).toBe(true)
   expect(elements(tree, 'Button').find(b => b.key === 'b-hard_stop')?.label).toBe('off')
+  await $.ui.press(press('b-budget_type.usd'))
+  expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'budget_type.usd', 'session'])
 
   // the switch is the manifest's userConfig field, written as the menu would
   ui.store.set('autoOpen', true)
@@ -843,18 +847,18 @@ test('the Options tab: auto-open through the config menu, the limits through the
   // a limit goes through budget.py; a refused value is shown under its field
   await $.ui.input({ plugin: 'tokentab', key: 'b-daily_limit_usd', text: '30' })
   expect(ui.runs[ui.runs.length - 1]!.slice(1).map((s, i) => i === 0 ? s.split('/').pop() : s)).toEqual(['budget.py', 'set', 'daily_limit_usd', '30'])
-  await $.ui.input({ plugin: 'tokentab', key: 'b-session_limit_usd', text: 'bad' })
+  await $.ui.input({ plugin: 'tokentab', key: 'b-daily_limit_usd', text: 'bad' })
   const after = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
-  expect(texts(after).find(x => x.props.color === 'error')?.text.trim()).toBe("session_limit_usd: a number is needed, not 'bad'")
+  expect(texts(after).find(x => x.props.color === 'error')?.text.trim()).toBe("daily_limit_usd: a number is needed, not 'bad'")
   await $.ui.press(press('b-hard_stop'))
   expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'hard_stop', 'on'])
-  // spend_less sits under it and, with no such key yet, shows hard_stop's off
-  expect(t.some(text => text.text === 'Ask Claude to spend less (beta)')).toBe(true)
+  // spend_less sits under Beta and, with no such key yet, shows hard_stop's off
+  expect(t.some(text => text.text === 'Ask Claude to spend less near the limit')).toBe(true)
   expect(elements(tree, 'Button').find(button => button.key === 'b-spend_less')?.label).toBe('off')
   await $.ui.press(press('b-spend_less'))
   expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'spend_less', 'on'])
-  // the daily budget is a share of the weekly window, which a USD account has none of
-  expect(elements(tree, 'Button').some(button => button.key === 'b-daily_budget.enabled')).toBe(false)
+  // carry-over is the daily budget's, a share of the weekly window, which a USD account has none of
+  expect(elements(tree, 'Button').some(button => button.key === 'b-daily_budget.carry_over')).toBe(false)
   // the headline is under Options for every account; the file's five_hour has no reading in USD, so it shows as auto
   expect(t.some(x => x.text === 'Headline')).toBe(true)
   expect(elements(tree, 'Button').find(button => button.key === 'b-headline')?.label).toBe('auto')
@@ -867,25 +871,40 @@ test('the Options tab: auto-open through the config menu, the limits through the
   expect(texts(mobile).some(x => x.text === '40')).toBe(true)
 })
 
-test('the Options tab: spend_less, while unset, shows hard stop\'s on and stores off when pressed', async ($, on) => {
+test('the Options tab hides the budget\'s rows and the beta switches while the budget is off', async ($, on) => {
   mock.env(on, { HOME: '/home/t' })
   const clock = mock.clock(on, { now: T0 })
-  const { ui } = world(on, { ...FILES, '/tokentab/budget.json': JSON.stringify({ ...JSON.parse(BUDGET), hard_stop: true, spend_less: null }) })
+  world(on, { ...FILES, '/tokentab/budget.json': JSON.stringify({ ...JSON.parse(BUDGET), budgets_on: false }) })
+  await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
+  await $.ui.press(press('tab-options'))
+  const tree = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
+  expect(elements(tree, 'Button').find(button => button.key === 'b-budgets_on')?.label).toBe('off')
+  expect(texts(tree).some(text => text.text === 'Enable budget' || text.text === 'BETA')).toBe(false)
+  expect(elements(tree, 'Input')).toEqual([])
+  expect(elements(tree, 'Button').map(button => button.key).filter(key => /budget_type|hard_stop|spend_less|carry_over/.test(String(key)))).toEqual([])
+})
+
+test('the Options tab: spend_less, while unset, shows Stop at limit\'s on and stores off when pressed', async ($, on) => {
+  mock.env(on, { HOME: '/home/t' })
+  const clock = mock.clock(on, { now: T0 })
+  const { ui } = world(on, { ...FILES, '/tokentab/budget.json': JSON.stringify({ ...JSON.parse(BUDGET), budgets_on: true, hard_stop: true, spend_less: null }) })
   await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
   await clock.settle()
   await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   await $.ui.press(press('tab-options'))
   const tree = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   expect(elements(tree, 'Button').find(button => button.key === 'b-spend_less')?.label).toBe('on')
-  expect(texts(tree).some(text => text.text === 'Follows hard stop until you set it.')).toBe(true)
+  expect(texts(tree).some(text => text.text === 'Follows Stop at limit until you set it.')).toBe(true)
   await $.ui.press(press('b-spend_less'))
   expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'spend_less', 'off'])
 })
 
-test('the Options tab shows the daily budget once the plan reports a usage window', async ($, on) => {
+test('the Options tab offers the daily budget once the plan reports a usage window', async ($, on) => {
   mock.env(on, { HOME: '/home/t' })
   const clock = mock.clock(on, { now: T0 })
-  const { ui } = world(on, FILES)
+  const { ui } = world(on, { ...FILES, '/tokentab/budget.json': JSON.stringify({ ...JSON.parse(BUDGET), budgets_on: true }) })
   on('session.measure', ($, e) => ({ changed: e.changed }))
   await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
   await clock.settle()
@@ -894,15 +913,21 @@ test('the Options tab shows the daily budget once the plan reports a usage windo
   await $.ui.press(press('tab-options'))
   const tree = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   const t = texts(tree)
-  expect(t.filter(x => /^[A-Z][A-Z ]+$/.test(x.text) && x.props.dimColor).map(x => x.text)).toEqual(['OPTIONS', 'LIMITS', 'DAILY BUDGET', 'HANDOFF NOTE'])
-  // its switch, and the headline as a button that sets the next of the plan's choices;
+  expect(t.filter(x => /^[A-Z][A-Z ]+$/.test(x.text) && x.props.dimColor).map(x => x.text)).toEqual(['DISPLAY', 'BUDGET', 'HANDOFF NOTE'])
+  // the file's old daily budget switch makes today the type; its field is the week's cap, said so under it
+  expect(elements(tree, 'Button').find(button => button.key === 'b-budget_type.percent')?.label).toBe('today')
+  expect(elements(tree, 'Input').map(input => input.key)).toEqual(['b-weekly_limit_percent'])
+  expect(t.some(x => x.text === 'Week cap (%)')).toBe(true)
+  expect(t.some(x => x.text === "Today's budget is what is left of the cap, spread over the days left." && x.props.dimColor)).toBe(true)
+  await $.ui.press(press('b-budget_type.percent'))
+  expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'budget_type.percent', 'week'])
+  // the headline as a button that sets the next of the plan's choices;
   // the file's five_hour has no reading here (only the week reported), so it shows as auto
-  expect(elements(tree, 'Button').find(button => button.key === 'b-daily_budget.enabled')?.label).toBe('on')
   expect(elements(tree, 'Button').find(button => button.key === 'b-headline')?.label).toBe('auto')
   await $.ui.press(press('b-headline'))
   expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'headline', 'today'])
-  // carry-over is a beta switch beside it, off where the file has no such key yet, with a line on what it does
-  expect(t.some(x => x.text === 'Carry over (beta)')).toBe(true)
+  // carry-over is a beta switch, off where the file has no such key yet, with a line on what it does
+  expect(t.some(x => x.text === 'Carry over')).toBe(true)
   expect(t.some(x => x.text === 'Unused budget rolls into the next day of this week; overspend shrinks it.' && x.props.dimColor)).toBe(true)
   expect(elements(tree, 'Button').find(button => button.key === 'b-daily_budget.carry_over')?.label).toBe('off')
   await $.ui.press(press('b-daily_budget.carry_over'))
@@ -915,15 +940,28 @@ test('the limit unit follows the account: percent where the plan reports a usage
   expect(unitOf([])).toBe('usd')
   expect(unitOf([{ kind: 'five_hour' }])).toBe('percent')
   expect(unitOf([{ kind: 'spend_limit' }])).toBe('usd')
-  const session = SECTIONS[0]!.rows.find(r => r.key === 'session_limit_usd')!
-  expect(inUnit(session, 'usd')).toBe(session)
-  expect(inUnit(session, 'percent')).toMatchObject({ key: 'five_hour_limit_percent', label: '5-hour window', unit: '%' })
+  // one budget type per unit: the pick, else the limit set before budget_type, as budget_type() in tokentab.py
+  expect(budgetTypeOf({ budget_type: { usd: 'session' } }, 'usd')).toBe('session')
+  expect(budgetTypeOf({ budget_type: { usd: 'week' } }, 'usd')).toBe('today')
+  expect(budgetTypeOf({ session_limit_usd: 5, daily_limit_usd: null }, 'usd')).toBe('session')
+  expect(budgetTypeOf({ budget_type: { usd: 'session', percent: null }, daily_budget: { enabled: true } }, 'percent')).toBe('today')
+  expect(budgetTypeOf({ five_hour_limit_percent: 80, weekly_limit_percent: null }, 'percent')).toBe('five_hour')
+  expect(budgetTypeOf({}, 'percent')).toBe('week')
+  // the budget's rows only while it is on, and only its type's limit field
+  const keys = (budget: Record<string, unknown>, unit: 'usd' | 'percent') =>
+    sections(budget, unit).map(section => [section.title, ...section.rows.map(row => row.key)])
+  expect(keys({}, 'usd')).toEqual([['budget'], ['handoff note']])
+  expect(keys({ budgets_on: true, budget_type: { percent: 'session' } }, 'percent')).toEqual([
+    ['budget', 'budget_type.percent', 'session_limit_usd', 'hard_stop'], ['handoff note'], ['beta', 'spend_less']])
+  expect(keys({ budgets_on: true, budget_type: { percent: 'today' } }, 'percent')).toEqual([
+    ['budget', 'budget_type.percent', 'weekly_limit_percent', 'hard_stop'], ['handoff note'], ['beta', 'daily_budget.carry_over', 'spend_less']])
+  expect(sections({ budgets_on: true, budget_type: { percent: 'session' } }, 'percent')[0]!.rows[1]!.unit).toBe('USD at API rates')
   // spend_less follows hard_stop until it is set either way
-  const spendLess = SECTIONS.flatMap(section => section.rows).find(row => row.key === 'spend_less')!
+  const spendLess = sections({ budgets_on: true }, 'usd').flatMap(section => section.rows).find(row => row.key === 'spend_less')!
   expect([{ hard_stop: true }, { hard_stop: true, spend_less: null }, { hard_stop: false }, { hard_stop: true, spend_less: false }, { hard_stop: false, spend_less: true }]
     .map(budget => switchOn(budget, spendLess))).toEqual([true, true, false, false, true])
-  expect(noteOf({ hard_stop: true }, spendLess)).toBe('Follows hard stop until you set it.')
-  expect(noteOf({ spend_less: false }, spendLess)).toBe('Set by you; /tokentab:budget spend_less auto follows hard stop again.')
+  expect(noteOf({ hard_stop: true }, spendLess)).toBe('Follows Stop at limit until you set it.')
+  expect(noteOf({ spend_less: false }, spendLess)).toBe('Set by you; /tokentab:budget spend_less auto follows Stop at limit again.')
   // a 1.8–1.9 false was that version's default: it follows hard_stop again, once; a newer file's false stays
   expect(withNewKeys({ _spend_less_comment: SPEND_LESS_1_8_COMMENT, spend_less: false }, { _spend_less_comment: 'new', spend_less: null }))
     .toEqual({ _spend_less_comment: 'new', spend_less: null })
@@ -961,11 +999,11 @@ test('a first usage-window reading redraws the open Options tab in percent, no t
   await $.ui.press(press('tab-options'))
   await clock.settle()
   const inputs = async () => elements(await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS }), 'Input').map(i => i.key)
-  expect(await inputs()).toContain('b-session_limit_usd')
+  expect(await inputs()).toContain('b-daily_limit_usd')
   await $.session.measure({ context: { window: 200000 }, rateLimits: [{ kind: 'five_hour', percentUsed: 42 }], changed: ['context', 'rateLimits'] })
   await clock.advance(1_000)
   await clock.settle()
-  expect(await inputs()).toContain('b-five_hour_limit_percent')
+  expect(await inputs()).toContain('b-weekly_limit_percent')
 })
 
 test('session.measure records the usage windows; the Options tab then shows the percent fields', async ($, on) => {
@@ -985,7 +1023,8 @@ test('session.measure records the usage windows; the Options tab then shows the 
   await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   await $.ui.press(press('tab-options'))
   const tree = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
-  expect(elements(tree, 'Input').map(i => i.key)).toEqual(['b-five_hour_limit_percent', 'b-weekly_limit_percent'])
+  // the file's old daily budget switch makes today the type, whose one field is the week's cap
+  expect(elements(tree, 'Input').map(i => i.key)).toEqual(['b-weekly_limit_percent'])
   expect(elements(tree, 'Button').some(b => b.key === 'b-limit_unit')).toBe(false)
 })
 
@@ -1020,7 +1059,7 @@ test('after /clear the first prompt carries the last usage windows over to the n
   await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   await $.ui.press(press('tab-options'))
   const tree = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
-  expect(elements(tree, 'Input').map(i => i.key)).toContain('b-five_hour_limit_percent')
+  expect(elements(tree, 'Input').map(i => i.key)).toContain('b-weekly_limit_percent')
 })
 
 test('where /config has no row for it (Desktop), the auto-open switch is kept in the store until /config changes it', async ($, on) => {
@@ -1071,11 +1110,12 @@ test('with only `py` installed and a Store stub as python3, the helpers run unde
   await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   await $.ui.press(press('tab-options'))
   await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
-  await $.ui.input({ plugin: 'tokentab', key: 'b-daily_limit_usd', text: '30' })
+  // the budget's switch is drawn before budget.json is read, its rows only after
+  await $.ui.press(press('b-budgets_on'))
   await clock.settle()
   expect(ui.probes.length).toBe(3)
   expect(new Set(ui.launchers)).toEqual(new Set(['py -3']))
-  expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'daily_limit_usd', '30'])
+  expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'budgets_on', 'on'])
 })
 
 test('a python3 that is Python 2 is passed over for `python`', async ($, on) => {
@@ -1442,8 +1482,8 @@ test('the headline picks the hero: today shows what is left of the day, the rest
   expect(t.find(x => x.text === '$3.61')?.props.size).toBe('title')
   for (const line of ['at API rates', '5-hour 92% left · resets 16:00', "today's budget 10% left · 5% of the week, 4% used so far"])
     expect(t.some(x => x.text === line)).toBe(true)
-  // with no window limit set, nothing is checked, so it names no mode
-  expect(t.some(x => x.text === '532,533 tokens · no window limit set or no reading yet')).toBe(true)
+  // with no limit set, nothing is checked, so it names no mode
+  expect(t.some(x => x.text === '532,533 tokens · no limit set or no reading yet')).toBe(true)
 
   // in USD, today leads with today's spend over every session, the session's below it
   report.value = { ...REPORT, session: { ...REPORT.session!, headline: 'today', limit: '$5.94 of $40.00', frac: 0.1485 } }
