@@ -358,10 +358,11 @@ def day_budget_case():
             errs.append("day_budget: carried without carry_over")
     finally:
         kt.BASELINE_PATH = saved
-    # budget.py: the headline takes three words and refuses the rest; other strings are edited in the file
+    # budget.py: the headline takes its five words and refuses the rest; other strings are edited in the file
     import budget
-    if [budget.parse("headline", "five_hour", w) for w in ("today", "Week", " five_hour ")] != ["today", "week", "five_hour"]:
-        errs.append("budget.parse: headline should take today, five_hour and week")
+    words = [budget.parse("headline", "five_hour", w) for w in ("today", "Week", " five_hour ", "AUTO", "session")]
+    if words != ["today", "week", "five_hour", "auto", "session"]:
+        errs.append(f"budget.parse: headline should take auto, session, today, five_hour and week: {words}")
     for key, old, raw in (("headline", "today", "month"), ("headline", "today", "40"), ("other", "text", "1")):
         try:
             budget.parse(key, old, raw)
@@ -401,8 +402,8 @@ def day_budget_pane_case(store, prices):
         day = kt.day_budget({"daily_budget": ON}, windows)
         # Opt-in: without daily_budget.enabled the pane has no today window and today cannot lead
         s = kt.pane_report(store, "fx", prices, {"headline": "today"}, windows=windows)["session"]
-        if "today" in [w["scope"] for w in s["windows"]] or s["headline"] is not None:
-            errs.append(f"pane today window: off by default, got {s['windows']} {s['headline']}")
+        if "today" in [w["scope"] for w in s["windows"]] or s["headline"] != "seven_day":
+            errs.append(f"pane today window: off by default, auto leads with the week: {s['windows']} {s['headline']}")
         for on in (True, False):   # not gated by budgets_on
             s = kt.pane_report(store, "fx", prices, {"budgets_on": on, "daily_budget": ON}, windows=windows)["session"]
             today = [w for w in s["windows"] if w["scope"] == "today"]
@@ -411,38 +412,46 @@ def day_budget_pane_case(store, prices):
             elif (today[0]["limit"], today[0]["resets"], today[0]["used"]) != (None, None, 3) \
                     or today[0]["frac"] != day["frac"] or today[0]["allowed"] != day["allowed"]:
                 errs.append(f"pane today window: {today[0]}")
-            if s["headline"] != "five_hour" or "daily_warn_at" in s or "warn_at" in s:
+            # auto follows the budget that is on
+            if s["headline"] != "today" or "daily_warn_at" in s or "warn_at" in s:
                 errs.append(f"pane headline: {s['headline']}, warn levels {s.get('warn_at')} {s.get('daily_warn_at')}")
-        s = kt.pane_report(store, "fx", prices, {"headline": "today", "daily_budget": ON}, windows=windows)["session"]
-        if s["headline"] != "today":
-            errs.append(f"pane headline today: {s['headline']}")
-        s = kt.pane_report(store, "fx", prices, {"daily_budget": {"enabled": False}, "headline": "today"}, windows=windows)["session"]
-        if "today" in [w["scope"] for w in s["windows"]] or s["headline"] is not None:
-            errs.append(f"pane today window: disabled should have none and no headline: {s['windows']} {s['headline']}")
-        s = kt.pane_report(store, "fx", prices, {"headline": "week"}, windows={"five_hour": windows["five_hour"]})["session"]
-        if s["headline"] is not None:
-            errs.append(f"pane headline without its reading should be None: {s['headline']}")
-        # The status line leads with the headline; the button says it in short
-        pct = f"{day['frac'] * 100:.0f}%"
+        # auto, by what is on and the account: the only window limit, else the week; today in USD, or the only USD limit
+        for budget, wins, want in (({"headline": "five_hour", "daily_budget": ON}, windows, "five_hour"),
+                                   ({"daily_budget": {"enabled": False}, "headline": "today"}, windows, "seven_day"),
+                                   ({"headline": "week"}, {"five_hour": windows["five_hour"]}, "five_hour"),
+                                   ({"headline": "session"}, windows, "session"),
+                                   ({"budgets_on": True, "five_hour_limit_percent": 80, "weekly_limit_percent": None}, windows, "five_hour"),
+                                   ({"budgets_on": True, "five_hour_limit_percent": 80, "weekly_limit_percent": 90}, windows, "seven_day"),
+                                   ({"headline": "week"}, {}, "today"),
+                                   ({"budgets_on": True, "session_limit_usd": 5, "daily_limit_usd": None}, {}, "session"),
+                                   ({"budgets_on": False, "session_limit_usd": 5, "daily_limit_usd": None}, {}, "today")):
+            got = kt.pane_report(store, "fx", prices, budget, windows=wins)["session"]["headline"]
+            if got != want:
+                errs.append(f"headline for {budget} on {list(wins)}: {got}, want {want}")
+        # The status line leads with the headline, counted as what is left, and shows at most two figures
+        left = f"{(1 - day['frac']) * 100:.0f}%"
         # With the budget on and not leading, the button names it after the headline
-        cases = (({"daily_budget": ON}, "5 hours 13% · week 5% · today " + pct, f"13% 5-hour · {pct} today"),
-                 ({"headline": "five_hour", "daily_budget": ON}, "5 hours 13% · week 5% · today " + pct, f"13% 5-hour · {pct} today"),
-                 ({"headline": "week", "daily_budget": ON}, "week 5% · 5 hours 13% · today " + pct, f"5% week · {pct} today"),
-                 ({"headline": "today", "daily_budget": ON}, "today " + pct, f"{pct} of today's budget"),
-                 ({"headline": "today", "daily_budget": {"enabled": False}}, "5 hours 13% · week 5% · session", "13% 5-hour"),
-                 ({"headline": "today"}, "5 hours 13% · week 5% · session", "13% 5-hour"))
-        for budget, line_start, button in cases:
+        cases = (({"daily_budget": ON}, f"today's budget {left} left · week 95% left", f"today's budget {left} left"),
+                 ({"headline": "five_hour", "daily_budget": ON}, f"5 hours 87% left · today's budget {left} left",
+                  f"5-hour 87% left · today {left} left"),
+                 ({"headline": "week", "daily_budget": ON}, f"week 95% left · today's budget {left} left", f"week 95% left · today {left} left"),
+                 ({"headline": "today", "daily_budget": {"enabled": False}}, "week 95% left · 5 hours 87% left", "week 95% left"),
+                 ({"headline": "today"}, "week 95% left · 5 hours 87% left", "week 95% left"),
+                 # With no daily budget, the window limit nearest its end is the budget
+                 ({"budgets_on": True, "five_hour_limit_percent": 80, "weekly_limit_percent": None},
+                  "5 hours 87% left · 5-hour limit 84% left", "5-hour 87% left"))
+        for budget, want_line, button in cases:
             line, got = kt.status_parts(store, "fx", prices, budget)
-            if not line.startswith(line_start) or got != button or kt.status_line(store, "fx", prices, budget) != line:
-                errs.append(f"status for {budget}: {line!r} {got!r}, want {line_start!r} {button!r}")
-        line = kt.status_line(store, "fx", prices, {"headline": "today", "daily_budget": ON})
-        if f"today {pct} of budget · 5 hours" not in line:
-            errs.append(f"status line today item: {line!r}")
+            if line != want_line or got != button or kt.status_line(store, "fx", prices, budget) != line:
+                errs.append(f"status for {budget}: {line!r} {got!r}, want {want_line!r} {button!r}")
+        line, button = kt.status_parts(store, "fx", prices, {"headline": "session"})
+        if not (line.startswith("session $") and line.endswith(" at API rates · week 95% left")) or not button.startswith("session $"):
+            errs.append(f"status with the session leading a plan: {line!r} {button!r}")
         # Carry-over names the budget's size in the status line and passes its parts to the pane
         CARRY = {"enabled": True, "carry_over": True}
         carried = kt.day_budget({"daily_budget": CARRY}, windows)
         line = kt.status_line(store, "fx", prices, {"headline": "today", "daily_budget": CARRY})
-        want_item = f"today {carried['frac'] * 100:.0f}% of budget ({carried['allowed']:.0f}% of week"
+        want_item = f"today's budget {(1 - carried['frac']) * 100:.0f}% left ({carried['allowed']:.0f}% of week"
         if not line.startswith(want_item):
             errs.append(f"status line with carry-over: {line!r}, want {want_item!r}")
         # ...and what earlier days carried or overspent, with fixed figures since the real ones move with the clock
@@ -456,7 +465,7 @@ def day_budget_pane_case(store, prices):
                 kt.day_budget = lambda *_args, **_kw: {"used": 0.0, "allowed": allowed, "frac": 0.0, "base": 0.0,
                                                        "cap": 100.0, "daily": daily, "carried": carried_in}
                 line = kt.status_line(store, "fx", prices, {"headline": "today", "daily_budget": CARRY})
-                if not line.startswith(f"today 0% of budget {want_size}"):
+                if not line.startswith(f"today's budget 100% left {want_size}"):
                     errs.append(f"status line carried {carried_in}: {line!r}, want {want_size!r}")
         finally:
             kt.day_budget = real_day_budget
@@ -468,9 +477,13 @@ def day_budget_pane_case(store, prices):
                              if w["scope"] == "today"):
             errs.append("pane today window: carried without carry_over")
         os.remove(os.path.join(kt.WINDOWS_DIR, "fx.json"))
+        # In USD today's spend leads by default, then the session; a limit that is on shows what is left of it
         line, button = kt.status_parts(store, "fx", prices, {"headline": "today", "daily_budget": ON})
-        if button is not None or "of week" in line or line.startswith("5 hours"):
+        if not line.startswith("today $") or " · session $" not in line or "of week" in line or button != line.split(" · ")[0]:
             errs.append(f"status without a plan reading: {line!r} {button!r}")
+        line, button = kt.status_parts(store, "fx", prices, {"budgets_on": True, "session_limit_usd": 1, "daily_limit_usd": None})
+        if not (line.startswith("session ") and "% left of $1.00 · today $" in line) or button != line.split(" · ")[0]:
+            errs.append(f"status with a USD session limit: {line!r} {button!r}")
     finally:
         kt.BASELINE_PATH, kt.WINDOWS_DIR = saved
     return errs
@@ -542,7 +555,7 @@ def pane_check(store, prices):
     # A plan with usage windows counts the 5-hour window in percent
     windows = {"five_hour": {"kind": "five_hour", "percentUsed": 40, "resetsAt": "2999-01-01T00:00:00Z"},
                "seven_day": {"kind": "seven_day", "percentUsed": 12.5, "resetsAt": "2000-01-01T00:00:00Z"}}
-    plan = {**budget, "five_hour_limit_percent": 80, "weekly_limit_percent": 50}
+    plan = {**budget, "five_hour_limit_percent": 80, "weekly_limit_percent": 50, "headline": "five_hour"}
     s = kt.pane_report(store, "fx", prices, plan, windows=windows)["session"]
     if s["unit"] != "percent" or abs(s["frac"] - 0.5) > 1e-9 or s["limit"] != "5-hour window 40% used, limit 80%":
         errs.append(f"pane report: the 5-hour window against its limit is wrong: {s}")
@@ -578,6 +591,18 @@ def pane_check(store, prices):
         errs.append("pane report: the sessions' shares do not sum to 100%")
     if kt.pane_report(store, "fx", prices, {}, windows={})["session"]["frac"] is not None:
         errs.append("pane report: no limit should give no fraction")
+    # In USD the limit the hero does not lead with is still reported, so the pane can judge it
+    for usd_budget, want_lead, want_other in (
+            (budget, "session", None),
+            ({**budget, "daily_limit_usd": 1e6}, "today", "session"),
+            ({**budget, "daily_limit_usd": 1e6, "headline": "session"}, "session", "today"),
+            ({**budget, "headline": "today"}, "today", "session"),
+            ({**budget, "daily_limit_usd": 1e6, "budgets_on": False}, "today", None)):
+        s = kt.pane_report(store, "fx", prices, usd_budget, windows={})["session"]
+        other = s["other_limit"]
+        if s["headline"] != want_lead or (other and other["scope"]) != want_other \
+                or (other is not None and (not other["limit"].startswith("$") or other["frac"] is None)):
+            errs.append(f"pane report other_limit for {usd_budget}: {s['headline']} {other}")
     if kt.pane_report(store, "fx", prices, {**budget, "budgets_on": False}, windows={})["session"]["frac"] is not None:
         errs.append("pane report: limits switched off should give no fraction")
     now = kt.datetime.now().timestamp()
@@ -865,6 +890,26 @@ def page_case(store, prices):
             errs.append(f"page: over-limit banner wrong with windows {win}")
     if '"plan usage"' in p["hero"] or "plan usage" not in p["hero"] or "at API rates" not in p["hero"]:
         errs.append("page: under percent the hero is not plan usage with dollars at API rates")
+    # Today's budget never leads the tile, even as the only window with a fraction; it gets its own line
+    R = kt.report(store, "fx", prices, {"budgets_on": False}, True)
+    R["pane"] = P = kt.pane_report(store, "fx", prices, {"budgets_on": False}, windows=windows)
+    P["session"]["windows"].append({"scope": "today", "used": 3, "allowed": 10, "limit": None, "frac": 0.3, "resets": None})
+    try:
+        hero = sankey.parts(R)["hero"]
+        if "<b>40%</b>" not in hero or "today&#x27;s budget 30% used · 10% of the week" not in hero:
+            errs.append(f"page: today's budget beside the windows: {hero[:400]}")
+    except KeyError as e:
+        errs.append(f"page: today's budget breaks the first tile: KeyError {e}")
+    # In USD with today leading, the tile leads with today's spend, and the session over its own limit
+    # is named on the badge and in the banner, not passed off as today's
+    today_budget = {**budget, "daily_limit_usd": 1e6, "five_hour_limit_percent": None, "weekly_limit_percent": None}
+    R = kt.report(store, "fx", prices, today_budget, True)
+    R["pane"] = P = kt.pane_report(store, "fx", prices, today_budget, windows={})
+    hero = sankey.parts(R)["hero"]
+    for want in ("today's spend", f"<b>{sankey.big(P['today'])}</b>", "of $1,000,000.00", "session · Over",
+                 "session $", "Over the limit of this session"):
+        if html.escape(want, quote=False) not in hero and want not in hero:
+            errs.append(f"page: USD today lead lacks {want!r}: {hero[:400]}")
     tags = {n: sankey.source_tag(n) for n in ("Bash", "mcp__claude_ai_Figma__use_figma", "mcp__Claude_Browser__navigate",
                                                 "mcp__40a9e9ea-a265-43ac-9423-5f01011bcd27__get_screenshot")}
     if tags != {"Bash": "built-in", "mcp__claude_ai_Figma__use_figma": "claude ai Figma",

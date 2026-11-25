@@ -15,8 +15,8 @@
     "enabled": false,
     "carry_over": false
   },
-  "_headline_comment": "Which plan number leads in the pane, the status line and the reopen button: today (the daily budget), five_hour or week. With the daily budget on and another number leading, the status line and the reopen button name the budget after it. Falls back to the first one with a reading.",
-  "headline": "five_hour",
+  "_headline_comment": "Which figure leads in the pane, the status line and the reopen button, counted as what is left: auto, session, today, five_hour or week. auto (the default) follows the budget that is on (the daily budget, else the limit you set), else the week on Pro and Max and today in USD. today is the daily budget on Pro and Max and today's spend in USD; five_hour and week are Pro and Max only, and a pick this account has no reading for falls back to auto. The status line shows at most two figures: the headline, then the budget that is on, else the next figure.",
+  "headline": "auto",
   "_context_comment": "Context size of the last call. Every call re-reads it all, so this is what each call costs. Warns once per threshold; resets after a compact.",
   "context_warn_tokens": [
     200000,

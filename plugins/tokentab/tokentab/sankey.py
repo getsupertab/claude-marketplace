@@ -714,12 +714,27 @@ def lead(P):
     """(scope row or None, its fraction, the worst fraction over every window): what the
     first tile leads with, as the pane's hero: under percent the first plan window."""
     s = P["session"]
-    windows = s["windows"] if s["unit"] == "percent" else []
+    # Today's budget never leads here and never blocks, so it has a line of its own and no say in the badge
+    windows = [w for w in s["windows"] if w["scope"] != "today"] if s["unit"] == "percent" else []
     first = next((w for w in windows if w["frac"] is not None), windows[0] if windows else None)
     frac = first["frac"] if first else s["frac"]
     fracs = [w["frac"] for w in windows if w["frac"] is not None]
-    worst = max(fracs, default=None) if first else frac
+    # In USD the limit the hero does not lead with counts too
+    other = (s.get("other_limit") or {}).get("frac") if s["unit"] == "usd" else None
+    worst = max(fracs, default=None) if first else max((share for share in (frac, other) if share is not None), default=None)
     return first, frac, worst
+
+
+def usd_lead(s):
+    """In USD, the scope whose dollars lead the first tile: "today" when the headline picks it, else "session"."""
+    return "today" if s["unit"] == "usd" and s.get("headline") == "today" else "session"
+
+
+def usd_worst_scope(s):
+    """In USD, the scope nearest its limit: the hero's, or the other limit when that one is nearer."""
+    other = s.get("other_limit") if s["unit"] == "usd" else None
+    nearer = other and (s["frac"] is None or other["frac"] > s["frac"])
+    return other["scope"] if nearer else usd_lead(s)
 
 
 def spend_tile(P, R):
@@ -730,9 +745,11 @@ def spend_tile(P, R):
     first, frac, worst = lead(P)
     api = " at API rates" if s["plan"] else ""
     badge = ""
+    # In USD the badge names the other limit when that one is nearer
+    named = f"{usd_worst_scope(s)} · " if not first and usd_worst_scope(s) != usd_lead(s) else ""
     if worst is not None:
         t = tone(worst)
-        badge = (f'<span class="chip {t}">' + ("Over · " if t == "error" else "Warning · " if t == "warning" else "")
+        badge = (f'<span class="chip {t}">' + named + ("Over · " if t == "error" else "Warning · " if t == "warning" else "")
                  + pct(worst) + ("" if t != "success" else " used") + "</span>")
     resets = lambda w: f' · resets {w["resets"]}' if w.get("resets") else ""
     lines = []
@@ -740,25 +757,33 @@ def spend_tile(P, R):
         figure = percent(first["used"])
         limit = lambda w, sep: f'{sep}limit {percent(w["limit"])}' if w["limit"] is not None else ""
         lines.append(f'of the {kt.WINDOW_NAMES[first["scope"]]}{limit(first, " · ")}{resets(first)}')
-        lines += [f'{WINDOW_SHORT[w["scope"]]} {percent(w["used"])}{limit(w, ", ")}{resets(w)}'
+        lines += [f"today's budget {pct(w['frac'] or 0)} used · {percent(w.get('allowed') or 0)} of the week"
+                  if w["scope"] == "today" else f'{WINDOW_SHORT[w["scope"]]} {percent(w["used"])}{limit(w, ", ")}{resets(w)}'
                   for w in s["windows"] if w is not first]
         lines.append(f'{big(s["cost"])}{api}')
     else:
-        figure = big(s["cost"])
+        # The headline today leads with today's spend over every session, the session's below it
+        today_leads = usd_lead(s) == "today"
+        figure = big(P["today"] if today_leads else s["cost"])
         if s["limit"]:
             lines.append(s["limit"] + api)
         elif api:
             lines.append(api.strip())
+        if today_leads and (s.get("other_limit") or {}).get("scope") != "session":
+            lines.append(f'this session {big(s["cost"])}')
         bg = R.get("budget") or {}
         lines += [f'{r["name"]} {r["parts"][0]}' for r in bg.get("lines") or []
-                  if r["scope"] != "session" and bg.get("unit") == "usd"]
-    lines.append(f'{"hard stop" if s["hard_stop"] else "warn only"} · {kt.WARN_TEXT}' if frac is not None
+                  if r["scope"] != usd_lead(s) and bg.get("unit") == "usd"]
+    lines.append(f'{"hard stop" if s["hard_stop"] else "warn only"} · {kt.WARN_TEXT}'
+                 if frac is not None or worst is not None
                  else "limits off" if not s["limits_on"]
-                 else "no window limit set or no reading yet" if s["unit"] == "percent" else "no session limit set")
+                 else "no window limit set or no reading yet" if s["unit"] == "percent"
+                 else f"no {'daily' if usd_lead(s) == 'today' else 'session'} limit set")
     meter = (f'<div class="sbar hbar"><i style="width:{min(frac, 1) * 100:.2f}%;background:var(--s-{tone(frac)})"></i></div>'
              if frac is not None else "")
     small = "".join(f'<div class="m">{esc(x)}</div>' for x in lines)
-    return (f'<div class="kpi lead"><div class="kl"><span>{"plan usage" if first else "session spend"}</span>{badge}</div>'
+    title = "plan usage" if first else "today's spend" if usd_lead(s) == "today" else "session spend"
+    return (f'<div class="kpi lead"><div class="kl"><span>{title}</span>{badge}</div>'
             f'<b>{esc(figure)}</b>{meter}{small}</div>')
 
 
@@ -789,8 +814,8 @@ def kpis(P, R):
     alerts = []
     first, frac, worst = lead(P)
     if worst is not None and worst >= 1:
-        what = (f'the {kt.WINDOW_NAMES[max((w for w in s["windows"] if w["frac"] is not None), key=lambda w: w["frac"])["scope"]]}'
-                if first else "this session")
+        what = (f'the {kt.WINDOW_NAMES[max((w for w in s["windows"] if w["frac"] is not None and w["scope"] != "today"), key=lambda w: w["frac"])["scope"]]}'
+                if first else "today's spend" if usd_worst_scope(s) == "today" else "this session")
         alerts.append(("error", f"Over the limit of {what} ({pct(worst)}). "
                        + ("Hard stop is on: TokenTab blocks tool calls." if s["hard_stop"] else "TokenTab only warns: hard stop is off.")))
     if ctx and ctx["cold"]:

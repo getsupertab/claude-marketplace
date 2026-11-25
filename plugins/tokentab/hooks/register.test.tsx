@@ -434,7 +434,7 @@ test('an interactive session opens the pane and draws the Spend tab', async ($, 
   // the hero: the figure at the title size, the badge in the error tone, the line under the bar
   expect(find('SESSION SPEND')?.props).toEqual({ size: 'footnote', dimColor: true })
   expect(find('$3.61')?.props).toEqual({ size: 'title', weight: 'bold', tabular: true })
-  expect(find('Over · 181%')?.props).toEqual({ size: 'footnote', weight: 'semibold', color: 'error' })
+  expect(find('Over')?.props).toEqual({ size: 'footnote', weight: 'semibold', color: 'error' })
   expect(find('$3.61 of $2.00 · 532,533 tokens · warn only')).toBeDefined()
   // the breakdown: a row per rate with its dot in the series colour, the total, the note;
   // then the tools' legend
@@ -497,9 +497,10 @@ test('Spend on a percent budget leads with the window; dollars below, at API rat
   const tree = await $.ui.render({ surface: 'desktop', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   const t = texts(tree)
   expect(t.some(x => x.text === 'PLAN USAGE')).toBe(true)
-  expect(t.find(x => x.text === '8%')?.props.size).toBe('title')
-  for (const line of ['of 5-hour window · limit 80% · resets 16:00', 'week 21%, limit 90% · resets Thu 09:00',
-    '$3.61 at API rates · 532,533 tokens · hard stop', '23% used']) expect(t.some(x => x.text === line)).toBe(true)
+  // every figure counts what is left, as the warnings do
+  expect(t.find(x => x.text === '92%')?.props.size).toBe('title')
+  for (const line of ['left of 5-hour window · limit at 20% left · resets 16:00', 'week 79% left, limit at 10% left · resets Thu 09:00',
+    '$3.61 at API rates · 532,533 tokens · hard stop', '77% of limit left']) expect(t.some(x => x.text === line)).toBe(true)
   expect(elements(tree, 'Svg').filter(s => s.alt !== 'separator' && !String(s.alt).startsWith('chevron'))[0]!.alt).toBe('10% of the 5-hour window limit')
 
   // a USD budget on a subscription: dollars lead, labelled as API rates
@@ -522,7 +523,7 @@ test('Spend without a limit has no bar and no badge; before the first call it sa
   await $.ui.press(press('details-toggle', 'desktop'))
   const tree = await $.ui.render({ surface: 'desktop', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   expect(elements(tree, 'Svg').filter(s => s.alt !== 'separator' && !String(s.alt).startsWith('chevron')).map(s => s.alt)[0]).toMatch(/^this session by rate/)
-  expect(texts(tree).some(x => x.text.startsWith('Over') || x.text.endsWith('used'))).toBe(false)
+  expect(texts(tree).some(x => x.text.startsWith('Over') || x.text.endsWith('used') || x.text.endsWith('left'))).toBe(false)
   expect(texts(tree).some(x => x.text === '532,533 tokens · no session limit set')).toBe(true)
 
   report.value = { ...REPORT, session: { ...REPORT.session!, limits_on: false, limit: null, frac: null } }
@@ -853,7 +854,12 @@ test('the Options tab: auto-open through the config menu, the limits through the
   await $.ui.press(press('b-spend_less'))
   expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'spend_less', 'on'])
   // the daily budget is a share of the weekly window, which a USD account has none of
-  expect(elements(tree, 'Button').some(button => button.key === 'b-daily_budget.enabled' || button.key === 'b-headline')).toBe(false)
+  expect(elements(tree, 'Button').some(button => button.key === 'b-daily_budget.enabled')).toBe(false)
+  // the headline is under Options for every account; the file's five_hour has no reading in USD, so it shows as auto
+  expect(t.some(x => x.text === 'Headline')).toBe(true)
+  expect(elements(tree, 'Button').find(button => button.key === 'b-headline')?.label).toBe('auto')
+  await $.ui.press(press('b-headline'))
+  expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'headline', 'today'])
 
   // mobile has no Input: the values are shown
   const mobile = await $.ui.render({ surface: 'mobile', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
@@ -874,19 +880,20 @@ test('the Options tab shows the daily budget once the plan reports a usage windo
   const tree = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   const t = texts(tree)
   expect(t.filter(x => /^[A-Z][A-Z ]+$/.test(x.text) && x.props.dimColor).map(x => x.text)).toEqual(['OPTIONS', 'LIMITS', 'DAILY BUDGET', 'HANDOFF NOTE'])
-  // its switch, and the headline as a button that sets the next choice
-  expect(elements(tree, 'Button').find(b => b.key === 'b-daily_budget.enabled')?.label).toBe('on')
-  expect(elements(tree, 'Button').find(b => b.key === 'b-headline')?.label).toBe('five_hour')
+  // its switch, and the headline as a button that sets the next of the plan's choices;
+  // the file's five_hour has no reading here (only the week reported), so it shows as auto
+  expect(elements(tree, 'Button').find(button => button.key === 'b-daily_budget.enabled')?.label).toBe('on')
+  expect(elements(tree, 'Button').find(button => button.key === 'b-headline')?.label).toBe('auto')
   await $.ui.press(press('b-headline'))
-  expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'headline', 'week'])
+  expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'headline', 'today'])
   // carry-over is a beta switch beside it, off where the file has no such key yet, with a line on what it does
   expect(t.some(x => x.text === 'Carry over (beta)')).toBe(true)
   expect(t.some(x => x.text === 'Unused budget rolls into the next day of this week; overspend shrinks it.' && x.props.dimColor)).toBe(true)
-  expect(elements(tree, 'Button').find(b => b.key === 'b-daily_budget.carry_over')?.label).toBe('off')
+  expect(elements(tree, 'Button').find(button => button.key === 'b-daily_budget.carry_over')?.label).toBe('off')
   await $.ui.press(press('b-daily_budget.carry_over'))
   expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'daily_budget.carry_over', 'on'])
   const mobile = await $.ui.render({ surface: 'mobile', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
-  expect(texts(mobile).some(x => x.text === 'five_hour')).toBe(true)
+  expect(texts(mobile).some(x => x.text === 'auto')).toBe(true)
 })
 
 test('the limit unit follows the account: percent where the plan reports a usage window; one field per scope', () => {
@@ -1332,7 +1339,7 @@ test('the reopen button names the headline once the status run has one', () => {
   expect(reopenLabel("28% of today's budget")).toBe("▸ TokenTab · 28% of today's budget")
 })
 
-test('the headline picks the hero: today shows what was used of the day, the rest stay one line', async ($, on) => {
+test('the headline picks the hero: today shows what is left of the day, the rest stay one line', async ($, on) => {
   mock.env(on, { HOME: '/home/t' })
   const clock = mock.clock(on, { now: T0 })
   const windows = [{ scope: 'five_hour', used: 8, limit: null, frac: null, resets: '16:00' },
@@ -1347,13 +1354,13 @@ test('the headline picks the hero: today shows what was used of the day, the res
   await draw()
   let tree = await draw()
   let t = texts(tree)
-  // the hero is the share of today's budget, the one percent the bar, button and status line show too
-  expect(t.find(x => x.text === '90%')?.props.size).toBe('title')
-  expect(t.some(x => x.text === "of today's budget used")).toBe(true)
+  // the hero is what is left of today's budget, counted the way the warnings count
+  expect(t.find(x => x.text === '10%')?.props.size).toBe('title')
+  expect(t.some(x => x.text === "of today's budget left")).toBe(true)
   expect(t.some(x => x.text === "today's budget is 5% of the week, 4% used so far")).toBe(true)
-  expect(t.some(x => x.text === '5-hour 8% · resets 16:00')).toBe(true)
-  expect(t.some(x => x.text === 'week 21% · resets Thu 09:00')).toBe(true)
-  expect(elements(tree, 'Svg').filter(s => s.alt !== 'separator')[0]!.alt).toBe("90% of today's budget")
+  expect(t.some(x => x.text === '5-hour 92% left · resets 16:00')).toBe(true)
+  expect(t.some(x => x.text === 'week 79% left · resets Thu 09:00')).toBe(true)
+  expect(elements(tree, 'Svg').filter(s => s.alt !== 'separator')[0]!.alt).toBe("90% of today's budget used")
   // the badge gives the state only, not the hero's number again
   expect(t.some(x => x.text === 'Warning')).toBe(true)
   expect(t.some(x => /^(Warning|Over) · |% used$/.test(x.text))).toBe(false)
@@ -1364,7 +1371,7 @@ test('the headline picks the hero: today shows what was used of the day, the res
   await clock.advance(1000)
   tree = await draw()
   t = texts(tree)
-  expect(t.find(x => x.text === '6%')?.props.size).toBe('title')
+  expect(t.find(x => x.text === '94%')?.props.size).toBe('title')
   expect(t.some(x => /^(Warning|Over)\b|% used$/.test(x.text))).toBe(false)
 
   // a 5-hour limit beside today's hero: no second percent, and the badge names the window past its warn level
@@ -1394,10 +1401,58 @@ test('the headline picks the hero: today shows what was used of the day, the res
   await clock.advance(1000)
   tree = await draw()
   t = texts(tree)
-  expect(t.find(x => x.text === '8%')?.props.size).toBe('title')
-  expect(t.some(x => x.text === "today's budget 90% used · 5% of the week, 4% used so far")).toBe(true)
+  expect(t.find(x => x.text === '92%')?.props.size).toBe('title')
+  expect(t.some(x => x.text === "today's budget 10% left · 5% of the week, 4% used so far")).toBe(true)
   // the badge then judges only the windows it sits beside, not today's budget
-  expect(t.some(x => x.text === 'Warning · 90%')).toBe(false)
+  expect(t.some(x => x.text.startsWith('Warning'))).toBe(false)
+
+  // session leads with this session's dollars at API rates; every window stays a dim line under it
+  report.value = { ...REPORT, session: { ...session, headline: 'session' } }
+  await $.telemetry.log(request({}))
+  await clock.advance(1000)
+  t = texts(await draw())
+  expect(t.some(x => x.text === 'SESSION SPEND')).toBe(true)
+  expect(t.find(x => x.text === '$3.61')?.props.size).toBe('title')
+  for (const line of ['at API rates', '5-hour 92% left · resets 16:00', "today's budget 10% left · 5% of the week, 4% used so far"])
+    expect(t.some(x => x.text === line)).toBe(true)
+  // with no window limit set, nothing is checked, so it names no mode
+  expect(t.some(x => x.text === '532,533 tokens · no window limit set or no reading yet')).toBe(true)
+
+  // in USD, today leads with today's spend over every session, the session's below it
+  report.value = { ...REPORT, session: { ...REPORT.session!, headline: 'today', limit: '$5.94 of $40.00', frac: 0.1485 } }
+  await $.telemetry.log(request({}))
+  await clock.advance(1000)
+  tree = await draw()
+  t = texts(tree)
+  expect(t.some(x => x.text === "TODAY'S SPEND")).toBe(true)
+  expect(t.find(x => x.text === '$5.94' && x.props.size === 'title')).toBeDefined()
+  expect(t.some(x => x.text === 'today, every session')).toBe(true)
+  expect(t.some(x => x.text === '$5.94 of $40.00 · this session $3.61 · 532,533 tokens · warn only')).toBe(true)
+  expect(elements(tree, 'Svg').filter(s => s.alt !== 'separator' && !String(s.alt).startsWith('chevron'))[0]!.alt).toBe('15% of the daily limit')
+
+  // a session limit beside today's lead stays in view: under the hero, and on the badge once it is the nearer one
+  const sessionLimit = { scope: 'session', limit: '$4.80 of $5.00', frac: 0.96 } as const
+  report.value = { ...REPORT, session: { ...REPORT.session!, headline: 'today', limit: '$5.94 of $40.00', frac: 0.1485, other_limit: sessionLimit } }
+  await $.telemetry.log(request({}))
+  await clock.advance(1000)
+  t = texts(await draw())
+  expect(t.some(x => x.text === 'session · Warning · 4% of limit left')).toBe(true)
+  expect(t.some(x => x.text === '$5.94 of $40.00 · this session $4.80 of $5.00 · 532,533 tokens · warn only')).toBe(true)
+  // with no daily limit set, the session limit alone still drives the badge and the mode
+  report.value = { ...REPORT, session: { ...REPORT.session!, headline: 'today', limit: null, frac: null, other_limit: sessionLimit } }
+  await $.telemetry.log(request({}))
+  await clock.advance(1000)
+  t = texts(await draw())
+  expect(t.some(x => x.text === 'session · Warning · 4% of limit left')).toBe(true)
+  expect(t.some(x => x.text === 'this session $4.80 of $5.00 · 532,533 tokens · warn only')).toBe(true)
+  // the session leading with a daily limit below it names that one
+  report.value = { ...REPORT, session: { ...REPORT.session!, headline: 'session', limit: null, frac: null,
+    other_limit: { scope: 'today', limit: '$5.94 of $40.00', frac: 0.1485 } } }
+  await $.telemetry.log(request({}))
+  await clock.advance(1000)
+  t = texts(await draw())
+  expect(t.some(x => x.text === 'today · 85% of limit left')).toBe(true)
+  expect(t.some(x => x.text === 'today $5.94 of $40.00 · 532,533 tokens · warn only')).toBe(true)
 
   // carry-over (beta) shows the day's share and what earlier days left or overspent
   const carry = async (allowed: number, daily: number, carried: number, headline: 'today' | null) => {
@@ -1410,7 +1465,7 @@ test('the headline picks the hero: today shows what was used of the day, the res
   t = await carry(28.6, 14.3, 14.3, 'today')
   expect(t.some(x => x.text === "today's budget is 28.6% of the week (14.3% a day + 14.3% carried over), 4% used so far")).toBe(true)
   t = await carry(8.6, 14.3, -5.7, null)
-  expect(t.some(x => x.text === "today's budget 90% used · 8.6% of the week (14.3% a day − 5.7% overspent), 4% used so far")).toBe(true)
+  expect(t.some(x => x.text === "today's budget 10% left · 8.6% of the week (14.3% a day − 5.7% overspent), 4% used so far")).toBe(true)
   // nothing carried, or float noise around zero, names no carry
   t = await carry(14.3, 14.3, -0.01, 'today')
   expect(t.some(x => x.text === "today's budget is 14.3% of the week, 4% used so far")).toBe(true)

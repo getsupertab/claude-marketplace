@@ -1127,11 +1127,24 @@ WARN_LEFT = (10, 5, 2)
 WARN_AT = 100 - WARN_LEFT[0]
 WARN_TEXT = "warns at " + ", ".join(f"{left}%" for left in WARN_LEFT) + " left"
 
-def plan_lead(budget, windows, day):
-    """The plan number that leads, per budget.json's headline: "today", "five_hour" or "seven_day";
-    None when the chosen one has no reading, so the caller's own order stands."""
-    pick = {"today": "today", "five_hour": "five_hour", "week": "seven_day"}.get(budget.get("headline", "five_hour"))
-    return pick if (pick == "today" and day) or (pick != "today" and pick in windows) else None
+# budget.json's headline words and the scope each leads with
+HEADLINE_SCOPES = {"session": "session", "today": "today", "five_hour": "five_hour", "week": "seven_day"}
+
+def headline(budget, windows, day):
+    """The figure that leads the pane, the status line and the reopen button: "session", "today",
+    "five_hour" or "seven_day". budget.json's pick when this account has a reading for it, else auto:
+    the budget that is on, else the week on Pro and Max and today in USD."""
+    on = budget.get("budgets_on") is True
+    if limit_unit(budget, windows) == "usd":
+        readable = ("session", "today")
+        auto = "session" if on and budget.get("session_limit_usd") and not budget.get("daily_limit_usd") else "today"
+    else:
+        readable = ("session", *(("today",) if day else ()), *windows)
+        only_five = on and budget.get("five_hour_limit_percent") and not budget.get("weekly_limit_percent")
+        auto = ("today" if day else
+                "five_hour" if "seven_day" not in windows or (only_five and "five_hour" in windows) else "seven_day")
+    pick = HEADLINE_SCOPES.get(str(budget.get("headline", "auto")))
+    return pick if pick in readable else auto
 
 def limit_rows(budget, spent, windows):
     """(unit, rows): each limit set in the unit in effect, {scope, name, frac, used, limit, parts, reset}.
@@ -1392,8 +1405,14 @@ def pane_report(store, sid, prices, budget, led=None, windows=None):
     on = budget.get("budgets_on") is True
     windows = read_windows(sid) if windows is None else windows
     unit, rows = limit_rows(budget, {"session": b.cost, "today": out["today"]}, windows)
-    # The hero's bar: this session in USD; under percent the first window with a limit and a reading
-    row = next((r for r in rows if r["scope"] in ("session", "five_hour", "seven_day")), None) if on else None
+    day = day_budget(budget, windows) if unit == "percent" else None
+    lead = headline(budget, windows, day)
+    # The hero's bar: the headline's own limit; a window headline without one takes the first window with one
+    row = (next((r for r in rows if r["scope"] == lead), None)
+           or (next((r for r in rows if r["scope"] in ("five_hour", "seven_day")), None)
+               if unit == "percent" and lead != "session" else None)) if on else None
+    # In USD the limit the hero does not show; it can hard-stop too, so the pane still judges it
+    other = next((r for r in rows if r is not row), None) if on and unit == "usd" else None
     # Every window with a reading, limits on or off; limit and frac only where a limit is checked
     limited = {r["scope"]: r for r in rows} if on else {}
     plan_windows = [{"scope": scope, "used": window_used(windows[scope]),
@@ -1401,7 +1420,6 @@ def pane_report(store, sid, prices, budget, led=None, windows=None):
                      "frac": limited[scope]["frac"] if scope in limited else None,
                      "resets": reset_text(windows[scope].get("resetsAt")) if windows[scope].get("resetsAt") else None}
                     for scope, _, _ in LIMITS["percent"] if scope in windows] if unit == "percent" else []
-    day = day_budget(budget, windows) if unit == "percent" else None
     if day:   # not gated by budgets_on: the daily budget has its own switch
         plan_windows.append({"scope": "today", "used": day["used"], "allowed": day["allowed"], "limit": None,
                              "frac": day["frac"], "resets": None,
@@ -1413,8 +1431,9 @@ def pane_report(store, sid, prices, budget, led=None, windows=None):
         "limit": None if not row else row["parts"][0] if unit == "usd"
                  else f"{WINDOW_NAMES[row['scope']]} {row['parts'][0]}",
         "frac": row["frac"] if row else None,
+        "other_limit": {"scope": other["scope"], "limit": other["parts"][0], "frac": other["frac"]} if other else None,
         "hard_stop": bool(budget.get("hard_stop")),
-        "headline": plan_lead(budget, windows, day),
+        "headline": lead,
     }
     out["rates"] = [{"label": r["label"], "key": r["key"], "tokens": r["tokens"], "cost": r["cost"], "share": r["share"]}
                     for r in R["rates"]]
@@ -1434,7 +1453,7 @@ def pane_report(store, sid, prices, budget, led=None, windows=None):
 
 def status_parts(store, sid, prices, budget, led=None):
     """(line, button): the plain line for Claude Code's status bar while the pane is not placed, and
-    the headline's short text for the reopen button (None without a plan reading). The same
+    the headline's short text for the reopen button. The same
     report() as the live view, so the figures agree."""
     R = report(store, sid, prices, budget, True, led)
     if R.get("total"):
@@ -1442,31 +1461,55 @@ def status_parts(store, sid, prices, budget, led=None):
     else:
         sess, today = 0.0, source(store, led, sid)[1].day_total()[0]
     windows = read_windows(sid)
-    dollars = f"session {money(sess)} · today {money(today)}{' at API rates' if windows else ''}"
-    shorts = {"five_hour": "5-hour", "seven_day": "week"}
-    items = {scope: (f"{name} {window_used(windows[scope]):g}%", f"{window_used(windows[scope]):g}% {shorts[scope]}")
-             for scope, _, name in LIMITS["percent"] if scope in windows}
-    day = day_budget(budget, windows)
-    if day:
-        # With carry-over the budget's size moves day to day, so the line names it and what moved it
-        size = ""
-        if "carried" in day:
-            carried = day["carried"]
-            # "0%" names nothing (a week's first day); the check is on the text since 0.5 rounds to even
-            amount = f"{abs(carried):.0f}"
-            moved = "" if amount == "0" else \
-                f", {'−' if carried < 0 else '+'}{amount}% {'overspent' if carried < 0 else 'carried'}"
-            size = f" ({day['allowed']:.0f}% of week{moved})"
-        items["today"] = (f"today {day['frac']*100:.0f}% of budget{size}",
-                          f"{day['frac']*100:.0f}% of today's budget")
-    lead = plan_lead(budget, windows, day) or next(iter(items), None)
-    order = ([lead] if lead else []) + [k for k in items if k != lead]
-    button = items[lead][1] if lead else None
-    if day and lead != "today":
-        button += f" · {day['frac']*100:.0f}% today"
-    if items and limit_unit(budget, windows) == "percent":
-        return " · ".join([items[k][0] for k in order] + [dollars]), button   # the budget's unit leads
-    return dollars, button                                            # the engine draws the plugin name before the line
+    unit = limit_unit(budget, windows)
+    day = day_budget(budget, windows) if unit == "percent" else None
+    lead = headline(budget, windows, day)
+    checked = {r["scope"]: r for r in limit_rows(budget, {"session": sess, "today": today}, windows)[1]} \
+        if budget.get("budgets_on") is True else {}
+    left = lambda frac: max(0.0, 1 - frac) * 100
+
+    def item(key):
+        """(line text, button text) of one figure, counted as what is left."""
+        if key in ("five_hour", "seven_day"):
+            name, short = {"five_hour": ("5 hours", "5-hour"), "seven_day": ("week", "week")}[key]
+            rest = f"{max(0.0, 100 - window_used(windows[key])):g}% left"
+            return f"{name} {rest}", f"{short} {rest}"
+        if key.startswith("limit:"):
+            scope = key[len("limit:"):]
+            text = f"{WINDOW_NAMES[scope].split()[0]} limit {left(checked[scope]['frac']):.0f}% left"
+            return text, text
+        if key == "today" and day:
+            # With carry-over the budget's size moves day to day, so the line names it and what moved it
+            size = ""
+            if "carried" in day:
+                carried = day["carried"]
+                # "0%" names nothing (a week's first day); the check is on the text since 0.5 rounds to even
+                amount = f"{abs(carried):.0f}"
+                moved = "" if amount == "0" else \
+                    f", {'−' if carried < 0 else '+'}{amount}% {'overspent' if carried < 0 else 'carried'}"
+                size = f" ({day['allowed']:.0f}% of week{moved})"
+            rest = f"{left(day['frac']):.0f}% left"
+            return f"today's budget {rest}{size}", (f"today's budget {rest}" if lead == "today" else f"today {rest}")
+        spent = sess if key == "session" else today
+        if key in checked:
+            text = f"{key} {left(checked[key]['frac']):.0f}% left of ${checked[key]['limit']:,.2f}"
+        else:
+            text = f"{key} {money(spent)}{' at API rates' if windows else ''}"
+        return text, text
+
+    # At most two figures: the headline, then the budget that is on, else the next figure of the account
+    if unit == "usd":
+        second = "today" if lead == "session" else "session"
+    elif day and lead != "today":
+        second = "today"
+    elif windows_checked := [scope for scope in ("five_hour", "seven_day") if scope in checked]:
+        second = "limit:" + max(windows_checked, key=lambda scope: checked[scope]["frac"])
+    else:
+        second = next((scope for scope in ("seven_day", "five_hour") if scope in windows and scope != lead), None)
+    line = " · ".join(item(key)[0] for key in (lead, second) if key)
+    # The daily budget sends no notice, so the button names it after another headline
+    button = item(lead)[1] + (f" · {item(second)[1]}" if day and second == "today" else "")
+    return line, button                                               # the engine draws the plugin name before the line
 
 def status_line(store, sid, prices, budget, led=None):
     """One plain line for Claude Code's status bar while the pane is not placed (the hooks
