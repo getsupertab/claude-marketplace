@@ -15,7 +15,7 @@
     "enabled": false,
     "carry_over": false
   },
-  "_headline_comment": "Which plan number leads in the pane, the status line and the reopen button: today (the daily budget), five_hour or week. Falls back to the first one with a reading.",
+  "_headline_comment": "Which plan number leads in the pane, the status line and the reopen button: today (the daily budget), five_hour or week. With the daily budget on and another number leading, the status line and the reopen button name the budget after it. Falls back to the first one with a reading.",
   "headline": "five_hour",
   "_context_comment": "Context size of the last call. Every call re-reads it all, so this is what each call costs. Warns once per threshold; resets after a compact.",
   "context_warn_tokens": [

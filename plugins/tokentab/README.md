@@ -207,7 +207,8 @@ in them. The status line then names the day's size (`today 10% of budget (28% of
 and the pane shows how it is made up (`14.3% a day + 14.3% carried over`).
 
 `headline` (`today`, `five_hour` or `week`) picks which plan number leads; the default
-is `five_hour`.
+is `five_hour`. With the daily budget on and another number leading, the status line and
+the reopen button name the budget after it (`▸ TokenTab · 13% 5-hour · 40% today`).
 
 ### What it does with budgets off
 

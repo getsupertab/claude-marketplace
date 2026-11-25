@@ -91,7 +91,7 @@ Everything is in `budget.json` in your data folder. `null` turns a limit off. `/
 | `hard_stop` | `false` | `true` stops Claude at 100%; `false` only warns. Either way TokenTab warns once each at 10%, 5% and 2% of a limit left; that is fixed. |
 | `spend_less` | `false` | `true` also asks Claude, with each warning, to spend less: cheaper actions and shorter replies, and with `hard_stop` on, to wrap up. `false` warns only you. |
 | `daily_budget` | off | On Pro and Max: what is left of the week, spread evenly over the time left, fixed at the start of each local day. `enabled` switches it on; `carry_over` (beta, off) instead gives each full day a seventh of the cap (the week's first and last days their part of one) plus what earlier days of the week left unused, minus what they overspent. The pane's badge turns amber with 10% of it left. It only shows in the pane, the status line and the reopen button: it sends no notice, never blocks, and ignores `budgets_on`. |
-| `headline` | `five_hour` | Which plan number leads in the pane, the status line and the reopen button: `today` (the daily budget), `five_hour` or `week`. |
+| `headline` | `five_hour` | Which plan number leads in the pane, the status line and the reopen button: `today` (the daily budget), `five_hour` or `week`. With the daily budget on and another number leading, the status line and the reopen button name the budget after it. |
 | `context_warn_tokens` | `[200000, 350000]` | Tells you and Claude when the context passes each size. Re-arms after a compaction. |
 | `cold_resume` | on | Holds back the first prompt after the prompt cache has expired. See below. |
 | `handoff` | on | Writes a handoff note shortly before the cache expires, for a new chat to start from. See below. |

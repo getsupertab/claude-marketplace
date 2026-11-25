@@ -424,9 +424,10 @@ def day_budget_pane_case(store, prices):
             errs.append(f"pane headline without its reading should be None: {s['headline']}")
         # The status line leads with the headline; the button says it in short
         pct = f"{day['frac'] * 100:.0f}%"
-        cases = (({"daily_budget": ON}, "5 hours 13% · week 5% · today " + pct, "13% 5-hour"),
-                 ({"headline": "five_hour", "daily_budget": ON}, "5 hours 13% · week 5% · today " + pct, "13% 5-hour"),
-                 ({"headline": "week", "daily_budget": ON}, "week 5% · 5 hours 13% · today " + pct, "5% week"),
+        # With the budget on and not leading, the button names it after the headline
+        cases = (({"daily_budget": ON}, "5 hours 13% · week 5% · today " + pct, f"13% 5-hour · {pct} today"),
+                 ({"headline": "five_hour", "daily_budget": ON}, "5 hours 13% · week 5% · today " + pct, f"13% 5-hour · {pct} today"),
+                 ({"headline": "week", "daily_budget": ON}, "week 5% · 5 hours 13% · today " + pct, f"5% week · {pct} today"),
                  ({"headline": "today", "daily_budget": ON}, "today " + pct, f"{pct} of today's budget"),
                  ({"headline": "today", "daily_budget": {"enabled": False}}, "5 hours 13% · week 5% · session", "13% 5-hour"),
                  ({"headline": "today"}, "5 hours 13% · week 5% · session", "13% 5-hour"))
