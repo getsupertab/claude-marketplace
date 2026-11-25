@@ -32,10 +32,13 @@ def load():
 
 
 def upgraded(cfg):
-    """cfg with the keys the shipped file has and cfg lacks, in the shipped order."""
+    """cfg with the keys the shipped file has and cfg lacks, in the shipped order, one level into objects."""
     with open(SHIPPED, encoding="utf-8") as f:
         shipped = json.load(f)
-    return {**{k: cfg.get(k, v) for k, v in shipped.items()}, **cfg}
+    def merged(k, v):
+        mine = cfg.get(k, v)
+        return {**v, **mine} if isinstance(v, dict) and isinstance(mine, dict) else mine
+    return {**{k: merged(k, v) for k, v in shipped.items()}, **{k: v for k, v in cfg.items() if k not in shipped}}
 
 
 def lookup(cfg, key):
@@ -101,9 +104,11 @@ def main():
         cfg = load()
         if a[1] == "budgets_on" and a[1] not in cfg:
             cfg = {"budgets_on": False, **cfg}     # a file from before the switch
-        if a[1].split(".")[0] not in cfg:
+        try:
+            node, leaf = lookup(cfg, a[1])
+        except ValueError:
             cfg = upgraded(cfg)                    # a key a newer version ships
-        node, leaf = lookup(cfg, a[1])
+            node, leaf = lookup(cfg, a[1])
         node[leaf] = parse(a[1], node[leaf], a[2])
         tmp = PATH + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:

@@ -823,7 +823,7 @@ test('the Budget tab: auto-open through the config menu, the limits through the 
   expect(t.some(x => x.text === 'Open pane at session start')).toBe(true)
   expect(t.filter(x => /^[A-Z][A-Z ]+$/.test(x.text) && x.props.dimColor).map(x => x.text)).toEqual(['OPTIONS', 'LIMITS', 'DAILY BUDGET', 'HANDOFF NOTE'])
   // the units are in the names
-  expect(t.filter(x => x.text.endsWith(')')).map(x => x.text)).toEqual(['This session (USD)', 'Today (USD)'])
+  expect(t.filter(x => x.text.endsWith('(USD)')).map(x => x.text)).toEqual(['This session (USD)', 'Today (USD)'])
   expect(elements(tree, 'Button').find(b => b.key === 'auto-open')?.label).toBe('on')
   // the fields hold budget.json's values, "off" for null, grouped tokens
   const inputs = elements(tree, 'Input')
@@ -852,6 +852,11 @@ test('the Budget tab: auto-open through the config menu, the limits through the 
   expect(elements(tree, 'Button').find(b => b.key === 'b-headline')?.label).toBe('five_hour')
   await $.ui.press(press('b-headline'))
   expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'headline', 'week'])
+  // carry-over is a beta switch beside it, off where the file has no such key yet
+  expect(t.some(x => x.text === 'Carry over (beta)')).toBe(true)
+  expect(elements(tree, 'Button').find(b => b.key === 'b-daily_budget.carry_over')?.label).toBe('off')
+  await $.ui.press(press('b-daily_budget.carry_over'))
+  expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'daily_budget.carry_over', 'on'])
 
   // mobile has no Input: the values are shown
   const mobile = await $.ui.render({ surface: 'mobile', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
@@ -873,6 +878,12 @@ test('the limit unit follows the account: percent where the plan reports a usage
   // the daily budget's object and the headline reach a file from before them
   expect(withNewKeys({ hard_stop: true }, { hard_stop: false, daily_budget: { enabled: true }, headline: 'five_hour' }))
     .toEqual({ hard_stop: true, daily_budget: { enabled: true }, headline: 'five_hour' })
+  // carry_over reaches a daily_budget object from before it, the user's switch kept
+  expect(withNewKeys({ daily_budget: { enabled: true }, headline: 'today' },
+    { daily_budget: { enabled: false, carry_over: false }, headline: 'five_hour' }))
+    .toEqual({ daily_budget: { enabled: true, carry_over: false }, headline: 'today' })
+  expect(withNewKeys({ daily_budget: { enabled: true, carry_over: true } }, { daily_budget: { enabled: false, carry_over: false } }))
+    .toBeUndefined()
 })
 
 test('a first usage-window reading redraws the open Budget tab in percent, no tab switch', async ($, on) => {
@@ -1357,6 +1368,19 @@ test('the headline picks the hero: today shows what was used of the day, the res
   expect(t.some(x => x.text === "today's budget 90% used · 5% of the week, 4% used so far")).toBe(true)
   // the badge then judges only the windows it sits beside, not today's budget
   expect(t.some(x => x.text === 'Warning · 90%')).toBe(false)
+
+  // carry-over (beta) shows the day's share and what earlier days left or overspent
+  const carry = async (allowed: number, daily: number, carried: number, headline: 'today' | null) => {
+    report.value = { ...REPORT, session: { ...session, headline, windows: [windows[0], windows[1],
+      { ...windows[2], allowed, daily, carried }] } }
+    await $.telemetry.log(request({}))
+    await clock.advance(1000)
+    return texts(await draw())
+  }
+  t = await carry(28.6, 14.3, 14.3, 'today')
+  expect(t.some(x => x.text === "today's budget is 28.6% of the week (14.3% a day + 14.3% carried over), 4% used so far")).toBe(true)
+  t = await carry(8.6, 14.3, -5.7, null)
+  expect(t.some(x => x.text === "today's budget 90% used · 8.6% of the week (14.3% a day − 5.7% overspent), 4% used so far")).toBe(true)
 })
 
 // ---------- the handoff note ----------

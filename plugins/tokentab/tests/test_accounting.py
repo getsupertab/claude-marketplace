@@ -325,6 +325,34 @@ def day_budget_case():
             errs.append("day_budget: no weekly reading should be None")
         if day({}, win(1, L(11, 18)), now) is not None:
             errs.append("day_budget: a reset already past should be None")
+        # Carry-over (beta): a seventh of the cap a day, plus what earlier days left, minus what they overspent
+        CARRY = {"daily_budget": {"enabled": True, "carry_over": True}}
+        reset = L(11, 26)
+        os.remove(kt.BASELINE_PATH)
+        got = day(CARRY, win(0, reset), L(11, 19, 10).timestamp())
+        want("carry-over, day 1", got, 100 / 7, 0)
+        if got and (abs(got["daily"] - 100 / 7) > 0.05 or abs(got["carried"]) > 1e-9):
+            errs.append(f"day_budget carry-over day 1: {got}")
+        now = L(11, 20, 9).timestamp()
+        entries(reset, "2026-11-20", 0, 0)
+        got = day(CARRY, win(0, reset), now)
+        want("carry-over, day 1 unused", got, 200 / 7, 0)
+        if got and abs(got["carried"] - 100 / 7) > 0.05:
+            errs.append(f"day_budget carry-over carried: {got}")
+        entries(reset, "2026-11-20", 20, 20)
+        got = day(CARRY, win(25, reset), now)
+        want("carry-over, day 1 overspent", got, 200 / 7 - 20, 5)
+        if got and got["carried"] > -5.7:
+            errs.append(f"day_budget carry-over overspent: {got}")
+        entries(reset, "2026-11-20", 40, 40)
+        got = day(CARRY, win(41, reset), now)
+        if not got or got["allowed"] != 0 or got["frac"] != 1.0 or got["carried"] >= -got["daily"]:
+            errs.append(f"day_budget carry-over overspent past today's share: {got}")
+        entries(reset, "2026-11-20", 10, 10)
+        got = day({**CARRY, "weekly_limit_percent": 70}, win(10, reset), now)
+        want("carry-over with a 70% cap", got, 140 / 7 - 10, 0)
+        if "carried" in (day({}, win(10, reset), now) or {}):
+            errs.append("day_budget: carried without carry_over")
     finally:
         kt.BASELINE_PATH = saved
     # budget.py: the headline takes three words and refuses the rest; other strings are edited in the file
@@ -337,6 +365,11 @@ def day_budget_case():
             errs.append(f"budget.parse: {key}={raw} should be refused")
         except ValueError:
             pass
+    # A file from before carry_over gains it inside daily_budget, the user's values and own keys kept
+    up = budget.upgraded({"daily_budget": {"enabled": True}, "hard_stop": True, "mine": 1})
+    if up.get("daily_budget") != {"enabled": True, "carry_over": False} or up.get("hard_stop") is not True \
+            or up.get("mine") != 1 or list(up)[-1] != "mine":
+        errs.append(f"budget.upgraded: nested key not added: {up}")
     return errs
 
 
@@ -398,6 +431,20 @@ def day_budget_pane_case(store, prices):
         line = kt.status_line(store, "fx", prices, {"headline": "today", "daily_budget": ON})
         if f"today {pct} of budget · 5 hours" not in line:
             errs.append(f"status line today item: {line!r}")
+        # Carry-over names the budget's size in the status line and passes its parts to the pane
+        CARRY = {"enabled": True, "carry_over": True}
+        carried = kt.day_budget({"daily_budget": CARRY}, windows)
+        line = kt.status_line(store, "fx", prices, {"headline": "today", "daily_budget": CARRY})
+        want_item = f"today {carried['frac'] * 100:.0f}% of budget ({carried['allowed']:.0f}% of week)"
+        if not line.startswith(want_item):
+            errs.append(f"status line with carry-over: {line!r}, want {want_item!r}")
+        s = kt.pane_report(store, "fx", prices, {"daily_budget": CARRY}, windows=windows)["session"]
+        today = next(w for w in s["windows"] if w["scope"] == "today")
+        if (today.get("daily"), today.get("carried")) != (carried["daily"], carried["carried"]):
+            errs.append(f"pane today window with carry-over: {today}")
+        if "carried" in next(w for w in kt.pane_report(store, "fx", prices, {"daily_budget": ON}, windows=windows)["session"]["windows"]
+                             if w["scope"] == "today"):
+            errs.append("pane today window: carried without carry_over")
         os.remove(os.path.join(kt.WINDOWS_DIR, "fx.json"))
         line, button = kt.status_parts(store, "fx", prices, {"headline": "today", "daily_budget": ON})
         if button is not None or "of week" in line or line.startswith("5 hours"):

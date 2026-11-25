@@ -1070,8 +1070,9 @@ def _iso_ts(iso):
         return None
 
 def day_budget(budget, windows, now=None):
-    """Today's allowance out of the weekly window: what is left of the week, spread evenly over the time
-    left, fixed at the start of the local day. None unless switched on, without a reading, or once reset."""
+    """Today's allowance out of the weekly window, fixed at the start of the local day: what is left of the
+    week spread evenly over the time left, or with carry_over (beta) a seventh of the cap plus what earlier
+    days left unused, minus what they overspent. None unless switched on, without a reading, or once reset."""
     cfg = budget.get("daily_budget")
     if not (isinstance(cfg, dict) and cfg.get("enabled") is True):
         return None
@@ -1104,10 +1105,20 @@ def day_budget(budget, windows, now=None):
     cap = budget.get("weekly_limit_percent")
     cap = float(cap) if isinstance(cap, (int, float)) and not isinstance(cap, bool) else 100.0
     day_start, day_end = max(mid, week_start), min(nxt, reset)
-    allowed = max(0.0, cap - base) * max(0.0, day_end - day_start) / (reset - day_start)
+    carry = cfg.get("carry_over") is True
+    if carry:
+        # Beta: an even 1/7 of the cap a day, plus what earlier days left unused (or minus what they overspent)
+        daily = cap * max(0.0, day_end - day_start) / (7 * 86400)
+        carried = cap * (day_start - week_start) / (7 * 86400) - base
+        allowed = max(0.0, daily + carried)
+    else:
+        allowed = max(0.0, cap - base) * max(0.0, day_end - day_start) / (reset - day_start)
     used = max(0.0, cur - base)
     frac = used / allowed if allowed > 0 else (1.0 if used > 0 else 0.0)
-    return {"used": used, "allowed": allowed, "frac": frac, "base": base, "cap": cap}
+    out = {"used": used, "allowed": allowed, "frac": frac, "base": base, "cap": cap}
+    if carry:
+        out.update(daily=daily, carried=carried)
+    return out
 
 # Percent of a limit left at which the guard warns, once each; the views turn amber from the first.
 # Fixed, not a setting: register.tsx's WARN_LEFT is the same.
@@ -1392,7 +1403,8 @@ def pane_report(store, sid, prices, budget, led=None, windows=None):
     day = day_budget(budget, windows) if unit == "percent" else None
     if day:   # not gated by budgets_on: the daily budget has its own switch
         plan_windows.append({"scope": "today", "used": day["used"], "allowed": day["allowed"], "limit": None,
-                             "frac": day["frac"], "resets": None})
+                             "frac": day["frac"], "resets": None,
+                             **({"daily": day["daily"], "carried": day["carried"]} if "carried" in day else {})})
     out["session"] = {
         "title": R["session"]["title"], "cost": b.cost, "tokens": b.tokens, "msgs": b.msgs,
         "minutes": round((b.last - b.first).total_seconds() / 60) if b.first and b.last else 0,
@@ -1435,7 +1447,9 @@ def status_parts(store, sid, prices, budget, led=None):
              for scope, _, name in LIMITS["percent"] if scope in windows}
     day = day_budget(budget, windows)
     if day:
-        items["today"] = (f"today {day['frac']*100:.0f}% of budget",
+        # With carry-over the budget's size moves day to day, so the line names it
+        size = f" ({day['allowed']:.0f}% of week)" if "carried" in day else ""
+        items["today"] = (f"today {day['frac']*100:.0f}% of budget{size}",
                           f"{day['frac']*100:.0f}% of today's budget")
     lead = plan_lead(budget, windows, day) or next(iter(items), None)
     order = ([lead] if lead else []) + [k for k in items if k != lead]

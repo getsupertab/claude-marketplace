@@ -441,9 +441,11 @@ export type Report = {
 
 /** `limit` and `frac` are null where no limit is checked: limits off, or none set for that window.
  *  `today` is the daily budget out of the weekly window, not a reported window: `used` and
- *  `allowed` are percent of the week, `frac` is always set. */
+ *  `allowed` are percent of the week, `frac` is always set. With carry-over (beta), `daily` is
+ *  the day's even share and `carried` what earlier days left (below zero: overspent). */
 export type PlanWindow = {
   scope: 'five_hour' | 'seven_day' | 'today'; used: number; allowed?: number
+  daily?: number; carried?: number
   limit: number | null; frac: number | null; resets: string | null
 }
 const WINDOW_NAME = { five_hour: '5-hour window', seven_day: 'weekly window', today: "today's budget" } as const
@@ -544,6 +546,7 @@ export const SECTIONS: { title: string; toggle?: Setting; rows: Setting[] }[] = 
     { key: 'hard_stop', label: 'Enable hard stop', kind: 'switch' },
   ] },
   { title: 'daily budget', toggle: { key: 'daily_budget.enabled', label: 'daily budget', kind: 'switch' }, rows: [
+    { key: 'daily_budget.carry_over', label: 'Carry over (beta)', kind: 'switch' },
     { key: 'headline', label: 'Headline', kind: 'choice', choices: ['today', 'five_hour', 'week'] },
   ] },
   { title: 'handoff note', toggle: { key: 'handoff.enabled', label: 'handoff note before the cache expires', kind: 'switch' }, rows: [] },
@@ -624,12 +627,21 @@ export function inUnit(s: Setting, unit: Unit): Setting {
 }
 
 /** The user's budget.json with the keys a newer shipped file has added, in the shipped
- *  order; undefined when nothing is missing. */
+ *  order, one level into objects (daily_budget.carry_over); undefined when nothing is missing. */
 export function withNewKeys(user: Json, shipped: Json): Json | undefined {
-  if (Object.keys(shipped).every(k => k in user)) return undefined
+  const isObject = (v: unknown): v is Json => typeof v === 'object' && v !== null && !Array.isArray(v)
   const out: Json = {}
-  for (const k of Object.keys(shipped)) out[k] = k in user ? user[k] : shipped[k]
-  return { ...out, ...user }
+  let added = false
+  for (const [key, value] of Object.entries(shipped)) {
+    if (!(key in user)) { out[key] = value; added = true; continue }
+    const mine = user[key]
+    const inner = isObject(value) && isObject(mine) ? withNewKeys(mine, value) : undefined
+    if (inner) added = true
+    out[key] = inner ?? mine
+  }
+  if (!added) return undefined
+  for (const [key, value] of Object.entries(user)) if (!(key in out)) out[key] = value
+  return out
 }
 
 /** The value under a dotted key of a parsed budget.json. */
@@ -1472,7 +1484,9 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
   const mode = lead?.scope === 'today' ? `never blocks, amber at ${WARN_LEFT[0]}% left`
     : `${s.hard_stop ? 'hard stop' : 'warn only'}, ${WARN_TEXT}`
   // Today's budget is always read as a share of itself; the week's figures follow, named as such
-  const ofWeek = (w: PlanWindow) => `${percent(w.allowed ?? 0)} of the week, ${percent(w.used)} used so far`
+  const carriedText = (w: PlanWindow) => (w.carried === undefined ? ''
+    : ` (${percent(w.daily ?? 0)} a day ${w.carried < 0 ? '−' : '+'} ${percent(Math.abs(w.carried))} ${w.carried < 0 ? 'overspent' : 'carried over'})`)
+  const ofWeek = (w: PlanWindow) => `${percent(w.allowed ?? 0)} of the week${carriedText(w)}, ${percent(w.used)} used so far`
   const weekShare = (w: PlanWindow) => `today's budget is ${ofWeek(w)}`
   const budgetLine = (w: PlanWindow) => `today's budget ${pct(w.frac ?? 0)} used · ${ofWeek(w)}`
   const resets = (w: PlanWindow) => (w.resets ? ` · resets ${w.resets}` : '')
