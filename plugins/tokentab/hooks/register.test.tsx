@@ -1,7 +1,7 @@
 import { test, expect, mock } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On, RenderElement, RenderNode } from 'claude-code'
-import { at, barCells, barSvg, chevronSvg, COPY_HANDOFF, dataDir, DONT_SEND, freshNote, HANDOFF_DEFAULTS, HANDOFF_PROMPT, handoffPrompt, handoffStep, HELD_HANDOFF, NEW_CHAT, SEND_HERE, inUnit, int, liveLines, pct, reopenLabel, SECTIONS, SERIES, shareCard, shareCardSvg, shareLinks, sharePageHtml, shareText, shown, stripAnsi, timedOut, toneOf, ttlOf, unitOf, usd, weekBaseline, withNewKeys, wrapWords } from './register'
+import { at, barCells, barSvg, chevronSvg, COPY_HANDOFF, dataDir, DONT_SEND, freshNote, HANDOFF_DEFAULTS, HANDOFF_PROMPT, handoffPrompt, handoffStep, HELD_HANDOFF, NEW_CHAT, SEND_HERE, inUnit, int, liveLines, pct, reopenLabel, SECTIONS, SERIES, shareCard, shareCardSvg, shareLinks, sharePageHtml, shareText, shown, stripAnsi, switchOn, timedOut, toneOf, ttlOf, unitOf, usd, weekBaseline, withNewKeys, wrapWords } from './register'
 import type { Idle, Report } from './register'
 
 // The world beneath the plugin: `$.fs` reaches nothing under `claude plugin test`, and
@@ -848,8 +848,8 @@ test('the Options tab: auto-open through the config menu, the limits through the
   expect(texts(after).find(x => x.props.color === 'error')?.text.trim()).toBe("session_limit_usd: a number is needed, not 'bad'")
   await $.ui.press(press('b-hard_stop'))
   expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'hard_stop', 'on'])
-  // spend_less sits under it, off where the file has no such key yet
-  expect(t.some(text => text.text === 'Ask Claude to spend less')).toBe(true)
+  // spend_less sits under it and, with no such key yet, shows hard_stop's off
+  expect(t.some(text => text.text === 'Ask Claude to spend less (beta)')).toBe(true)
   expect(elements(tree, 'Button').find(button => button.key === 'b-spend_less')?.label).toBe('off')
   await $.ui.press(press('b-spend_less'))
   expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'spend_less', 'on'])
@@ -903,6 +903,10 @@ test('the limit unit follows the account: percent where the plan reports a usage
   const session = SECTIONS[0]!.rows.find(r => r.key === 'session_limit_usd')!
   expect(inUnit(session, 'usd')).toBe(session)
   expect(inUnit(session, 'percent')).toMatchObject({ key: 'five_hour_limit_percent', label: '5-hour window', unit: '%' })
+  // spend_less follows hard_stop until it is set either way
+  const spendLess = SECTIONS.flatMap(section => section.rows).find(row => row.key === 'spend_less')!
+  expect([{ hard_stop: true }, { hard_stop: true, spend_less: null }, { hard_stop: false }, { hard_stop: true, spend_less: false }, { hard_stop: false, spend_less: true }]
+    .map(budget => switchOn(budget, spendLess))).toEqual([true, true, false, false, true])
   // a newer version's keys join the user's file in the shipped order, the user's values kept
   expect(withNewKeys({ a: 1, b: 2 }, { a: 0, b: 0 })).toBeUndefined()
   expect(JSON.stringify(withNewKeys({ b: 5, x: 1 }, { a: 0, b: 0, c: 3 }))).toBe('{"a":0,"b":5,"c":3,"x":1}')

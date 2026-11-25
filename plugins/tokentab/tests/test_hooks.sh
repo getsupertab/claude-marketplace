@@ -130,13 +130,14 @@ rm "$DATA/state/windows/s-guard.json" "$DATA/state/week_baseline.json"
 
 # Warnings reach Claude only with spend_less: each case is a new 5-hour window, so it warns afresh
 n=4   # past the window an earlier check already warned on
-for case in "false false" "false true" "true false" "true true"; do
+# spend_less null follows hard_stop; the third word is whether Claude should hear it
+for case in "false false false" "false true true" "true false false" "true true true" "false null false" "true null true"; do
   set -- $case; n=$((n + 1))
   printf '{"budgets_on": true, "five_hour_limit_percent": 100, "weekly_limit_percent": null, "hard_stop": %s, "spend_less": %s}\n' "$1" "$2" > "$DATA/budget.json"
-  printf '{"windows": [{"kind": "five_hour", "percentUsed": 92, "resetsAt": "2999-01-0%sT00:00:00Z"}]}\n' "$n" > "$DATA/state/windows/s-guard.json"
+  printf '{"windows": [{"kind": "five_hour", "percentUsed": 92, "resetsAt": "2999-01-%02dT00:00:00Z"}]}\n' "$n" > "$DATA/state/windows/s-guard.json"
   out="$(tool Read "" | "$SCRIPTS/guard.sh")"
   check "warning shown to the user, hard_stop $1, spend_less $2" "$out" "TokenTab: "
-  if [ "$2" = true ]; then
+  if [ "$3" = true ]; then
     check "Claude asked to spend less, hard_stop $1" "$out" "BUDGET NOTICE"
   else
     refute "Claude told nothing, hard_stop $1" "$out" "additionalContext"

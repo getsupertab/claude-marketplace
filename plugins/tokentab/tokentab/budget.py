@@ -8,7 +8,8 @@ and the budget skill alike.
   budget.py set KEY VALUE   change one existing key and write the file back, its order and
                             its _comment keys kept. VALUE: a number; "off", "none" or "" for
                             a limit that is switched off (null); on/off/true/false/yes/no
-                            for a switch; auto, session, today, five_hour or week for headline. Prints the
+                            for a switch (auto puts spend_less back to following hard_stop);
+                            auto, session, today, five_hour or week for headline. Prints the
                             new value as JSON; a value that does not fit is refused on
                             stderr with exit code 1, nothing written.
 
@@ -24,6 +25,8 @@ PATH = os.path.join(kt.CFG, "budget.json")
 SHIPPED = os.path.join(os.path.dirname(os.path.abspath(__file__)), "budget.json")
 HEADLINES = ("auto", "session", "today", "five_hour", "week")
 TRUE, FALSE = ("on", "true", "yes", "1"), ("off", "false", "no", "0")
+# Switches that are null until set, following another key; "auto" sets them back to null
+FOLLOWS = {"spend_less": "hard_stop"}
 
 
 def load():
@@ -74,7 +77,9 @@ def parse(key, old, raw):
         return text
     if isinstance(old, str):
         raise ValueError(f"{key}: edit this one in the file")
-    if isinstance(old, bool):
+    if leaf in FOLLOWS and text == "auto":
+        return None
+    if isinstance(old, bool) or (old is None and leaf in FOLLOWS):
         if text in TRUE: return True
         if text in FALSE: return False
         raise ValueError(f"{key}: on or off, not {raw!r}")

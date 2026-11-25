@@ -540,7 +540,16 @@ export type Setting = {
   choices?: string[]
   /** One line under the row saying what the setting does. */
   note?: string
+  /** A switch that is null until set shows this other switch's value. */
+  follows?: string
 }
+/** A switch's state; one with `follows` shows that key's while its own is unset. */
+export function switchOn(budget: Json | undefined, s: Setting): boolean {
+  const own = at(budget, s.key)
+  if (typeof own === 'boolean') return own
+  return s.follows !== undefined && at(budget, s.follows) === true
+}
+
 /** A section with a `unit` shows only under that unit. */
 export const SECTIONS: { title: string; unit?: Unit; toggle?: Setting; rows: Setting[] }[] = [
   { title: 'limits', toggle: { key: 'budgets_on', label: 'check the limits', kind: 'switch' }, rows: [
@@ -549,7 +558,7 @@ export const SECTIONS: { title: string; unit?: Unit; toggle?: Setting; rows: Set
     { key: 'daily_limit_usd', label: 'Today', unit: 'USD', kind: 'limit',
       percent: { key: 'weekly_limit_percent', label: 'This week' } },
     { key: 'hard_stop', label: 'Enable hard stop', kind: 'switch' },
-    { key: 'spend_less', label: 'Ask Claude to spend less', kind: 'switch' },
+    { key: 'spend_less', label: 'Ask Claude to spend less (beta)', kind: 'switch', follows: 'hard_stop' },
   ] },
   // A share of the weekly window, which USD accounts do not have
   { title: 'daily budget', unit: 'percent', toggle: { key: 'daily_budget.enabled', label: 'daily budget', kind: 'switch' }, rows: [
@@ -1723,7 +1732,10 @@ function optionsTab($: EngineInterface, e: RenderEvent): RenderChildren {
   const unit = unitOf(o?.windows ?? [])
   const control = (s: Setting): RenderChildren => {
     const v = at(o?.budget, s.key)
-    if (s.kind === 'switch') return column(toggle(`b-${s.key}`, v === true, () => { void setBudget($, s.key, v === true ? 'off' : 'on') }))
+    if (s.kind === 'switch') {
+      const isOn = switchOn(o?.budget, s)
+      return column(toggle(`b-${s.key}`, isOn, () => { void setBudget($, s.key, isOn ? 'off' : 'on') }))
+    }
     if (s.kind === 'choice') {
       const choices = s.key === HEADLINE.key ? headlineChoices(unit, at(o?.budget, 'daily_budget.enabled') === true, (o?.windows ?? []).map(window => window.kind)) : s.choices ?? []
       // A value this account cannot show falls back to the first choice, as tokentab.py does

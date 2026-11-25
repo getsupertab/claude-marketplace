@@ -369,6 +369,16 @@ def day_budget_case():
             errs.append(f"budget.parse: {key}={raw} should be refused")
         except ValueError:
             pass
+    # spend_less: null until set, then a switch; auto sets it back
+    got = [budget.parse("spend_less", None, "on"), budget.parse("spend_less", True, "off"), budget.parse("spend_less", False, "auto")]
+    if got != [True, False, None]:
+        errs.append(f"budget.parse: spend_less should take on, off and auto: {got}")
+    for key, old in (("hard_stop", True), ("other", None)):
+        try:
+            budget.parse(key, old, "auto")
+            errs.append(f"budget.parse: {key}=auto should be refused")
+        except ValueError:
+            pass
     # A file from before carry_over gains it inside daily_budget, the user's values and own keys kept
     up = budget.upgraded({"daily_budget": {"enabled": True}, "hard_stop": True, "mine": 1})
     if up.get("daily_budget") != {"enabled": True, "carry_over": False} or up.get("hard_stop") is not True \
