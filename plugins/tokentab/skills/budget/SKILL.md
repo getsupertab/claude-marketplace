@@ -20,7 +20,7 @@ Arguments: $ARGUMENTS
 
 Read the file and show, in a short list: whether `budgets_on` is on (off, or missing,
 means none of the limits below are checked), the unit in effect, its two limits (`null` means off) and `hard_stop` (true blocks at 100%,
-false only warns; warnings come at 10%, 5% and 2% of a limit left, fixed, not a setting) and `spend_less` (true also asks Claude to spend less at each warning, and to wrap up when `hard_stop` is on; false only warns the user). "Turn budgets on/off" means `budgets_on`. Also show the daily budget
+false only warns; warnings come at 10%, 5% and 2% of a limit left, fixed, not a setting) and `spend_less` (beta; true also asks Claude to spend less at each warning, and to wrap up when `hard_stop` is on; false only warns the user; null, the default, follows `hard_stop`, and `auto` sets it back to null). "Turn budgets on/off" means `budgets_on`. Also show the daily budget
 (`daily_budget.enabled`: on Pro and Max, what is left
 of the week spread over the days left; off unless `enabled` is true, and it only shows in
 the pane and status line, never notifies or blocks, and ignores `budgets_on`), its beta
@@ -50,7 +50,7 @@ the user can ask for a change with `/tokentab:budget <what to change>`.
 
    Where `python3` is missing or is not Python 3 (Windows), run the same with `python`, else `py -3`, in its place.
    KEY is dotted for nested settings (`cold_resume.confirm_seconds`); VALUE is a number, `off` for a
-   limit switched off, `on`/`off` for a switch, `auto`, `session`, `today`, `five_hour` or `week` for `headline`. It refuses a value that does not fit or a
+   limit switched off, `on`/`off` for a switch (also `auto` for `spend_less`, back to following `hard_stop`), `auto`, `session`, `today`, `five_hour` or `week` for `headline`. It refuses a value that does not fit or a
    key that does not exist, and keeps the file's order and comments. `budget.py get` prints
    the file.
 3. Show the new values. They apply from the next prompt; no restart is needed. The same

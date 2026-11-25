@@ -540,7 +540,25 @@ export type Setting = {
   choices?: string[]
   /** One line under the row saying what the setting does. */
   note?: string
+  /** A switch that is null until set shows this other switch's value. */
+  follows?: string
 }
+/** A switch's state; one with `follows` shows that key's while its own is unset. */
+export function switchOn(budget: Json | undefined, setting: Setting): boolean {
+  const own = at(budget, setting.key)
+  if (typeof own === 'boolean') return own
+  return setting.follows !== undefined && at(budget, setting.follows) === true
+}
+
+/** The line under a row; a switch with `follows` says whether it follows or was set, and how back. */
+export function noteOf(budget: Json | undefined, setting: Setting): string | undefined {
+  if (setting.follows === undefined) return setting.note
+  const followed = setting.follows.replace(/_/g, ' ')
+  return typeof at(budget, setting.key) === 'boolean'
+    ? `Set by you; /tokentab:budget ${setting.key} auto follows ${followed} again.`
+    : `Follows ${followed} until you set it.`
+}
+
 /** A section with a `unit` shows only under that unit. */
 export const SECTIONS: { title: string; unit?: Unit; toggle?: Setting; rows: Setting[] }[] = [
   { title: 'limits', toggle: { key: 'budgets_on', label: 'check the limits', kind: 'switch' }, rows: [
@@ -549,7 +567,7 @@ export const SECTIONS: { title: string; unit?: Unit; toggle?: Setting; rows: Set
     { key: 'daily_limit_usd', label: 'Today', unit: 'USD', kind: 'limit',
       percent: { key: 'weekly_limit_percent', label: 'This week' } },
     { key: 'hard_stop', label: 'Enable hard stop', kind: 'switch' },
-    { key: 'spend_less', label: 'Ask Claude to spend less', kind: 'switch' },
+    { key: 'spend_less', label: 'Ask Claude to spend less (beta)', kind: 'switch', follows: 'hard_stop' },
   ] },
   // A share of the weekly window, which USD accounts do not have
   { title: 'daily budget', unit: 'percent', toggle: { key: 'daily_budget.enabled', label: 'daily budget', kind: 'switch' }, rows: [
@@ -646,9 +664,13 @@ export function inUnit(s: Setting, unit: Unit): Setting {
   return unit === 'percent' && s.percent ? { ...s, key: s.percent.key, label: s.percent.label, unit: '%' } : s
 }
 
+/** 1.8.0–1.9.0 shipped `spend_less: false` under this comment, where false was the default, not a choice. */
+export const SPEND_LESS_1_8_COMMENT = 'true also asks Claude to spend less (cheaper actions, shorter replies, and with hard_stop on, to wrap up) at each warning. false (the default) only warns you.'
+
 /** The user's budget.json with the keys a newer shipped file has added, in the shipped
  *  order, one level into objects (daily_budget.carry_over), like budget.py's upgraded(), and
- *  the shipped `_comment` texts; undefined when nothing changes. */
+ *  the shipped `_comment` texts, a 1.8–1.9 `spend_less: false` put back to null; undefined
+ *  when nothing changes. */
 export function withNewKeys(user: Json, shipped: Json, nested = false): Json | undefined {
   const isObject = (candidate: unknown): candidate is Json =>
     typeof candidate === 'object' && candidate !== null && !Array.isArray(candidate)
@@ -662,6 +684,8 @@ export function withNewKeys(user: Json, shipped: Json, nested = false): Json | u
     if (inner) added = true
     out[key] = inner ?? mine
   }
+  // Once, while the old comment is still there: that false follows hard_stop like a new file's null
+  if (!nested && user._spend_less_comment === SPEND_LESS_1_8_COMMENT && user.spend_less === false) { out.spend_less = null; added = true }
   if (!added) return undefined
   for (const [key, value] of Object.entries(user)) if (!(key in out)) out[key] = value
   return out
@@ -1723,7 +1747,10 @@ function optionsTab($: EngineInterface, e: RenderEvent): RenderChildren {
   const unit = unitOf(o?.windows ?? [])
   const control = (s: Setting): RenderChildren => {
     const v = at(o?.budget, s.key)
-    if (s.kind === 'switch') return column(toggle(`b-${s.key}`, v === true, () => { void setBudget($, s.key, v === true ? 'off' : 'on') }))
+    if (s.kind === 'switch') {
+      const isOn = switchOn(o?.budget, s)
+      return column(toggle(`b-${s.key}`, isOn, () => { void setBudget($, s.key, isOn ? 'off' : 'on') }))
+    }
     if (s.kind === 'choice') {
       const choices = s.key === HEADLINE.key ? headlineChoices(unit, at(o?.budget, 'daily_budget.enabled') === true, (o?.windows ?? []).map(window => window.kind)) : s.choices ?? []
       // A value this account cannot show falls back to the first choice, as tokentab.py does
@@ -1765,7 +1792,7 @@ function optionsTab($: EngineInterface, e: RenderEvent): RenderChildren {
       {SECTIONS.filter(settingsSection => settingsSection.unit === undefined || settingsSection.unit === unit).flatMap(settingsSection => [
         rule($, e, `rule-${settingsSection.title}`),
         section(settingsSection.title, settingsSection.toggle && control(settingsSection.toggle), [
-          ...settingsSection.rows.map(r => inUnit(r, unit)).map(s => row(s.key, s.unit === undefined ? s.label : `${s.label} (${s.unit})`, control(s), o?.errors[s.key], s.note)),
+          ...settingsSection.rows.map(r => inUnit(r, unit)).map(s => row(s.key, s.unit === undefined ? s.label : `${s.label} (${s.unit})`, control(s), o?.errors[s.key], noteOf(o?.budget, s))),
           settingsSection.toggle !== undefined && o?.errors[settingsSection.toggle.key] !== undefined
             && <Text size="footnote" key="toggle-error" color="error">{o.errors[settingsSection.toggle.key]}</Text>,
         ]),
