@@ -405,12 +405,12 @@ test('an interactive session opens the pane and draws the Spend tab', async ($, 
   expect(ui.status).toEqual([undefined])
 
   const folded = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
-  // the tab row: Spend is the primary one, then Budget and "Open full report"; then the details toggle
+  // the tab row: Spend is the primary one, then Options and "Open full report"; then the details toggle
   expect(elements(folded, 'Button').map(b => [b.key, b.variant])).toEqual([
-    ['tab-spend', 'primary'], ['tab-budget', 'secondary'], ['open-browser', undefined], ['share', undefined],
+    ['tab-spend', 'primary'], ['tab-options', 'secondary'], ['open-browser', undefined], ['share', undefined],
     ['details-toggle', undefined], ['sessions-toggle', undefined],
   ])
-  expect(elements(folded, 'Button').slice(0, 3).map(b => b.label)).toEqual(['Spend', 'Budget', 'Open full report ↗'])
+  expect(elements(folded, 'Button').slice(0, 3).map(b => b.label)).toEqual(['Spend', 'Options', 'Open full report ↗'])
   // no keyboard shortcuts: Tab or the arrows and Enter reach every Button (Kate, 2026-11-17)
   expect(elements(folded, 'Button').filter(b => b.hotkey !== undefined)).toEqual([])
   // the breakdown starts folded: the toggle shows, the rate table and the tools do not
@@ -810,14 +810,14 @@ test('on Linux without xdg-open, the toast says the page could not be opened and
   expect(ui.store.get(`pageOpenedAt:${SID}`)).toBeUndefined()
 })
 
-test('the Budget tab: auto-open through the config menu, the limits through the validator', async ($, on) => {
+test('the Options tab: auto-open through the config menu, the limits through the validator', async ($, on) => {
   mock.env(on, { HOME: '/home/t' })
   const clock = mock.clock(on, { now: T0 })
   const { ui } = world(on, FILES)
   await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
   await clock.settle()
   await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
-  await $.ui.press(press('tab-budget'))
+  await $.ui.press(press('tab-options'))
   const tree = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   const t = texts(tree)
   expect(t.some(x => x.text === 'Open pane at session start')).toBe(true)
@@ -897,7 +897,7 @@ test('the limit unit follows the account: percent where the plan reports a usage
   expect(withNewKeys({ _daily_comment: 'new' }, { _daily_comment: 'new' })).toBeUndefined()
 })
 
-test('a first usage-window reading redraws the open Budget tab in percent, no tab switch', async ($, on) => {
+test('a first usage-window reading redraws the open Options tab in percent, no tab switch', async ($, on) => {
   mock.env(on, { HOME: '/home/t' })
   const clock = mock.clock(on, { now: T0 })
   world(on, FILES)
@@ -905,7 +905,7 @@ test('a first usage-window reading redraws the open Budget tab in percent, no ta
   await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
   await clock.settle()
   await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
-  await $.ui.press(press('tab-budget'))
+  await $.ui.press(press('tab-options'))
   await clock.settle()
   const inputs = async () => elements(await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS }), 'Input').map(i => i.key)
   expect(await inputs()).toContain('b-session_limit_usd')
@@ -915,7 +915,7 @@ test('a first usage-window reading redraws the open Budget tab in percent, no ta
   expect(await inputs()).toContain('b-five_hour_limit_percent')
 })
 
-test('session.measure records the usage windows; the Budget tab then shows the percent fields', async ($, on) => {
+test('session.measure records the usage windows; the Options tab then shows the percent fields', async ($, on) => {
   mock.env(on, { HOME: '/home/t' })
   const clock = mock.clock(on, { now: T0 })
   const { fs } = world(on, FILES)
@@ -930,7 +930,7 @@ test('session.measure records the usage windows; the Budget tab then shows the p
     { kind: 'five_hour', percentUsed: 42, resetsAt: '2026-10-15T18:00:00Z' }, { kind: 'seven_day', percentUsed: 7, resetsAt: null }])
   expect(JSON.parse(fs.get(`${DATA}/state/windows/${SID}.json`)!).windows).toEqual(shared.windows)
   await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
-  await $.ui.press(press('tab-budget'))
+  await $.ui.press(press('tab-options'))
   const tree = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   expect(elements(tree, 'Input').map(i => i.key)).toEqual(['b-five_hour_limit_percent', 'b-weekly_limit_percent'])
   expect(elements(tree, 'Button').some(b => b.key === 'b-limit_unit')).toBe(false)
@@ -965,7 +965,7 @@ test('after /clear the first prompt carries the last usage windows over to the n
   await $.prompt.submit({ text: 'hello', wait: false, origin: { kind: 'composer' } })
   expect(fs.get(`${DATA}/state/windows/${NEW_SID}.json`)).toBe(fs.get(`${DATA}/state/windows/${SID}.json`))
   await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
-  await $.ui.press(press('tab-budget'))
+  await $.ui.press(press('tab-options'))
   const tree = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   expect(elements(tree, 'Input').map(i => i.key)).toContain('b-five_hour_limit_percent')
 })
@@ -979,7 +979,7 @@ test('where /config has no row for it (Desktop), the auto-open switch is kept in
   await clock.settle()
   expect(ui.opens).toBe(1)
   await $.ui.render({ surface: 'desktop', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
-  await $.ui.press(press('tab-budget'))
+  await $.ui.press(press('tab-options'))
   await $.ui.render({ surface: 'desktop', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   await $.ui.press(press('auto-open'))
   expect(ui.config).toEqual([])
@@ -1016,7 +1016,7 @@ test('with only `py` installed and a Store stub as python3, the helpers run unde
   const r = await $.command.run({ command: 'tokentab:status', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 200 } })
   expect(r.text?.startsWith(STATUS)).toBe(true)
   await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
-  await $.ui.press(press('tab-budget'))
+  await $.ui.press(press('tab-options'))
   await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   await $.ui.input({ plugin: 'tokentab', key: 'b-daily_limit_usd', text: '30' })
   await clock.settle()

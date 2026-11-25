@@ -12,7 +12,7 @@ import { TOKENS } from './tokens'
 // `session.start` opens a pane beside the chat (the `autoOpen` option); `/tokentab:status`
 // (the status skill, answered by a hook) opens it asked. `ui.render` draws one of two
 // tabs: Spend, the session against its limit, its cost by rate and what each tool cost,
-// today and this month; Budget, the auto-open switch and the budget limits. Spend draws
+// today and this month; Options, the auto-open switch and the budget limits. Spend draws
 // `tokentab.py --report`, the same report() the terminal live view and the status line
 // print, so the figures cannot drift apart. While the pane is not placed
 // (a narrow terminal) one status line carries the numbers instead. Redrawn a second after
@@ -518,14 +518,14 @@ export function barCells(parts: { series: string; frac: number }[], cells: numbe
 
 // ---------- the tabs ----------
 
-export type View = 'spend' | 'budget'
+export type View = 'spend' | 'options'
 export const TABS: { view: View; label: string }[] = [
   { view: 'spend', label: 'Spend' },
-  { view: 'budget', label: 'Budget' },
+  { view: 'options', label: 'Options' },
 ]
 const TOOLS_SHOWN = 12
 
-// The budget limits the Budget tab edits, in budget.json's keys (dotted below the
+// The budget limits the Options tab edits, in budget.json's keys (dotted below the
 // top level), as sections of rows: a limit is an Input, a switch an on/off Button.
 // A section's `toggle` sits in its heading.
 // A limit with a `percent` twin is one field: the twin stands in while the unit in
@@ -694,7 +694,7 @@ let lastWindows: string | undefined     // the last windows file written, for a 
 let autoOpenHere: boolean | undefined   // the switch set where /config had no row for it, `$.store`'s AUTO_OPEN
 
 // An SDK host (the Desktop app, `claude -p`) lists no plugin's /config row, so there the
-// Budget tab's switch is kept in `$.store` with the option it was set over; it stands
+// Options tab's switch is kept in `$.store` with the option it was set over; it stands
 // until /config changes that option, which a load sees without hooking `config.set`.
 const AUTO_OPEN = 'autoOpen'
 const optionAutoOpen = () => opts.autoOpen !== false
@@ -825,7 +825,7 @@ async function refreshNow($: EngineInterface): Promise<void> {
   const id = await sid($)
   try {
     if (await isPlaced($)) {
-      if (view === 'budget') await readBudget($)
+      if (view === 'options') await readBudget($)
       else report = JSON.parse(await python($, 'tokentab.py', ['--report', '--session', id])) as Report
       $.ui.status(undefined)
     } else {
@@ -1096,7 +1096,7 @@ export const register: Register = (on, pluginOptions) => {
     )
   })
 
-  // Two tabs over one report (Spend) and budget.json (Budget), the same tree on
+  // Two tabs over one report (Spend) and budget.json (Options), the same tree on
   // every surface: the terminal ignores `size`, `weight` and `mono` and is monospaced
   // anyway; the bars are an Svg where the surface draws one and block characters in the
   // terminal. Only a Button takes a press, so the tabs and "Open full report" are Buttons.
@@ -1106,7 +1106,7 @@ export const register: Register = (on, pluginOptions) => {
     // A tab shown for the first time, or the pane placed after a status-only refresh:
     // fetch its data once. Only while nothing is in flight, so a render never starts a
     // refresh that invalidates into another render.
-    const empty = view === 'budget' ? options === undefined : report === undefined && error === undefined
+    const empty = view === 'options' ? options === undefined : report === undefined && error === undefined
     if (empty && running === undefined) void refresh($)
     const tabs = (
       <Box gap={1}>
@@ -1117,7 +1117,7 @@ export const register: Register = (on, pluginOptions) => {
         <Button key="open-browser" label="Open full report ↗" onPress={() => { void openSnapshot($) }} />
       </Box>
     )
-    const body = view === 'budget' ? budgetTab($, e)
+    const body = view === 'options' ? optionsTab($, e)
       : report === undefined ? <Text dimColor>loading...</Text>
       : spendTab($, e, report)
     return (
@@ -1151,7 +1151,7 @@ export const register: Register = (on, pluginOptions) => {
     return { text: `${status}\n${where}`, context: figures === '' ? undefined : [`TokenTab, this session's figures as of now:\n${figures}`] }
   }).catch(() => ({ text: 'TokenTab: the status command failed' }))
 
-  // The Budget tab's auto-open switch is the manifest's `userConfig` field: written as the
+  // The Options tab's auto-open switch is the manifest's `userConfig` field: written as the
   // config menu would, so the menu, the install screen and the pane show one value. The
   // write reloads the module; `session.start` then runs again and is idempotent. Where
   // /config has no row for it (an SDK host), it is kept in `$.store` instead. A stored
@@ -1669,12 +1669,12 @@ function toolRow($: EngineInterface, e: RenderEvent, t: ToolRow, path: string, t
   )
 }
 
-/** Budget, Figma's "TokenTab / Limits", set like Spend: the pane's auto-open switch
+/** Options, Figma's "TokenTab / Limits", set like Spend: the pane's auto-open switch
  *  (the manifest's `userConfig` field, as in /config) first, then the budget limits
  *  over budget.json, a label on the left and its control on the right: a limit as an
  *  Input with "save", a switch as an on/off Button. Mobile has no Input, so it shows
  *  the values. */
-function budgetTab($: EngineInterface, e: RenderEvent): RenderChildren {
+function optionsTab($: EngineInterface, e: RenderEvent): RenderChildren {
   const { Box, Text, Button } = $.ui.resolve(e)
   const o = options
   const mobile = e.surface === 'mobile'

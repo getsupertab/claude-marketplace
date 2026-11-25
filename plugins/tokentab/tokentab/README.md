@@ -79,7 +79,7 @@ diagram sums to the session total.
 
 ## Budget settings
 
-Everything is in `budget.json` in your data folder. `null` turns a limit off. `/tokentab:budget` or the pane's Budget tab changes them for you.
+Everything is in `budget.json` in your data folder. `null` turns a limit off. `/tokentab:budget` or the pane's Options tab changes them for you.
 
 | Setting | Default | What it does |
 |---|---|---|
@@ -141,7 +141,7 @@ expired-cache question offers it:
 - **Don't send** sends nothing.
 
 A computer that sleeps stops the timer, and so does an agent waiting on a permission
-prompt (it is mid-turn). Turn it off with the pane's Budget tab (HANDOFF NOTE) or
+prompt (it is mid-turn). Turn it off with the pane's Options tab (HANDOFF NOTE) or
 `handoff.enabled: false`.
 
 ### New session check
