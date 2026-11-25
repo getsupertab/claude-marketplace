@@ -178,7 +178,8 @@ You can also just ask: "raise my daily limit to 30", "hard stop on".
 
 Once on, the defaults are $25 per session and $40 per day. TokenTab warns with 10%, 5% and
 2% of a limit left, and at 100%. It only warns unless you switch on `hard_stop`, which blocks tool calls
-past the limit.
+past the limit. The warnings are yours alone: Claude is only asked to spend less, or to wrap
+up under a hard stop, when you switch on `spend_less` ("Ask Claude to spend less" on the Budget tab).
 
 On a Pro or Max plan the limits count in percent of the plan's 5-hour and weekly usage
 windows instead, 80% and 90% by default. TokenTab picks the unit from your account: percent

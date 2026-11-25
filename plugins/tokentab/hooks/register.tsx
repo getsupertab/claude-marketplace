@@ -544,6 +544,7 @@ export const SECTIONS: { title: string; toggle?: Setting; rows: Setting[] }[] = 
     { key: 'daily_limit_usd', label: 'Today', unit: 'USD', kind: 'limit',
       percent: { key: 'weekly_limit_percent', label: 'This week' } },
     { key: 'hard_stop', label: 'Enable hard stop', kind: 'switch' },
+    { key: 'spend_less', label: 'Ask Claude to spend less', kind: 'switch' },
   ] },
   { title: 'daily budget', toggle: { key: 'daily_budget.enabled', label: 'daily budget', kind: 'switch' }, rows: [
     { key: 'daily_budget.carry_over', label: 'Carry over (beta)', kind: 'switch' },

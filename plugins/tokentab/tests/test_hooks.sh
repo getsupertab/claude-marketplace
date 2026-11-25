@@ -21,6 +21,9 @@ check() {  # check <name> <haystack> <needle>; an empty needle means the output 
   echo "FAIL  $1"; echo "      wanted: ${3:-<nothing>}"; echo "      got:    ${2:-<nothing>}"
   FAILED=1
 }
+refute() {  # refute <name> <haystack> <needle>: the output must not contain needle
+  case "$2" in *"$3"*) echo "FAIL  $1"; echo "      unwanted: $3"; echo "      got:      $2"; FAILED=1 ;; *) echo "pass  $1" ;; esac
+}
 
 # Version gate
 prompt='{"session_id": "s-gate", "hook_event_name": "UserPromptSubmit", "prompt": "hi"}'
@@ -124,6 +127,23 @@ for cfg in '"enabled": true' '"enabled": false' '"enabled": true, "warn_at_perce
   done
 done
 rm "$DATA/state/windows/s-guard.json" "$DATA/state/week_baseline.json"
+
+# Warnings reach Claude only with spend_less: each case is a new 5-hour window, so it warns afresh
+n=4   # past the window an earlier check already warned on
+for case in "false false" "false true" "true false" "true true"; do
+  set -- $case; n=$((n + 1))
+  printf '{"budgets_on": true, "five_hour_limit_percent": 100, "weekly_limit_percent": null, "hard_stop": %s, "spend_less": %s}\n' "$1" "$2" > "$DATA/budget.json"
+  printf '{"windows": [{"kind": "five_hour", "percentUsed": 92, "resetsAt": "2999-01-0%sT00:00:00Z"}]}\n' "$n" > "$DATA/state/windows/s-guard.json"
+  out="$(tool Read "" | "$SCRIPTS/guard.sh")"
+  check "warning shown to the user, hard_stop $1, spend_less $2" "$out" "TokenTab: "
+  if [ "$2" = true ]; then
+    check "Claude asked to spend less, hard_stop $1" "$out" "BUDGET NOTICE"
+  else
+    refute "Claude told nothing, hard_stop $1" "$out" "additionalContext"
+    refute "user not told Claude was asked, hard_stop $1" "$out" "has been asked"
+  fi
+done
+rm "$DATA/state/windows/s-guard.json"
 
 # Python launchers, in the module's order: a python3 that is not Python 3 (the Store
 # stub) and a python that is Python 2 are passed over for py -3

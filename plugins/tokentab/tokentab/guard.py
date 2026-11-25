@@ -356,6 +356,8 @@ def deny(event, user_msg, model_msg):
     return out
 
 def note(event, user_msg, model_msg):
+    if not model_msg:
+        return {"systemMessage": user_msg}
     return {"systemMessage": user_msg,
             "hookSpecificOutput": ({"hookEventName": "UserPromptSubmit",
                                     "additionalContext": model_msg}
@@ -474,6 +476,7 @@ def main():
 
     marks = [100 - left for left in WARN_LEFT]
     hard    = bool(b.get("hard_stop", False))
+    spend_less = b.get("spend_less") is True
 
     # Each scope is judged on its own and keeps its own warn band, so a scope
     # that is already over (today) cannot hide another's warning (this session).
@@ -501,20 +504,23 @@ def main():
         if not hard:
             # Warn-only mode: say so, and never ask Claude to cut work short.
             head = f"{label} limit reached" if band == 100 else f"{pct}% of {label} budget used"
-            return ("note",
-                f"TokenTab: {head} ({detail}). Warning only, nothing is blocked. "
-                f"/tokentab:budget changes the limit.",
-                f"BUDGET NOTICE: {head} ({detail}). This is a soft limit: nothing is "
+            told, asked = (f"TokenTab: {head} ({detail}). Warning only, nothing is blocked.",
+                "Claude has been asked to use fewer calls.")
+            ask = (f"BUDGET NOTICE: {head} ({detail}). This is a soft limit: nothing is "
                 f"blocked. Mention it to the user in one line and keep going, using fewer "
                 f"calls where you can: every call in this conversation re-reads its whole "
                 f"context.")
-        return ("note",
-            f"TokenTab: {pct}% of {label} budget used ({detail}). "
-            f"Claude has been asked to wrap up. /tokentab:budget changes the limit.",
-            f"BUDGET NOTICE: {pct}% of {label} budget is gone ({detail}). Start "
-            f"wrapping up. Prefer cheap actions, avoid re-reading large files or "
-            f"taking screenshots, keep responses short, and finish what is in "
-            f"flight rather than starting new work. At 100% tool calls stop.")
+        else:
+            told, asked = (f"TokenTab: {pct}% of {label} budget used ({detail}). At 100% tool calls stop.",
+                "Claude has been asked to wrap up.")
+            ask = (f"BUDGET NOTICE: {pct}% of {label} budget is gone ({detail}). Start "
+                f"wrapping up. Prefer cheap actions, avoid re-reading large files or "
+                f"taking screenshots, keep responses short, and finish what is in "
+                f"flight rather than starting new work. At 100% tool calls stop.")
+        # Without spend_less the warning is the user's alone; Claude hears nothing.
+        if not spend_less:
+            return ("note", f"{told} /tokentab:budget changes the limit.", None)
+        return ("note", f"{told} {asked} /tokentab:budget changes the limit.", ask)
 
     verdicts = []
     last = last_call(transcript, sid)
@@ -545,10 +551,10 @@ def main():
 
     # Context size. Every call re-reads all of it, so this is the running cost
     # per call. Warn once per threshold; a compact drops below and re-arms it.
-    marks = sorted(int(x) for x in (b.get("context_warn_tokens") or []))
-    if marks and last:
+    ctx_marks = sorted(int(x) for x in (b.get("context_warn_tokens") or []))
+    if ctx_marks and last:
         _, ctx, model, _ = last
-        hit = [m for m in marks if ctx >= m]
+        hit = [m for m in ctx_marks if ctx >= m]
         if not hit:
             st["ctx_band"] = 0
         elif hit[-1] > int(st.get("ctx_band") or 0):
@@ -610,7 +616,7 @@ def main():
     if denies:
         out = deny(event, "\n".join(v[1] for v in verdicts), denies[0][2])
     elif verdicts:
-        out = note(event, "\n".join(v[1] for v in verdicts), " ".join(v[2] for v in verdicts))
+        out = note(event, "\n".join(v[1] for v in verdicts), " ".join(v[2] for v in verdicts if v[2]))
     if not denies and hints and event == "UserPromptSubmit":
         user = out.get("systemMessage", "")
         model = " ".join(([out["hookSpecificOutput"]["additionalContext"]] if out.get("hookSpecificOutput") else [])

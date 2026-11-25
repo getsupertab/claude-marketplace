@@ -20,7 +20,7 @@ Arguments: $ARGUMENTS
 
 Read the file and show, in a short list: whether `budgets_on` is on (off, or missing,
 means none of the limits below are checked), the unit in effect, its two limits (`null` means off) and `hard_stop` (true blocks at 100%,
-false only warns; warnings come at 10%, 5% and 2% of a limit left, fixed, not a setting). "Turn budgets on/off" means `budgets_on`. Also show the daily budget
+false only warns; warnings come at 10%, 5% and 2% of a limit left, fixed, not a setting) and `spend_less` (true also asks Claude to spend less at each warning, and to wrap up when `hard_stop` is on; false only warns the user). "Turn budgets on/off" means `budgets_on`. Also show the daily budget
 (`daily_budget.enabled`: on Pro and Max, what is left
 of the week spread over the days left; off unless `enabled` is true, and it only shows in
 the pane and status line, never notifies or blocks, and ignores `budgets_on`), its beta
