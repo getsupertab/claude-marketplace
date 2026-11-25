@@ -821,7 +821,7 @@ test('the Options tab: auto-open through the config menu, the limits through the
   const tree = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   const t = texts(tree)
   expect(t.some(x => x.text === 'Open pane at session start')).toBe(true)
-  expect(t.filter(x => /^[A-Z][A-Z ]+$/.test(x.text) && x.props.dimColor).map(x => x.text)).toEqual(['OPTIONS', 'LIMITS', 'DAILY BUDGET', 'HANDOFF NOTE'])
+  expect(t.filter(x => /^[A-Z][A-Z ]+$/.test(x.text) && x.props.dimColor).map(x => x.text)).toEqual(['OPTIONS', 'LIMITS', 'HANDOFF NOTE'])
   // the units are in the names
   expect(t.filter(x => x.text.endsWith('(USD)')).map(x => x.text)).toEqual(['This session (USD)', 'Today (USD)'])
   expect(elements(tree, 'Button').find(b => b.key === 'auto-open')?.label).toBe('on')
@@ -852,21 +852,40 @@ test('the Options tab: auto-open through the config menu, the limits through the
   expect(elements(tree, 'Button').find(button => button.key === 'b-spend_less')?.label).toBe('off')
   await $.ui.press(press('b-spend_less'))
   expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'spend_less', 'on'])
-  // the daily budget: its switch, and the headline as a button that sets the next choice
-  expect(elements(tree, 'Button').find(b => b.key === 'b-daily_budget.enabled')?.label).toBe('on')
-  expect(elements(tree, 'Button').find(b => b.key === 'b-headline')?.label).toBe('five_hour')
-  await $.ui.press(press('b-headline'))
-  expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'headline', 'week'])
-  // carry-over is a beta switch beside it, off where the file has no such key yet
-  expect(t.some(x => x.text === 'Carry over (beta)')).toBe(true)
-  expect(elements(tree, 'Button').find(b => b.key === 'b-daily_budget.carry_over')?.label).toBe('off')
-  await $.ui.press(press('b-daily_budget.carry_over'))
-  expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'daily_budget.carry_over', 'on'])
+  // the daily budget is a share of the weekly window, which a USD account has none of
+  expect(elements(tree, 'Button').some(b => b.key === 'b-daily_budget.enabled' || b.key === 'b-headline')).toBe(false)
 
   // mobile has no Input: the values are shown
   const mobile = await $.ui.render({ surface: 'mobile', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   expect(elements(mobile, 'Input')).toEqual([])
   expect(texts(mobile).some(x => x.text === '40')).toBe(true)
+})
+
+test('the Options tab shows the daily budget once the plan reports a usage window', async ($, on) => {
+  mock.env(on, { HOME: '/home/t' })
+  const clock = mock.clock(on, { now: T0 })
+  const { ui } = world(on, FILES)
+  on('session.measure', ($, e) => ({ changed: e.changed }))
+  await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  await $.session.measure({ context: { window: 200000 }, rateLimits: [{ kind: 'seven_day', percentUsed: 7 }], changed: ['rateLimits'] })
+  await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
+  await $.ui.press(press('tab-options'))
+  const tree = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
+  const t = texts(tree)
+  expect(t.filter(x => /^[A-Z][A-Z ]+$/.test(x.text) && x.props.dimColor).map(x => x.text)).toEqual(['OPTIONS', 'LIMITS', 'DAILY BUDGET', 'HANDOFF NOTE'])
+  // its switch, and the headline as a button that sets the next choice
+  expect(elements(tree, 'Button').find(b => b.key === 'b-daily_budget.enabled')?.label).toBe('on')
+  expect(elements(tree, 'Button').find(b => b.key === 'b-headline')?.label).toBe('five_hour')
+  await $.ui.press(press('b-headline'))
+  expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'headline', 'week'])
+  // carry-over is a beta switch beside it, off where the file has no such key yet, with a line on what it does
+  expect(t.some(x => x.text === 'Carry over (beta)')).toBe(true)
+  expect(t.some(x => x.text === 'Unused budget rolls into the next day of this week; overspend shrinks it.' && x.props.dimColor)).toBe(true)
+  expect(elements(tree, 'Button').find(b => b.key === 'b-daily_budget.carry_over')?.label).toBe('off')
+  await $.ui.press(press('b-daily_budget.carry_over'))
+  expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'daily_budget.carry_over', 'on'])
+  const mobile = await $.ui.render({ surface: 'mobile', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   expect(texts(mobile).some(x => x.text === 'five_hour')).toBe(true)
 })
 

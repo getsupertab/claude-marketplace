@@ -442,9 +442,23 @@ def day_budget_pane_case(store, prices):
         CARRY = {"enabled": True, "carry_over": True}
         carried = kt.day_budget({"daily_budget": CARRY}, windows)
         line = kt.status_line(store, "fx", prices, {"headline": "today", "daily_budget": CARRY})
-        want_item = f"today {carried['frac'] * 100:.0f}% of budget ({carried['allowed']:.0f}% of week)"
+        want_item = f"today {carried['frac'] * 100:.0f}% of budget ({carried['allowed']:.0f}% of week"
         if not line.startswith(want_item):
             errs.append(f"status line with carry-over: {line!r}, want {want_item!r}")
+        # ...and what earlier days carried or overspent, with fixed figures since the real ones move with the clock
+        real_day_budget = kt.day_budget
+        try:
+            for daily, carried_in, want_size in ((14.3, 14.3, "(29% of week, +14% carried)"),
+                                                 (14.3, -5.7, "(9% of week, −6% overspent)"),
+                                                 (14.3, 0.4, "(15% of week)")):
+                allowed = daily + carried_in
+                kt.day_budget = lambda *_args, **_kw: {"used": 0.0, "allowed": allowed, "frac": 0.0, "base": 0.0,
+                                                       "cap": 100.0, "daily": daily, "carried": carried_in}
+                line = kt.status_line(store, "fx", prices, {"headline": "today", "daily_budget": CARRY})
+                if not line.startswith(f"today 0% of budget {want_size}"):
+                    errs.append(f"status line carried {carried_in}: {line!r}, want {want_size!r}")
+        finally:
+            kt.day_budget = real_day_budget
         s = kt.pane_report(store, "fx", prices, {"daily_budget": CARRY}, windows=windows)["session"]
         today = next(w for w in s["windows"] if w["scope"] == "today")
         if (today.get("daily"), today.get("carried")) != (carried["daily"], carried["carried"]):
