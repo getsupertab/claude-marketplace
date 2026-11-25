@@ -27,7 +27,9 @@ The files in this folder are plain Python 3, standard library only:
   was installed, or run while it was off, has calls with no ledger line. TokenTab adds
   them from the transcript, matched by request id, so a resumed session shows all it
   cost; the pane says how many. Their background calls are not in any transcript, so
-  those figures can be a little low. A call gets two minutes for its ledger line first.
+  those figures can be a little low. A call gets two minutes for its ledger line first,
+  and is then kept from the transcript. A forked session's copied calls stay with the
+  session they came from. Today's limit counts them in the pane and the guard alike.
 - **The guard uses whichever total is larger,** so a total never drops when one source
   is a line behind the other.
 - **Prices** come from `prices.json`, the published per-token rates. Five rates matter:

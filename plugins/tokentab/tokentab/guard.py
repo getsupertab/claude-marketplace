@@ -469,7 +469,10 @@ def main():
     except Exception:
         pass
     day_c, day_t = day_totals(today, prices)
-    # Other sessions today may send telemetry even if this one does not.
+    # Other sessions today may send telemetry even if this one does not. Calls the ledger
+    # missed count as the pane counts them, from what tokentab.py's backfill wrote.
+    backfilled = load(os.path.join(STATE, "backfill.json"), {})
+    l_dc += float(backfilled.get(today) or 0.0) if isinstance(backfilled, dict) else 0.0
     day_c, day_t = max(day_c, l_dc), max(day_t, l_dt)
 
     _, limits = limit_rows(b, {"session": cost, "today": day_c}, read_windows(sid)) if on else (None, [])
