@@ -1455,6 +1455,8 @@ def status_parts(store, sid, prices, budget, led=None):
     lead = plan_lead(budget, windows, day) or next(iter(items), None)
     order = ([lead] if lead else []) + [k for k in items if k != lead]
     button = items[lead][1] if lead else None
+    if day and lead != "today":
+        button += f" · {day['frac']*100:.0f}% today"
     if items and limit_unit(budget, windows) == "percent":
         return " · ".join([items[k][0] for k in order] + [dollars]), button   # the budget's unit leads
     return dollars, button                                            # the engine draws the plugin name before the line
