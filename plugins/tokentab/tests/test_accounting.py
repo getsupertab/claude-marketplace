@@ -450,6 +450,7 @@ def day_budget_pane_case(store, prices):
         try:
             for daily, carried_in, want_size in ((14.3, 14.3, "(29% of week, +14% carried)"),
                                                  (14.3, -5.7, "(9% of week, −6% overspent)"),
+                                                 (14.3, 0.5, "(15% of week)"),
                                                  (14.3, 0.4, "(15% of week)")):
                 allowed = daily + carried_in
                 kt.day_budget = lambda *_args, **_kw: {"used": 0.0, "allowed": allowed, "frac": 0.0, "base": 0.0,

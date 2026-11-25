@@ -1728,12 +1728,12 @@ function optionsTab($: EngineInterface, e: RenderEvent): RenderChildren {
         row('auto-open', 'Open pane at session start', column(toggle('auto-open', autoOpen(), () => {}))),
       ])}
       {o?.error !== undefined && <Text size="footnote" color="error">{o.error}</Text>}
-      {SECTIONS.filter(sec => sec.unit === undefined || sec.unit === unit).flatMap(sec => [
-        rule($, e, `rule-${sec.title}`),
-        section(sec.title, sec.toggle && control(sec.toggle), [
-          ...sec.rows.map(r => inUnit(r, unit)).map(s => row(s.key, s.unit === undefined ? s.label : `${s.label} (${s.unit})`, control(s), o?.errors[s.key], s.note)),
-          sec.toggle !== undefined && o?.errors[sec.toggle.key] !== undefined
-            && <Text size="footnote" key="toggle-error" color="error">{o.errors[sec.toggle.key]}</Text>,
+      {SECTIONS.filter(settingsSection => settingsSection.unit === undefined || settingsSection.unit === unit).flatMap(settingsSection => [
+        rule($, e, `rule-${settingsSection.title}`),
+        section(settingsSection.title, settingsSection.toggle && control(settingsSection.toggle), [
+          ...settingsSection.rows.map(r => inUnit(r, unit)).map(s => row(s.key, s.unit === undefined ? s.label : `${s.label} (${s.unit})`, control(s), o?.errors[s.key], s.note)),
+          settingsSection.toggle !== undefined && o?.errors[settingsSection.toggle.key] !== undefined
+            && <Text size="footnote" key="toggle-error" color="error">{o.errors[settingsSection.toggle.key]}</Text>,
         ]),
       ])}
     </Box>

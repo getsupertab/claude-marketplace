@@ -1452,9 +1452,10 @@ def status_parts(store, sid, prices, budget, led=None):
         size = ""
         if "carried" in day:
             carried = day["carried"]
-            # Under 0.5 rounds to "0%", which names nothing (a week's first day)
-            moved = "" if abs(carried) < 0.5 else \
-                f", {'−' if carried < 0 else '+'}{abs(carried):.0f}% {'overspent' if carried < 0 else 'carried'}"
+            # "0%" names nothing (a week's first day); the check is on the text since 0.5 rounds to even
+            amount = f"{abs(carried):.0f}"
+            moved = "" if amount == "0" else \
+                f", {'−' if carried < 0 else '+'}{amount}% {'overspent' if carried < 0 else 'carried'}"
             size = f" ({day['allowed']:.0f}% of week{moved})"
         items["today"] = (f"today {day['frac']*100:.0f}% of budget{size}",
                           f"{day['frac']*100:.0f}% of today's budget")

@@ -853,7 +853,7 @@ test('the Options tab: auto-open through the config menu, the limits through the
   await $.ui.press(press('b-spend_less'))
   expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'spend_less', 'on'])
   // the daily budget is a share of the weekly window, which a USD account has none of
-  expect(elements(tree, 'Button').some(b => b.key === 'b-daily_budget.enabled' || b.key === 'b-headline')).toBe(false)
+  expect(elements(tree, 'Button').some(button => button.key === 'b-daily_budget.enabled' || button.key === 'b-headline')).toBe(false)
 
   // mobile has no Input: the values are shown
   const mobile = await $.ui.render({ surface: 'mobile', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
