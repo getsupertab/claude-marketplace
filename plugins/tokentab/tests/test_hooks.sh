@@ -116,6 +116,14 @@ pyline() { "$REAL" -c "import datetime as d; $1"; }
 TODAY="$(pyline 'print(d.date.today().isoformat())')"
 RESET="$(pyline 'print(d.datetime.combine(d.date.today() + d.timedelta(3), d.time()).astimezone().astimezone(d.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))')"
 printf '{"%s": {"day": "%s", "base": 0, "last": 0}}\n' "$RESET" "$TODAY" > "$DATA/state/week_baseline.json"
+
+# Calls the ledger missed count toward today as the pane counts them, from tokentab.py's backfill.json
+printf '{"budgets_on": true, "session_limit_usd": null, "daily_limit_usd": 1, "hard_stop": true}\n' > "$DATA/budget.json"
+check "guard passes under the daily limit" "$(tool Read "" | "$SCRIPTS/guard.sh")" ""
+printf '{"%s": 5}\n' "$TODAY" > "$DATA/state/backfill.json"
+check "guard counts today's backfilled calls against the daily limit" \
+  "$(tool Read "" | "$SCRIPTS/guard.sh")" '"permissionDecision": "deny"'
+rm "$DATA/state/backfill.json"
 week() { printf '{"windows": [{"kind": "seven_day", "percentUsed": %s, "resetsAt": "%s"}]}\n' "$1" "$RESET" > "$DATA/state/windows/s-guard.json"; }
 for cfg in '"enabled": true' '"enabled": false' '"enabled": true, "warn_at_percent": 80'; do
   for budgets in false true; do
