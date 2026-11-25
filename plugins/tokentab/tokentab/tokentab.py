@@ -433,6 +433,7 @@ class Store:
         self.events = []           # (epoch_seconds, cost) for rate windows
         self.prompts = {}          # session_id -> epochs of the user's prompts
         self.think = {}            # requestId -> thinking tokens (telemetry lacks them; see LedgerStore.reconcile)
+        self.req_of = {}           # requestId -> (session_id, model, time of its latest line), for LedgerStore.backfill
         self.titles = {}           # session_id -> (rank, title): the user's own title (2) beats the generated one (1)
         self.cwd_of = {}           # session_id -> working directory its transcript names
         self.proj_cwd = {}         # project slug -> a working directory seen in it
@@ -571,6 +572,13 @@ class Store:
                     u = usage_delta(prev, u)
             sid = o.get("sessionId") or "unknown"
             ts = parse_ts(o.get("timestamp"))
+            if o.get("requestId"):
+                # A resumed copy repeats the request id: the session it came from keeps it, as above.
+                was = self.req_of.get(o["requestId"])
+                if was is None:
+                    self.req_of[o["requestId"]] = (sid, msg.get("model") or "unknown", ts)
+                elif ts and (not was[2] or ts > was[2]):
+                    self.req_of[o["requestId"]] = (was[0], was[1], ts)
             b = self.sessions.setdefault(sid, Bucket())
             before, tbefore = b.cost, b.tokens
             b.add(u, msg.get("model") or "unknown", self.prices, ts, msg.get("content") or [], dup,
@@ -619,6 +627,8 @@ class Store:
 
 
 MATCH_USD = 0.0005   # within this, Claude Code's figure and ours count as the same price
+BACKFILL_AFTER = 120  # seconds after a call's last transcript line; its ledger line is written by then
+BACKFILL_SOURCE = "unrecorded (transcript)"   # the call source backfilled calls are filed under
 
 def write_ttl(e, prices):
     """The rate a ledger line's cache write was billed at, "1h" or "5m". Telemetry does
@@ -671,6 +681,8 @@ class LedgerStore:
         self.sessions = {}
         self.events = []
         self.reqs = {}        # request_id -> [session, model, output tokens, thinking tokens filed, series entry]
+        self.blind = set()    # sessions with a line that has no request id: the transcript cannot be matched to them
+        self.filled = set()   # request ids backfill added from the transcripts
         self.read_bytes = self.read_files = 0
         self.rewound, self.gone = [], []
 
@@ -687,6 +699,23 @@ class LedgerStore:
                 b = self.sessions[r[0]]
                 b.move(r[1], "output", "thinking", (th - r[3]) * rate(self.prices, r[1], "output") / 1_000_000.0, r[4])
                 b.think += th - r[3]; r[3] = th
+
+    def backfill(self, store):
+        """Transcript calls with no ledger line (a session from before TokenTab was installed,
+        or run with it off) are added by request id, so a resumed session shows all it cost.
+        Run only on the stores scanned() has already saved: a ledger line that comes later
+        replaces the estimate on the next run. Calls newer than BACKFILL_AFTER may still get one."""
+        cut = time.time() - BACKFILL_AFTER
+        for rid, (sid, model, ts) in store.req_of.items():
+            if rid in self.reqs or rid in self.filled or sid in self.blind or not ts or ts.timestamp() > cut:
+                continue
+            b = self.sessions.setdefault(sid, Bucket())
+            before, tbefore = b.cost, b.tokens
+            b.add(store.seen[rid], model, self.prices, ts, source=BACKFILL_SOURCE)
+            t = ts.timestamp()
+            self.events.append((t, b.cost - before, b.tokens - tbefore))
+            b.calls.append((t, b.cost - before))
+            self.filled.add(rid)
 
     def unmatched(self, sid, store):
         """Output tokens of this session's calls with no transcript line (background
@@ -719,6 +748,8 @@ class LedgerStore:
                     e = json.loads(line)
                 except ValueError:
                     continue
+                if e.get("request_id") in self.filled:
+                    continue                  # a long-running scan backfilled it already
                 t = e.get("tokens") or {}
                 u = {"input_tokens": t.get("input"), "output_tokens": t.get("output"),
                      "cache_read_input_tokens": t.get("cache_read"),
@@ -731,6 +762,8 @@ class LedgerStore:
                 if e.get("request_id"):
                     self.reqs[e["request_id"]] = [e.get("session_id") or "unknown", e.get("model") or "unknown",
                                                   int(t.get("output") or 0), 0, b._open]
+                else:
+                    self.blind.add(e.get("session_id") or "unknown")
                 d = price_drift(e, self.prices)
                 if d:
                     dm = b.drift.setdefault(e.get("model") or "unknown", [0, 0.0])
@@ -1181,14 +1214,19 @@ SOURCE_LINE = "data: ledger (every API call, helpers and background calls includ
 
 def source(store, led, sid):
     """(bucket, store) for this session: the ledger's, reconciled with the transcripts
-    for the thinking split. The ledger is complete for every session the plugin loaded
-    in, so transcripts are never a fallback for totals; a session with no ledger lines
-    yet shows as waiting. Without a ledger store (library use, the tests) the transcript
-    bucket is reported instead."""
+    for the thinking split and backfilled with the transcript calls it has no line for,
+    in every session, so today and this month count them too. Without a ledger store
+    (library use, the tests) the transcript bucket is reported instead."""
     if led is None:
         return store.sessions.get(sid), store
     led.reconcile(store)              # thinking counts come from the transcripts
+    led.backfill(store)
     return led.sessions.get(sid), led
+
+
+def backfilled(b):
+    """[calls, USD] of the session's calls read from its transcript, or None."""
+    return b.by_source.get(BACKFILL_SOURCE) if b else None
 
 
 def report(store, sid, prices, budget, show_all, led=None):
@@ -1200,8 +1238,10 @@ def report(store, sid, prices, budget, show_all, led=None):
          "bucket": b, "transcript": tb}   # the buckets themselves, for the Sankey
     if not b:
         return R
+    filled = backfilled(b)
     R["session"] = {"title": store.title(sid), "models": sorted(b.models), "since": b.first.astimezone() if b.first else None,
-                    "source": SOURCE_LINE}
+                    "source": SOURCE_LINE if not filled else
+                    f"{SOURCE_LINE}, and {filled[0]} calls it has no line for, from the transcript (their background calls are not in it)"}
     rows = [
         ("input",            b.inp,  "input"),
         ("cache write 1h",   b.cw1h, "cache_write_1h"),
@@ -1435,6 +1475,9 @@ def pane_report(store, sid, prices, budget, led=None, windows=None):
         "hard_stop": bool(budget.get("hard_stop")),
         "headline": lead,
     }
+    filled = backfilled(b)
+    if filled:
+        out["session"]["backfilled"] = {"calls": filled[0], "cost": filled[1]}
     out["rates"] = [{"label": r["label"], "key": r["key"], "tokens": r["tokens"], "cost": r["cost"], "share": r["share"]}
                     for r in R["rates"]]
     out["total"] = {"tokens": R["total"]["tokens"], "cost": R["total"]["cost"]}

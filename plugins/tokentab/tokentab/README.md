@@ -23,6 +23,11 @@ The files in this folder are plain Python 3, standard library only:
 - **Transcripts fill in the rest.** Claude Code's session transcripts (including each
   helper's) supply what the ledger lacks: which tool a call was for, and how much of the
   output was thinking.
+- **Calls the ledger missed come from the transcript.** A session from before TokenTab
+  was installed, or run while it was off, has calls with no ledger line. TokenTab adds
+  them from the transcript, matched by request id, so a resumed session shows all it
+  cost; the pane says how many. Their background calls are not in any transcript, so
+  those figures can be a little low. A call gets two minutes for its ledger line first.
 - **The guard uses whichever total is larger,** so a total never drops when one source
   is a line behind the other.
 - **Prices** come from `prices.json`, the published per-token rates. Five rates matter:

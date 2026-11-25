@@ -544,6 +544,14 @@ test('Spend without a limit has no bar and no badge; before the first call it sa
   await clock.advance(1000)
   const tools = await $.ui.render({ surface: 'desktop', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   expect(texts(tools).some(x => x.text === 'No tool calls in this session yet.')).toBe(true)
+  expect(texts(tools).some(x => x.text.includes('TokenTab did not record'))).toBe(false)
+
+  // a resumed session whose earlier calls TokenTab did not record: the pane says how much came from the transcript
+  report.value = { ...REPORT, session: { ...REPORT.session!, backfilled: { calls: 7, cost: 1.07 } } }
+  await $.telemetry.log(request({}))
+  await clock.advance(1000)
+  const filled = await $.ui.render({ surface: 'desktop', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
+  expect(texts(filled).some(x => x.text.startsWith('Includes $1.07 from 7 calls TokenTab did not record'))).toBe(true)
 })
 
 test("Spend's details: per tool its calls, cost, a bar against the costliest and its three figures", async ($, on) => {

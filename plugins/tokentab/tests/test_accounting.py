@@ -555,6 +555,7 @@ def main():
     errs += series_check(b, "transcript", store)
     errs += ledger_case(root, store, prices)
     errs += ledger_5m_case(prices)
+    errs += backfill_case(prices)
     errs += utf8_case(root, prices)
     errs += locked_page_case(root)
     errs += names_case(prices)
@@ -745,6 +746,74 @@ def ledger_5m_case(prices):
         errs.append(f"ledger 5m: drift {drift}, want one call on line 5 only")
     if kt.report(kt.Store(prices), "f5-5", prices, {}, False, led)["prices_verified"] or not kt.report(kt.Store(prices), "f5-0", prices, {}, False, led)["prices_verified"]:
         errs.append("ledger 5m: the report's prices_verified does not follow the drift")
+    return errs
+
+
+def backfill_case(prices):
+    """A resumed session whose earlier calls have no ledger line (TokenTab off or not yet
+    installed) shows them from the transcript, matched by request id: never twice, not
+    a call too recent for its ledger line, not in a session whose ledger lines carry no id."""
+    errs = []
+    keep = kt.ROOT, kt.CFG
+    root = tempfile.mkdtemp()
+    kt.ROOT, kt.CFG = os.path.join(root, "projects"), os.path.join(root, "cfg")
+    try:
+        os.makedirs(os.path.join(kt.ROOT, "p"))
+        os.makedirs(os.path.join(kt.CFG, "ledger", "2026-10-13"))
+        old = lambda n: f"2026-10-13T09:00:{n:02d}.000Z"
+        now = kt.datetime.now(kt.timezone.utc).isoformat()
+        u = usage(i=10, r=1000, w1=500, o=100, th=20)
+        calls = {"none": [("n1", old(1)), ("n2", old(2))],              # no ledger line at all
+                 "part": [("p1", old(3)), ("p2", old(4)), ("p3", now)],  # p1 in the ledger, p3 too recent
+                 "blind": [("b1", old(5)), ("b2", old(6))]}              # its ledger line has no request id
+        for sid, reqs in calls.items():
+            with open(os.path.join(kt.ROOT, "p", f"{sid}.jsonl"), "w", encoding="utf-8") as f:
+                for rid, at in reqs:
+                    for o in (dict(user("go"), sessionId=sid),
+                              dict(asst(rid, OPUS, u, {"type": "text", "text": "ok"}), sessionId=sid, timestamp=at)):
+                        f.write(json.dumps(o) + "\n")
+        led_line = lambda sid, rid: {"ts": old(0), "session_id": sid, "model": OPUS, "request_id": rid,
+                                     "query_source": "repl_main_thread",
+                                     "tokens": {"input": 10, "output": 100, "cache_read": 1000, "cache_write": 500}}
+        ledger = os.path.join(kt.CFG, "ledger", "2026-10-13", "l.jsonl")
+        with open(ledger, "w", encoding="utf-8") as f:
+            for e in (led_line("part", "p1"), led_line("blind", None)):
+                f.write(json.dumps(e) + "\n")
+        store, led = kt.Store(prices), kt.LedgerStore(prices)
+        store.scan(); led.scan()
+        one = store.sessions["none"].cost / 2       # one call's price, thinking split as the transcript has it
+        for _ in range(2):                          # a second report backfills nothing more
+            rep = kt.pane_report(store, "none", prices, {}, led, windows={})
+        s = rep["session"]
+        if not s or abs(s["cost"] - 2 * one) > 1e-9 or s.get("backfilled", {}).get("calls") != 2:
+            errs.append(f"backfill: a session with no ledger line should show both calls: {s}")
+        part = kt.pane_report(store, "part", prices, {}, led, windows={})["session"]
+        if abs(part["cost"] - led.sessions["part"].cost) > 1e-12 or part["msgs"] != 2 \
+                or part.get("backfilled", {}).get("calls") != 1:
+            errs.append(f"backfill: p1 from the ledger, p2 from the transcript, p3 waits: {part}")
+        if kt.pane_report(store, "blind", prices, {}, led, windows={})["session"].get("backfilled"):
+            errs.append("backfill: a session with an id-less ledger line cannot be matched and gets none")
+        if abs(sum(x["cost"] for x in rep["sessions"]) - rep["month"]) > 1e-9:
+            errs.append("backfill: the month's sessions do not sum to the month")
+        if "from the transcript" not in (kt.report(store, "none", prices, {}, False, led)["session"] or {}).get("source", ""):
+            errs.append("backfill: the live view should say some calls come from the transcript")
+        # p2's ledger line arrives while a live view still holds the backfilled stores: kept once
+        with open(ledger, "a", encoding="utf-8") as f:
+            f.write(json.dumps(led_line("part", "p2")) + "\n")
+        cost = led.sessions["part"].cost
+        led.scan(); kt.source(store, led, "part")
+        if abs(led.sessions["part"].cost - cost) > 1e-12:
+            errs.append("backfill: a ledger line for a backfilled call counted it twice")
+        # The next run starts from the saved stores, which hold the ledger alone: p2 is the ledger's now
+        store, led = kt.Store(prices), kt.LedgerStore(prices)
+        store.scan(); led.scan(); kt.source(store, led, "part")
+        if "p2" in led.filled or led.sessions["part"].by_source.get(kt.BACKFILL_SOURCE, [0])[0] != 0:
+            errs.append("backfill: p2 has a ledger line and should not be backfilled on a new run")
+    finally:
+        kt.ROOT, kt.CFG = keep
+    print("[backfill] " + ("OK" if not errs else "FAIL"))
+    for e in errs:
+        print("   ", e)
     return errs
 
 

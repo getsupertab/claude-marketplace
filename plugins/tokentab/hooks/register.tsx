@@ -429,6 +429,8 @@ export type Report = {
     /** In USD, the checked limit the hero does not lead with: `$4.80 of $5.00`. */
     other_limit?: { scope: 'session' | 'today'; limit: string; frac: number } | null
     hard_stop: boolean
+    /** Calls the ledger has no line for (TokenTab off or not yet installed), read from the transcript. */
+    backfilled?: { calls: number; cost: number }
     /** What leads, budget.json's `headline` resolved for this account: a window, today (the daily
      *  budget under percent, today's spend in USD) or this session's spend. Null from an older report. */
     headline?: PlanWindow['scope'] | 'session' | null
@@ -1656,6 +1658,9 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
           </Box>
         )}
         {!r.prices_verified && <Text size="footnote" color="warning">Prices unverified: TokenTab's price table is behind for a model used here, so the figures are estimates.</Text>}
+        {s.backfilled && (
+          <Text size="footnote" dimColor>{`Includes ${usd(s.backfilled.cost)} from ${int(s.backfilled.calls)} ${s.backfilled.calls === 1 ? 'call' : 'calls'} TokenTab did not record, read from the transcript. Their background calls are not in it.`}</Text>
+        )}
       </Box>
       {rule($, e)}
       {allSessions}
