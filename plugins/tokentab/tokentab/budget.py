@@ -27,6 +27,10 @@ HEADLINES = ("auto", "session", "today", "five_hour", "week")
 TRUE, FALSE = ("on", "true", "yes", "1"), ("off", "false", "no", "0")
 # Switches that are null until set, following another key; "auto" sets them back to null
 FOLLOWS = {"spend_less": "hard_stop"}
+AUTO = ("auto", "default", "null", "none")
+# 1.8.0-1.9.0 shipped spend_less false under this comment, where false was the default, not a choice
+SPEND_LESS_1_8_COMMENT = ("true also asks Claude to spend less (cheaper actions, shorter replies, and with "
+                          "hard_stop on, to wrap up) at each warning. false (the default) only warns you.")
 
 
 def load():
@@ -36,7 +40,8 @@ def load():
 
 def upgraded(cfg):
     """cfg with the keys the shipped file has and cfg lacks, in the shipped order, one level into objects,
-    and the shipped _comment texts. register.tsx's withNewKeys does the same."""
+    the shipped _comment texts, and a 1.8-1.9 spend_less false put back to null. register.tsx's
+    withNewKeys does the same."""
     with open(SHIPPED, encoding="utf-8") as f:
         shipped = json.load(f)
     def merged(key, shipped_value):
@@ -46,8 +51,11 @@ def upgraded(cfg):
         if isinstance(shipped_value, dict) and isinstance(mine, dict):
             return {**shipped_value, **mine}
         return mine
-    return {**{key: merged(key, value) for key, value in shipped.items()},
-            **{key: value for key, value in cfg.items() if key not in shipped}}
+    out = {**{key: merged(key, value) for key, value in shipped.items()},
+           **{key: value for key, value in cfg.items() if key not in shipped}}
+    if cfg.get("_spend_less_comment") == SPEND_LESS_1_8_COMMENT and cfg.get("spend_less") is False:
+        out["spend_less"] = None
+    return out
 
 
 def lookup(cfg, key):
@@ -77,12 +85,12 @@ def parse(key, old, raw):
         return text
     if isinstance(old, str):
         raise ValueError(f"{key}: edit this one in the file")
-    if leaf in FOLLOWS and text == "auto":
+    if leaf in FOLLOWS and text in AUTO:
         return None
     if isinstance(old, bool) or (old is None and leaf in FOLLOWS):
         if text in TRUE: return True
         if text in FALSE: return False
-        raise ValueError(f"{key}: on or off, not {raw!r}")
+        raise ValueError(f"{key}: on, off or auto, not {raw!r}" if leaf in FOLLOWS else f"{key}: on or off, not {raw!r}")
     if isinstance(old, (list, dict)):
         raise ValueError(f"{key}: edit this one in the file")
     if text in ("", "off", "none", "null"):

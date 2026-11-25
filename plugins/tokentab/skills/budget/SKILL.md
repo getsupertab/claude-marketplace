@@ -50,7 +50,7 @@ the user can ask for a change with `/tokentab:budget <what to change>`.
 
    Where `python3` is missing or is not Python 3 (Windows), run the same with `python`, else `py -3`, in its place.
    KEY is dotted for nested settings (`cold_resume.confirm_seconds`); VALUE is a number, `off` for a
-   limit switched off, `on`/`off` for a switch, `auto`, `session`, `today`, `five_hour` or `week` for `headline`. It refuses a value that does not fit or a
+   limit switched off, `on`/`off` for a switch (also `auto` for `spend_less`, back to following `hard_stop`), `auto`, `session`, `today`, `five_hour` or `week` for `headline`. It refuses a value that does not fit or a
    key that does not exist, and keeps the file's order and comments. `budget.py get` prints
    the file.
 3. Show the new values. They apply from the next prompt; no restart is needed. The same

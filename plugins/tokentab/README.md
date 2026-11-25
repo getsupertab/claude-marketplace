@@ -182,7 +182,8 @@ past the limit. Whether Claude hears the warnings too is `spend_less` (beta, "As
 less" on the Options tab): on, Claude is asked to spend less, or to wrap up under a hard stop; off,
 the warnings are yours alone. Until you set it, it follows `hard_stop`, so a hard stop warns Claude
 before blocking it and a warn-only budget tells only you. With `hard_stop` on and `spend_less` off,
-Claude hears nothing until its tool calls are blocked at 100%.
+Claude hears nothing until its tool calls are blocked at 100%. 1.8.0 and 1.9.0 wrote `false` as their
+default; 1.10.0 puts it back to following `hard_stop` once, so if you had chosen off, switch it off again.
 
 On a Pro or Max plan the limits count in percent of the plan's 5-hour and weekly usage
 windows instead, 80% and 90% by default. TokenTab picks the unit from your account: percent

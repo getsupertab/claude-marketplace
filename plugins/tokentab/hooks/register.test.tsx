@@ -1,7 +1,7 @@
 import { test, expect, mock } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On, RenderElement, RenderNode } from 'claude-code'
-import { at, barCells, barSvg, chevronSvg, COPY_HANDOFF, dataDir, DONT_SEND, freshNote, HANDOFF_DEFAULTS, HANDOFF_PROMPT, handoffPrompt, handoffStep, HELD_HANDOFF, NEW_CHAT, SEND_HERE, inUnit, int, liveLines, pct, reopenLabel, SECTIONS, SERIES, shareCard, shareCardSvg, shareLinks, sharePageHtml, shareText, shown, stripAnsi, switchOn, timedOut, toneOf, ttlOf, unitOf, usd, weekBaseline, withNewKeys, wrapWords } from './register'
+import { at, barCells, barSvg, chevronSvg, COPY_HANDOFF, dataDir, DONT_SEND, freshNote, HANDOFF_DEFAULTS, HANDOFF_PROMPT, handoffPrompt, handoffStep, HELD_HANDOFF, NEW_CHAT, SEND_HERE, inUnit, int, liveLines, noteOf, pct, reopenLabel, SECTIONS, SERIES, shareCard, shareCardSvg, shareLinks, sharePageHtml, shareText, shown, SPEND_LESS_1_8_COMMENT, stripAnsi, switchOn, timedOut, toneOf, ttlOf, unitOf, usd, weekBaseline, withNewKeys, wrapWords } from './register'
 import type { Idle, Report } from './register'
 
 // The world beneath the plugin: `$.fs` reaches nothing under `claude plugin test`, and
@@ -867,6 +867,21 @@ test('the Options tab: auto-open through the config menu, the limits through the
   expect(texts(mobile).some(x => x.text === '40')).toBe(true)
 })
 
+test('the Options tab: spend_less, while unset, shows hard stop\'s on and stores off when pressed', async ($, on) => {
+  mock.env(on, { HOME: '/home/t' })
+  const clock = mock.clock(on, { now: T0 })
+  const { ui } = world(on, { ...FILES, '/tokentab/budget.json': JSON.stringify({ ...JSON.parse(BUDGET), hard_stop: true, spend_less: null }) })
+  await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
+  await $.ui.press(press('tab-options'))
+  const tree = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
+  expect(elements(tree, 'Button').find(button => button.key === 'b-spend_less')?.label).toBe('on')
+  expect(texts(tree).some(text => text.text === 'Follows hard stop until you set it.')).toBe(true)
+  await $.ui.press(press('b-spend_less'))
+  expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'spend_less', 'off'])
+})
+
 test('the Options tab shows the daily budget once the plan reports a usage window', async ($, on) => {
   mock.env(on, { HOME: '/home/t' })
   const clock = mock.clock(on, { now: T0 })
@@ -907,6 +922,14 @@ test('the limit unit follows the account: percent where the plan reports a usage
   const spendLess = SECTIONS.flatMap(section => section.rows).find(row => row.key === 'spend_less')!
   expect([{ hard_stop: true }, { hard_stop: true, spend_less: null }, { hard_stop: false }, { hard_stop: true, spend_less: false }, { hard_stop: false, spend_less: true }]
     .map(budget => switchOn(budget, spendLess))).toEqual([true, true, false, false, true])
+  expect(noteOf({ hard_stop: true }, spendLess)).toBe('Follows hard stop until you set it.')
+  expect(noteOf({ spend_less: false }, spendLess)).toBe('Set by you; /tokentab:budget spend_less auto follows hard stop again.')
+  // a 1.8–1.9 false was that version's default: it follows hard_stop again, once; a newer file's false stays
+  expect(withNewKeys({ _spend_less_comment: SPEND_LESS_1_8_COMMENT, spend_less: false }, { _spend_less_comment: 'new', spend_less: null }))
+    .toEqual({ _spend_less_comment: 'new', spend_less: null })
+  expect(withNewKeys({ _spend_less_comment: SPEND_LESS_1_8_COMMENT, spend_less: true }, { _spend_less_comment: 'new', spend_less: null }))
+    .toEqual({ _spend_less_comment: 'new', spend_less: true })
+  expect(withNewKeys({ _spend_less_comment: 'new', spend_less: false }, { _spend_less_comment: 'new', spend_less: null })).toBeUndefined()
   // a newer version's keys join the user's file in the shipped order, the user's values kept
   expect(withNewKeys({ a: 1, b: 2 }, { a: 0, b: 0 })).toBeUndefined()
   expect(JSON.stringify(withNewKeys({ b: 5, x: 1 }, { a: 0, b: 0, c: 3 }))).toBe('{"a":0,"b":5,"c":3,"x":1}')
