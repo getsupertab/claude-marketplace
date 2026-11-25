@@ -467,7 +467,6 @@ export const pct = (share: number): string => `${Math.round(share * 100)}%`
 
 /** Percent of a limit left at which the guard warns; fixed, the same as WARN_LEFT in tokentab.py. */
 export const WARN_LEFT = [10, 5, 2] as const
-const WARN_TEXT = `warns at ${WARN_LEFT.map(left => `${left}%`).join(', ')} left`
 
 /** How close a scope is to its limit: error at 100% and over, warning from the first WARN_LEFT mark. */
 export type Tone = 'success' | 'warning' | 'error'
@@ -1485,8 +1484,8 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
         {todayLeads ? `${named}${tone === 'error' ? 'Over' : 'Warning'}`
           : tone === 'error' ? `Over · ${pct(worst)}` : tone === 'warning' ? `Warning · ${pct(worst)}` : `${pct(worst)} used`}
       </Text>
-  const mode = lead?.scope === 'today' ? `never blocks, amber at ${WARN_LEFT[0]}% left`
-    : `${s.hard_stop ? 'hard stop' : 'warn only'}, ${WARN_TEXT}`
+  const mode = lead?.scope === 'today' ? 'never blocks'
+    : s.hard_stop ? 'hard stop' : 'warn only'
   // Today's budget is always read as a share of itself; the week's figures follow, named as such
   // Under 0.05 rounds to "0%", which names nothing (a week's first day)
   const carriedText = (w: PlanWindow) => (w.carried === undefined || Math.abs(w.carried) < 0.05 ? ''

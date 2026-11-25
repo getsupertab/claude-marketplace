@@ -435,7 +435,7 @@ test('an interactive session opens the pane and draws the Spend tab', async ($, 
   expect(find('SESSION SPEND')?.props).toEqual({ size: 'footnote', dimColor: true })
   expect(find('$3.61')?.props).toEqual({ size: 'title', weight: 'bold', tabular: true })
   expect(find('Over · 181%')?.props).toEqual({ size: 'footnote', weight: 'semibold', color: 'error' })
-  expect(find('$3.61 of $2.00 · 532,533 tokens · warn only, warns at 10%, 5%, 2% left')).toBeDefined()
+  expect(find('$3.61 of $2.00 · 532,533 tokens · warn only')).toBeDefined()
   // the breakdown: a row per rate with its dot in the series colour, the total, the note;
   // then the tools' legend
   expect(t.filter(x => x.text === '● ').map(x => x.props.color)).toEqual(
@@ -499,7 +499,7 @@ test('Spend on a percent budget leads with the window; dollars below, at API rat
   expect(t.some(x => x.text === 'PLAN USAGE')).toBe(true)
   expect(t.find(x => x.text === '8%')?.props.size).toBe('title')
   for (const line of ['of 5-hour window · limit 80% · resets 16:00', 'week 21%, limit 90% · resets Thu 09:00',
-    '$3.61 at API rates · 532,533 tokens · hard stop, warns at 10%, 5%, 2% left', '23% used']) expect(t.some(x => x.text === line)).toBe(true)
+    '$3.61 at API rates · 532,533 tokens · hard stop', '23% used']) expect(t.some(x => x.text === line)).toBe(true)
   expect(elements(tree, 'Svg').filter(s => s.alt !== 'separator' && !String(s.alt).startsWith('chevron'))[0]!.alt).toBe('10% of the 5-hour window limit')
 
   // a USD budget on a subscription: dollars lead, labelled as API rates
