@@ -180,6 +180,8 @@ Once on, the defaults are $25 per session and $40 per day. TokenTab warns with 1
 2% of a limit left, and at 100%. It only warns unless you switch on `hard_stop`, which blocks tool calls
 past the limit. The warnings are yours alone: Claude is only asked to spend less, or to wrap
 up under a hard stop, when you switch on `spend_less` ("Ask Claude to spend less" on the Budget tab).
+Before 1.8.0 a hard stop always asked Claude to wrap up; with `hard_stop` on and `spend_less`
+off, Claude now hears nothing until its tool calls are blocked at 100%.
 
 On a Pro or Max plan the limits count in percent of the plan's 5-hour and weekly usage
 windows instead, 80% and 90% by default. TokenTab picks the unit from your account: percent
