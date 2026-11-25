@@ -56,6 +56,8 @@ def parse(key, old, raw):
     leaf = key.split(".")[-1]
     if leaf == "limit_unit":   # an old file may still hold it
         raise ValueError(f"{key}: no longer a setting; the account decides (percent on Pro and Max, else USD)")
+    if leaf == "warn_at_percent":
+        raise ValueError(f"{key}: no longer a setting; TokenTab {kt.WARN_TEXT} of a limit")
     text = str(raw).strip().lower().replace(",", "").replace("$", "").rstrip("%").strip()
     if leaf == "headline":
         if text not in HEADLINES:

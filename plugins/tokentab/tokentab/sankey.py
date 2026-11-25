@@ -679,9 +679,9 @@ RATE_NOTE = {"input": "new input, not cached", "cache_write_1h": "saving context
 UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
 
 
-def tone(frac, warn_at):
-    """How close a scope is to its limit, as the pane's toneOf: over at 100%, warning from warn_at."""
-    return "error" if frac >= 1 else ("warning" if frac * 100 >= warn_at else "success")
+def tone(frac):
+    """How close a scope is to its limit, as the pane's toneOf: over at 100%, warning from kt.WARN_AT."""
+    return "error" if frac >= 1 else ("warning" if frac * 100 >= kt.WARN_AT else "success")
 
 
 def dot(series):
@@ -731,7 +731,7 @@ def spend_tile(P, R):
     api = " at API rates" if s["plan"] else ""
     badge = ""
     if worst is not None:
-        t = tone(worst, s["warn_at"])
+        t = tone(worst)
         badge = (f'<span class="chip {t}">' + ("Over · " if t == "error" else "Warning · " if t == "warning" else "")
                  + pct(worst) + ("" if t != "success" else " used") + "</span>")
     resets = lambda w: f' · resets {w["resets"]}' if w.get("resets") else ""
@@ -752,10 +752,10 @@ def spend_tile(P, R):
         bg = R.get("budget") or {}
         lines += [f'{r["name"]} {r["parts"][0]}' for r in bg.get("lines") or []
                   if r["scope"] != "session" and bg.get("unit") == "usd"]
-    lines.append(f'{"hard stop" if s["hard_stop"] else "warn only"} · warns at {s["warn_at"]}%' if frac is not None
+    lines.append(f'{"hard stop" if s["hard_stop"] else "warn only"} · {kt.WARN_TEXT}' if frac is not None
                  else "limits off" if not s["limits_on"]
                  else "no window limit set or no reading yet" if s["unit"] == "percent" else "no session limit set")
-    meter = (f'<div class="sbar hbar"><i style="width:{min(frac, 1) * 100:.2f}%;background:var(--s-{tone(frac, s["warn_at"])})"></i></div>'
+    meter = (f'<div class="sbar hbar"><i style="width:{min(frac, 1) * 100:.2f}%;background:var(--s-{tone(frac)})"></i></div>'
              if frac is not None else "")
     small = "".join(f'<div class="m">{esc(x)}</div>' for x in lines)
     return (f'<div class="kpi lead"><div class="kl"><span>{"plan usage" if first else "session spend"}</span>{badge}</div>'

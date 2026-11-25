@@ -426,11 +426,9 @@ export type Report = {
     windows?: PlanWindow[]
     /** The hero's limit as text: `$0.82 of $1.00`, `5-hour window 42% used, limit 80%`. */
     limit: string | null; frac: number | null
-    warn_at: number; hard_stop: boolean
+    hard_stop: boolean
     /** The window budget.json's `headline` picks to lead, null when it has no reading. */
     headline?: PlanWindow['scope'] | null
-    /** The daily budget's own warn level, percent. */
-    daily_warn_at?: number
   }
   rates?: { label: string; key: string; tokens: number; cost: number; share: number }[]
   total?: { tokens: number; cost: number }
@@ -465,10 +463,14 @@ export const usd = (x: number, digits = 2): string => `$${grouped(x, digits)}`
 export const int = (n: number): string => grouped(Math.round(n), 0)
 export const pct = (share: number): string => `${Math.round(share * 100)}%`
 
-/** How close a scope is to its limit: error at 100% and over, warning from `warn_at`. */
+/** Percent of a limit left at which the guard warns; fixed, the same as WARN_LEFT in tokentab.py. */
+export const WARN_LEFT = [10, 5, 2] as const
+const WARN_TEXT = `warns at ${WARN_LEFT.map(left => `${left}%`).join(', ')} left`
+
+/** How close a scope is to its limit: error at 100% and over, warning from the first WARN_LEFT mark. */
 export type Tone = 'success' | 'warning' | 'error'
-export function toneOf(frac: number, warnAt: number): Tone {
-  return frac >= 1 ? 'error' : frac * 100 >= warnAt ? 'warning' : 'success'
+export function toneOf(frac: number): Tone {
+  return frac >= 1 ? 'error' : frac * 100 >= 100 - WARN_LEFT[0] ? 'warning' : 'success'
 }
 
 // The series colours from the Figma frames, a light and a dark value each (hooks/tokens.ts,
@@ -539,11 +541,9 @@ export const SECTIONS: { title: string; toggle?: Setting; rows: Setting[] }[] = 
       percent: { key: 'five_hour_limit_percent', label: '5-hour window' } },
     { key: 'daily_limit_usd', label: 'Today', unit: 'USD', kind: 'limit',
       percent: { key: 'weekly_limit_percent', label: 'This week' } },
-    { key: 'warn_at_percent', label: 'Warn at', unit: '%', kind: 'limit' },
     { key: 'hard_stop', label: 'Enable hard stop', kind: 'switch' },
   ] },
   { title: 'daily budget', toggle: { key: 'daily_budget.enabled', label: 'daily budget', kind: 'switch' }, rows: [
-    { key: 'daily_budget.warn_at_percent', label: 'Warn at', unit: '%', kind: 'limit' },
     { key: 'headline', label: 'Headline', kind: 'choice', choices: ['today', 'five_hour', 'week'] },
   ] },
   { title: 'handoff note', toggle: { key: 'handoff.enabled', label: 'handoff note before the cache expires', kind: 'switch' }, rows: [] },
@@ -1451,17 +1451,15 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
   const otherWindows = planWindows.filter(w => w !== lead)
   const apiRates = s.plan ? ' at API rates' : ''
   const frac = lead ? lead.frac : s.frac
-  const dailyWarn = s.daily_warn_at ?? 80
-  const warnOf = (w: PlanWindow) => (w.scope === 'today' ? dailyWarn : s.warn_at)
-  // The badge shows the window nearest its own warn level. Today's budget counts only as the lead,
+  // The badge shows the window nearest the warn level. Today's budget counts only as the lead,
   // since nothing else beside the badge names it.
   const RANK = { success: 0, warning: 1, error: 2 } as const
   const judged = planWindows.flatMap(w => (w.frac === null || (w.scope === 'today' && w !== lead) ? []
-    : [{ w, frac: w.frac, tone: toneOf(w.frac, warnOf(w)) }]))
+    : [{ w, frac: w.frac, tone: toneOf(w.frac) }]))
     // On the same state a limit beats today's budget: it can hard-stop, and today's hero and bar show their own colour
     .sort((a, b) => RANK[b.tone] - RANK[a.tone] || Number(a.w.scope === 'today') - Number(b.w.scope === 'today') || b.frac - a.frac)
   const worst = lead ? (judged[0]?.frac ?? null) : frac
-  const tone = lead ? judged[0]?.tone : frac === null ? undefined : toneOf(frac, s.warn_at)
+  const tone = lead ? judged[0]?.tone : frac === null ? undefined : toneOf(frac)
   // With today's budget as the hero, a second percent beside it reads as a rival figure for the day. The badge
   // then shows only a state, past a warn level, and names the window when it is not today's budget.
   const todayLeads = lead?.scope === 'today'
@@ -1471,8 +1469,8 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
         {todayLeads ? `${named}${tone === 'error' ? 'Over' : 'Warning'}`
           : tone === 'error' ? `Over · ${pct(worst)}` : tone === 'warning' ? `Warning · ${pct(worst)}` : `${pct(worst)} used`}
       </Text>
-  const mode = lead?.scope === 'today' ? `never blocks, warns at ${dailyWarn}%`
-    : `${s.hard_stop ? 'hard stop' : 'warn only'}, warns at ${s.warn_at}%`
+  const mode = lead?.scope === 'today' ? `never blocks, amber at ${WARN_LEFT[0]}% left`
+    : `${s.hard_stop ? 'hard stop' : 'warn only'}, ${WARN_TEXT}`
   // Today's budget is always read as a share of itself; the week's figures follow, named as such
   const ofWeek = (w: PlanWindow) => `${percent(w.allowed ?? 0)} of the week, ${percent(w.used)} used so far`
   const weekShare = (w: PlanWindow) => `today's budget is ${ofWeek(w)}`
@@ -1520,7 +1518,7 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
           <Button key="share" label="↑ Share"
             onPress={() => { void openSharePage($, r) }} />
         </Box>
-        {frac !== null && bar($, e, [{ series: toneOf(frac, lead ? warnOf(lead) : s.warn_at), frac }],
+        {frac !== null && bar($, e, [{ series: toneOf(frac), frac }],
           lead?.scope === 'today' ? `${pct(frac)} of today's budget`
             : `${pct(frac)} of the ${lead ? WINDOW_NAME[lead.scope] : 'session'} limit`, 8)}
         {lead?.scope === 'today' && <Text key="week-share" size="footnote" dimColor>{weekShare(lead)}</Text>}

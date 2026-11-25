@@ -1109,12 +1109,11 @@ def day_budget(budget, windows, now=None):
     frac = used / allowed if allowed > 0 else (1.0 if used > 0 else 0.0)
     return {"used": used, "allowed": allowed, "frac": frac, "base": base, "cap": cap}
 
-def day_warn_at(budget):
-    """The daily budget's warn level in percent: 80 when budget.json has none or a hand-edited
-    value that is not a number."""
-    cfg = budget.get("daily_budget")
-    v = cfg.get("warn_at_percent") if isinstance(cfg, dict) else None
-    return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else 80.0
+# Percent of a limit left at which the guard warns, once each; the views turn amber from the first.
+# Fixed, not a setting: register.tsx's WARN_LEFT is the same.
+WARN_LEFT = (10, 5, 2)
+WARN_AT = 100 - WARN_LEFT[0]
+WARN_TEXT = "warns at " + ", ".join(f"{left}%" for left in WARN_LEFT) + " left"
 
 def plan_lead(budget, windows, day):
     """The plan number that leads, per budget.json's headline: "today", "five_hour" or "seven_day";
@@ -1228,7 +1227,7 @@ def report(store, sid, prices, budget, show_all, led=None):
                    "per_call": tb.ctx * rate(prices, tb.ctx_model, "cache_read") / 1e6,
                    "cold": idle >= lim, "minutes_left": int((lim - idle) // 60),
                    "rewrite": tb.ctx * rate(prices, tb.ctx_model, "cache_write_" + tb.ttl) / 1e6}
-        R["budget"] = {"on": on, "unit": unit, "hard_stop": bool(budget.get("hard_stop")), "warn_at": budget.get("warn_at_percent", 70),
+        R["budget"] = {"on": on, "unit": unit, "hard_stop": bool(budget.get("hard_stop")),
                        "lines": lines, "context": ctx}
 
     R["tools"] = tool_totals(tb.tools) if tb and tb.tools else []
@@ -1291,7 +1290,7 @@ def render(store, sid, prices, budget, show_all, led=None):
         lines = [budget_text(r) for r in bg["lines"]]
         if lines or bg["context"]:
             L.append("")
-            mode = ((f"{'hard stop' if bg['hard_stop'] else 'warn only'} · warns at {bg['warn_at']}%"
+            mode = ((f"{'hard stop' if bg['hard_stop'] else 'warn only'} · {WARN_TEXT}"
                      f"{' of plan usage' if bg['unit'] == 'percent' else ''}")
                     if bg["on"] else "off · /tokentab:budget turns budgets on")
             L.append(f"  {BOLD}BUDGET{RESET}  {DIM}{mode}{RESET}")
@@ -1401,9 +1400,8 @@ def pane_report(store, sid, prices, budget, led=None, windows=None):
         "limit": None if not row else row["parts"][0] if unit == "usd"
                  else f"{WINDOW_NAMES[row['scope']]} {row['parts'][0]}",
         "frac": row["frac"] if row else None,
-        "warn_at": budget.get("warn_at_percent", 70), "hard_stop": bool(budget.get("hard_stop")),
+        "hard_stop": bool(budget.get("hard_stop")),
         "headline": plan_lead(budget, windows, day),
-        "daily_warn_at": day_warn_at(budget),
     }
     out["rates"] = [{"label": r["label"], "key": r["key"], "tokens": r["tokens"], "cost": r["cost"], "share": r["share"]}
                     for r in R["rates"]]
