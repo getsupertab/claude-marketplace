@@ -194,6 +194,15 @@ Once on, the pane, the status line and the button that brings a closed pane back
 how much of it is used, and the pane's badge turns amber with 10% of it left. It only shows the
 number: it sends no notice, tells Claude nothing, and never blocks, with budgets on or
 off. `daily_budget.enabled` in `budget.json` sets it.
+
+**Carry over (beta).** With `daily_budget.carry_over` on (the switch beside it in the
+pane, or ask: "turn on budget carry-over"), each day gets a seventh of the week, about
+14%, plus whatever earlier days of the week left unused, minus what they overspent. Skip a
+day and the next one has about 28%; overspend and tomorrow's shrinks. The week rarely
+resets at midnight, so the days it starts and ends on get the part of a seventh that falls
+in them. The status line then names the day's size (`today 10% of budget (28% of week)`),
+and the pane shows how it is made up (`14.3% a day + 14.3% carried over`).
+
 `headline` (`today`, `five_hour` or `week`) picks which plan number leads; the default
 is `five_hour`.
 

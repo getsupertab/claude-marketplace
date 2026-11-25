@@ -32,10 +32,19 @@ def load():
 
 
 def upgraded(cfg):
-    """cfg with the keys the shipped file has and cfg lacks, in the shipped order."""
+    """cfg with the keys the shipped file has and cfg lacks, in the shipped order, one level into objects,
+    and the shipped _comment texts. register.tsx's withNewKeys does the same."""
     with open(SHIPPED, encoding="utf-8") as f:
         shipped = json.load(f)
-    return {**{k: cfg.get(k, v) for k, v in shipped.items()}, **cfg}
+    def merged(key, shipped_value):
+        if key.startswith("_") and isinstance(shipped_value, str):
+            return shipped_value
+        mine = cfg.get(key, shipped_value)
+        if isinstance(shipped_value, dict) and isinstance(mine, dict):
+            return {**shipped_value, **mine}
+        return mine
+    return {**{key: merged(key, value) for key, value in shipped.items()},
+            **{key: value for key, value in cfg.items() if key not in shipped}}
 
 
 def lookup(cfg, key):
@@ -101,9 +110,11 @@ def main():
         cfg = load()
         if a[1] == "budgets_on" and a[1] not in cfg:
             cfg = {"budgets_on": False, **cfg}     # a file from before the switch
-        if a[1].split(".")[0] not in cfg:
+        try:
+            node, leaf = lookup(cfg, a[1])
+        except ValueError:
             cfg = upgraded(cfg)                    # a key a newer version ships
-        node, leaf = lookup(cfg, a[1])
+            node, leaf = lookup(cfg, a[1])
         node[leaf] = parse(a[1], node[leaf], a[2])
         tmp = PATH + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
