@@ -1448,8 +1448,15 @@ def status_parts(store, sid, prices, budget, led=None):
              for scope, _, name in LIMITS["percent"] if scope in windows}
     day = day_budget(budget, windows)
     if day:
-        # With carry-over the budget's size moves day to day, so the line names it
-        size = f" ({day['allowed']:.0f}% of week)" if "carried" in day else ""
+        # With carry-over the budget's size moves day to day, so the line names it and what moved it
+        size = ""
+        if "carried" in day:
+            carried = day["carried"]
+            # "0%" names nothing (a week's first day); the check is on the text since 0.5 rounds to even
+            amount = f"{abs(carried):.0f}"
+            moved = "" if amount == "0" else \
+                f", {'−' if carried < 0 else '+'}{amount}% {'overspent' if carried < 0 else 'carried'}"
+            size = f" ({day['allowed']:.0f}% of week{moved})"
         items["today"] = (f"today {day['frac']*100:.0f}% of budget{size}",
                           f"{day['frac']*100:.0f}% of today's budget")
     lead = plan_lead(budget, windows, day) or next(iter(items), None)

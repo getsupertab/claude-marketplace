@@ -535,8 +535,11 @@ export type Setting = {
   percent?: { key: string; label: string }
   /** A `choice` cycles through these, each press setting the next. */
   choices?: string[]
+  /** One line under the row saying what the setting does. */
+  note?: string
 }
-export const SECTIONS: { title: string; toggle?: Setting; rows: Setting[] }[] = [
+/** A section with a `unit` shows only under that unit. */
+export const SECTIONS: { title: string; unit?: Unit; toggle?: Setting; rows: Setting[] }[] = [
   { title: 'limits', toggle: { key: 'budgets_on', label: 'check the limits', kind: 'switch' }, rows: [
     { key: 'session_limit_usd', label: 'This session', unit: 'USD', kind: 'limit',
       percent: { key: 'five_hour_limit_percent', label: '5-hour window' } },
@@ -545,8 +548,10 @@ export const SECTIONS: { title: string; toggle?: Setting; rows: Setting[] }[] = 
     { key: 'hard_stop', label: 'Enable hard stop', kind: 'switch' },
     { key: 'spend_less', label: 'Ask Claude to spend less', kind: 'switch' },
   ] },
-  { title: 'daily budget', toggle: { key: 'daily_budget.enabled', label: 'daily budget', kind: 'switch' }, rows: [
-    { key: 'daily_budget.carry_over', label: 'Carry over (beta)', kind: 'switch' },
+  // A share of the weekly window, which USD accounts do not have
+  { title: 'daily budget', unit: 'percent', toggle: { key: 'daily_budget.enabled', label: 'daily budget', kind: 'switch' }, rows: [
+    { key: 'daily_budget.carry_over', label: 'Carry over (beta)', kind: 'switch',
+      note: "Unused budget rolls into the next day of this week; overspend shrinks it." },
     { key: 'headline', label: 'Headline', kind: 'choice', choices: ['today', 'five_hour', 'week'] },
   ] },
   { title: 'handoff note', toggle: { key: 'handoff.enabled', label: 'handoff note before the cache expires', kind: 'switch' }, rows: [] },
@@ -1698,12 +1703,13 @@ function optionsTab($: EngineInterface, e: RenderEvent): RenderChildren {
     const { Input } = $.ui.resolve(e)
     return column(<Input key={`b-${s.key}`} value={shown(v)} placeholder="off" submitLabel="save" onSubmit={t => { void setBudget($, s.key, t) }} />, true)
   }
-  const row = (key: string, name: string, ctl: RenderChildren, error?: string) => (
+  const row = (key: string, name: string, ctl: RenderChildren, error?: string, note?: string) => (
     <Box key={`row-${key}`} flexDirection="column">
       <Box gap={1} alignItems="center" justifyContent="space-between">
         <Text size="footnote">{name}</Text>
         {ctl}
       </Box>
+      {note !== undefined && <Text size="footnote" dimColor>{note}</Text>}
       {error !== undefined && <Text size="footnote" color="error">{error}</Text>}
     </Box>
   )
@@ -1722,12 +1728,12 @@ function optionsTab($: EngineInterface, e: RenderEvent): RenderChildren {
         row('auto-open', 'Open pane at session start', column(toggle('auto-open', autoOpen(), () => {}))),
       ])}
       {o?.error !== undefined && <Text size="footnote" color="error">{o.error}</Text>}
-      {SECTIONS.flatMap(sec => [
-        rule($, e, `rule-${sec.title}`),
-        section(sec.title, sec.toggle && control(sec.toggle), [
-          ...sec.rows.map(r => inUnit(r, unit)).map(s => row(s.key, s.unit === undefined ? s.label : `${s.label} (${s.unit})`, control(s), o?.errors[s.key])),
-          sec.toggle !== undefined && o?.errors[sec.toggle.key] !== undefined
-            && <Text size="footnote" key="toggle-error" color="error">{o.errors[sec.toggle.key]}</Text>,
+      {SECTIONS.filter(settingsSection => settingsSection.unit === undefined || settingsSection.unit === unit).flatMap(settingsSection => [
+        rule($, e, `rule-${settingsSection.title}`),
+        section(settingsSection.title, settingsSection.toggle && control(settingsSection.toggle), [
+          ...settingsSection.rows.map(r => inUnit(r, unit)).map(s => row(s.key, s.unit === undefined ? s.label : `${s.label} (${s.unit})`, control(s), o?.errors[s.key], s.note)),
+          settingsSection.toggle !== undefined && o?.errors[settingsSection.toggle.key] !== undefined
+            && <Text size="footnote" key="toggle-error" color="error">{o.errors[settingsSection.toggle.key]}</Text>,
         ]),
       ])}
     </Box>
