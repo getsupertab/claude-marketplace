@@ -1411,6 +1411,8 @@ def pane_report(store, sid, prices, budget, led=None, windows=None):
     row = (next((r for r in rows if r["scope"] == lead), None)
            or (next((r for r in rows if r["scope"] in ("five_hour", "seven_day")), None)
                if unit == "percent" and lead != "session" else None)) if on else None
+    # In USD the limit the hero does not show; it can hard-stop too, so the pane still judges it
+    other = next((r for r in rows if r is not row), None) if on and unit == "usd" else None
     # Every window with a reading, limits on or off; limit and frac only where a limit is checked
     limited = {r["scope"]: r for r in rows} if on else {}
     plan_windows = [{"scope": scope, "used": window_used(windows[scope]),
@@ -1429,6 +1431,7 @@ def pane_report(store, sid, prices, budget, led=None, windows=None):
         "limit": None if not row else row["parts"][0] if unit == "usd"
                  else f"{WINDOW_NAMES[row['scope']]} {row['parts'][0]}",
         "frac": row["frac"] if row else None,
+        "other_limit": {"scope": other["scope"], "limit": other["parts"][0], "frac": other["frac"]} if other else None,
         "hard_stop": bool(budget.get("hard_stop")),
         "headline": lead,
     }
@@ -1499,11 +1502,11 @@ def status_parts(store, sid, prices, budget, led=None):
         second = "today" if lead == "session" else "session"
     elif day and lead != "today":
         second = "today"
-    elif windows_checked := [s for s in ("five_hour", "seven_day") if s in checked]:
-        second = "limit:" + max(windows_checked, key=lambda s: checked[s]["frac"])
+    elif windows_checked := [scope for scope in ("five_hour", "seven_day") if scope in checked]:
+        second = "limit:" + max(windows_checked, key=lambda scope: checked[scope]["frac"])
     else:
-        second = next((s for s in ("seven_day", "five_hour") if s in windows and s != lead), None)
-    line = " · ".join(item(k)[0] for k in (lead, second) if k)
+        second = next((scope for scope in ("seven_day", "five_hour") if scope in windows and scope != lead), None)
+    line = " · ".join(item(key)[0] for key in (lead, second) if key)
     # The daily budget sends no notice, so the button names it after another headline
     button = item(lead)[1] + (f" · {item(second)[1]}" if day and second == "today" else "")
     return line, button                                               # the engine draws the plugin name before the line

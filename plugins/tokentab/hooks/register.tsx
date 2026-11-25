@@ -426,6 +426,8 @@ export type Report = {
     windows?: PlanWindow[]
     /** The hero's limit as text: `$0.82 of $1.00`, `5-hour window 42% used, limit 80%`. */
     limit: string | null; frac: number | null
+    /** In USD, the checked limit the hero does not lead with: `$4.80 of $5.00`. */
+    other_limit?: { scope: 'session' | 'today'; limit: string; frac: number } | null
     hard_stop: boolean
     /** What leads, budget.json's `headline` resolved for this account: a window, today (the daily
      *  budget under percent, today's spend in USD) or this session's spend. Null from an older report. */
@@ -561,10 +563,13 @@ export const SECTIONS: { title: string; unit?: Unit; toggle?: Setting; rows: Set
 export const HEADLINE: Setting = { key: 'headline', label: 'Headline', kind: 'choice',
   note: 'The figure the pane and the status line lead with, as what is left. auto follows the budget that is on.' }
 
-/** The headline words this account can show: today is the daily budget on Pro and Max, so only while it is on. */
-export function headlineChoices(unit: Unit, dailyOn: boolean): string[] {
-  return unit === 'usd' ? ['auto', 'today', 'session']
-    : ['auto', ...(dailyOn ? ['today'] : []), 'week', 'five_hour', 'session']
+/** The headline words this account can show, as headline() in tokentab.py: a window only with its reading,
+ *  and today (the daily budget on Pro and Max) only while it is on and the week has a reading. */
+export function headlineChoices(unit: Unit, dailyOn: boolean, kinds: string[]): string[] {
+  if (unit === 'usd') return ['auto', 'today', 'session']
+  const week = kinds.includes('seven_day')
+  return ['auto', ...(dailyOn && week ? ['today'] : []), ...(week ? ['week'] : []),
+    ...(kinds.includes('five_hour') ? ['five_hour'] : []), 'session']
 }
 
 type Json = Record<string, unknown>
@@ -1494,16 +1499,21 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
     : [{ w, frac: w.frac, tone: toneOf(w.frac) }]))
     // On the same state a limit beats today's budget: it can hard-stop, and today's hero and bar show their own colour
     .sort((a, b) => RANK[b.tone] - RANK[a.tone] || Number(a.w.scope === 'today') - Number(b.w.scope === 'today') || b.frac - a.frac)
-  const worst = planWindows.length > 0 ? (judged[0]?.frac ?? null) : frac
-  const tone = planWindows.length > 0 ? judged[0]?.tone : frac === null ? undefined : toneOf(frac)
+  // In USD the limit the hero does not lead with counts too, and the badge names it when it is the nearer one
+  const other = s.unit === 'usd' ? s.other_limit ?? null : null
+  const otherNearer = other !== null && (frac === null || other.frac > frac)
+  const usdWorst = otherNearer ? other.frac : frac
+  const worst = planWindows.length > 0 ? (judged[0]?.frac ?? null) : usdWorst
+  const tone = planWindows.length > 0 ? judged[0]?.tone : usdWorst === null ? undefined : toneOf(usdWorst)
   // With today's budget as the hero, a second percent beside it reads as a rival figure for the day. The badge
   // then shows only a state, past a warn level, and names the window when it is not today's budget.
   const todayLeads = lead?.scope === 'today'
-  const named = todayLeads && judged[0] && judged[0].w !== lead ? `${WINDOW_SHORT[judged[0].w.scope]} · ` : ''
+  const named = todayLeads && judged[0] && judged[0].w !== lead ? `${WINDOW_SHORT[judged[0].w.scope]} · `
+    : otherNearer ? `${other.scope} · ` : ''
   const badge = worst === null || tone === undefined || (todayLeads && tone === 'success') ? undefined
     : <Text size="footnote" weight="semibold" color={tone}>
         {todayLeads ? `${named}${tone === 'error' ? 'Over' : 'Warning'}`
-          : tone === 'error' ? 'Over' : tone === 'warning' ? `Warning · ${leftOf(worst)} left` : `${leftOf(worst)} left`}
+          : `${named}${tone === 'error' ? 'Over' : tone === 'warning' ? `Warning · ${leftOf(worst)} of limit left` : `${leftOf(worst)} of limit left`}`}
       </Text>
   const mode = lead?.scope === 'today' ? 'never blocks'
     : s.hard_stop ? 'hard stop' : 'warn only'
@@ -1515,13 +1525,15 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
   const weekShare = (w: PlanWindow) => `today's budget is ${ofWeek(w)}`
   const budgetLine = (w: PlanWindow) => `today's budget ${leftOf(w.frac ?? 0)} left · ${ofWeek(w)}`
   const resets = (w: PlanWindow) => (w.resets ? ` · resets ${w.resets}` : '')
-  const limitOf = (w: PlanWindow, sep: string) => (w.limit === null ? '' : `${sep}limit ${percent(w.limit)}`)
+  // A limit is read the way its window is, as what is left of the window when it stops
+  const limitOf = (w: PlanWindow, sep: string) => (w.limit === null ? '' : `${sep}limit at ${percent(Math.max(0, 100 - w.limit))} left`)
   const under = [
     lead ? `${usd(s.cost)}${apiRates}` : s.limit ?? '',
-    todaySpend ? `this session ${usd(s.cost)}` : '',
+    todaySpend ? `this session ${other?.scope === 'session' ? other.limit : usd(s.cost)}`
+      : other ? `${other.scope} ${other.limit}` : '',
     `${int(s.tokens)} tokens`,
     // Session leading a plan keeps the windows' limits below it
-    frac !== null || (!lead && planWindows.length > 0 && s.limits_on) ? mode : !s.limits_on ? 'limits off'
+    frac !== null || other !== null || (!lead && planWindows.some(window => window.scope !== 'today' && window.frac !== null)) ? mode : !s.limits_on ? 'limits off'
       : s.unit === 'percent' ? 'no window limit set or no reading yet' : todaySpend ? 'no daily limit set' : 'no session limit set',
   ].filter(x => x !== '').join(' · ')
   const rates = r.rates ?? []
@@ -1713,7 +1725,7 @@ function optionsTab($: EngineInterface, e: RenderEvent): RenderChildren {
     const v = at(o?.budget, s.key)
     if (s.kind === 'switch') return column(toggle(`b-${s.key}`, v === true, () => { void setBudget($, s.key, v === true ? 'off' : 'on') }))
     if (s.kind === 'choice') {
-      const choices = s.key === HEADLINE.key ? headlineChoices(unit, at(o?.budget, 'daily_budget.enabled') === true) : s.choices ?? []
+      const choices = s.key === HEADLINE.key ? headlineChoices(unit, at(o?.budget, 'daily_budget.enabled') === true, (o?.windows ?? []).map(window => window.kind)) : s.choices ?? []
       // A value this account cannot show falls back to the first choice, as tokentab.py does
       const current = choices.includes(String(v)) ? String(v) : choices[0] ?? shown(v)
       if (mobile) return column(<Text size="footnote" mono weight="semibold">{current}</Text>)

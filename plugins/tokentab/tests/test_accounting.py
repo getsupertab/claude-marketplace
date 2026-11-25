@@ -591,6 +591,18 @@ def pane_check(store, prices):
         errs.append("pane report: the sessions' shares do not sum to 100%")
     if kt.pane_report(store, "fx", prices, {}, windows={})["session"]["frac"] is not None:
         errs.append("pane report: no limit should give no fraction")
+    # In USD the limit the hero does not lead with is still reported, so the pane can judge it
+    for usd_budget, want_lead, want_other in (
+            (budget, "session", None),
+            ({**budget, "daily_limit_usd": 1e6}, "today", "session"),
+            ({**budget, "daily_limit_usd": 1e6, "headline": "session"}, "session", "today"),
+            ({**budget, "headline": "today"}, "today", "session"),
+            ({**budget, "daily_limit_usd": 1e6, "budgets_on": False}, "today", None)):
+        s = kt.pane_report(store, "fx", prices, usd_budget, windows={})["session"]
+        other = s["other_limit"]
+        if s["headline"] != want_lead or (other and other["scope"]) != want_other \
+                or (other is not None and (not other["limit"].startswith("$") or other["frac"] is None)):
+            errs.append(f"pane report other_limit for {usd_budget}: {s['headline']} {other}")
     if kt.pane_report(store, "fx", prices, {**budget, "budgets_on": False}, windows={})["session"]["frac"] is not None:
         errs.append("pane report: limits switched off should give no fraction")
     now = kt.datetime.now().timestamp()
@@ -878,6 +890,26 @@ def page_case(store, prices):
             errs.append(f"page: over-limit banner wrong with windows {win}")
     if '"plan usage"' in p["hero"] or "plan usage" not in p["hero"] or "at API rates" not in p["hero"]:
         errs.append("page: under percent the hero is not plan usage with dollars at API rates")
+    # Today's budget never leads the tile, even as the only window with a fraction; it gets its own line
+    R = kt.report(store, "fx", prices, {"budgets_on": False}, True)
+    R["pane"] = P = kt.pane_report(store, "fx", prices, {"budgets_on": False}, windows=windows)
+    P["session"]["windows"].append({"scope": "today", "used": 3, "allowed": 10, "limit": None, "frac": 0.3, "resets": None})
+    try:
+        hero = sankey.parts(R)["hero"]
+        if "<b>40%</b>" not in hero or "today&#x27;s budget 30% used · 10% of the week" not in hero:
+            errs.append(f"page: today's budget beside the windows: {hero[:400]}")
+    except KeyError as e:
+        errs.append(f"page: today's budget breaks the first tile: KeyError {e}")
+    # In USD with today leading, the tile leads with today's spend, and the session over its own limit
+    # is named on the badge and in the banner, not passed off as today's
+    today_budget = {**budget, "daily_limit_usd": 1e6, "five_hour_limit_percent": None, "weekly_limit_percent": None}
+    R = kt.report(store, "fx", prices, today_budget, True)
+    R["pane"] = P = kt.pane_report(store, "fx", prices, today_budget, windows={})
+    hero = sankey.parts(R)["hero"]
+    for want in ("today's spend", f"<b>{sankey.big(P['today'])}</b>", "of $1,000,000.00", "session · Over",
+                 "session $", "Over the limit of this session"):
+        if html.escape(want, quote=False) not in hero and want not in hero:
+            errs.append(f"page: USD today lead lacks {want!r}: {hero[:400]}")
     tags = {n: sankey.source_tag(n) for n in ("Bash", "mcp__claude_ai_Figma__use_figma", "mcp__Claude_Browser__navigate",
                                                 "mcp__40a9e9ea-a265-43ac-9423-5f01011bcd27__get_screenshot")}
     if tags != {"Bash": "built-in", "mcp__claude_ai_Figma__use_figma": "claude ai Figma",
