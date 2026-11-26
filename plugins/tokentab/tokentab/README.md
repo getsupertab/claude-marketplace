@@ -86,11 +86,11 @@ diagram sums to the session total.
 
 ## Budget settings
 
-Everything is in `budget.json` in your data folder. `null` turns a limit off. `/tokentab:budget` or the pane's Options tab changes them for you.
+Everything is in `budget.json` in your data folder. `null` turns a limit off. `/tokentab:budget` or the pane's Settings tab changes them for you.
 
 | Setting | Default | What it does |
 |---|---|---|
-| `budgets_on` | `false` | The switch beside BUDGET on the Options tab: switches the budget below on or off. Its values are kept while it's off. |
+| `budgets_on` | `false` | The switch beside BUDGET on the Settings tab: switches the budget below on or off. Its values are kept while it's off. |
 | `budget_type` | from your limits | The one budget checked, per unit: `usd` is `today` or `session`; `percent` (Pro, Max) is `today` (the daily budget), `week`, `five_hour` or `session` (dollars at API rates). `null` takes it from the limits set: `today` in USD unless only the session limit is set; on Pro and Max `today` if the old `daily_budget.enabled` is on, else `week` unless only the 5-hour limit is set. |
 | `session_limit_usd` | `25` | Limit for one session, in US dollars (at API rates on Pro and Max). Resets with a new session. |
 | `daily_limit_usd` | `40` | Limit across all sessions and projects, in US dollars. Resets at midnight. |
@@ -147,7 +147,7 @@ expired-cache question offers it:
 - **Don't send** sends nothing.
 
 A computer that sleeps stops the timer, and so does an agent waiting on a permission
-prompt (it is mid-turn). Turn it off with the pane's Options tab (Handoff note, under SESSION) or
+prompt (it is mid-turn). Turn it off with the pane's Settings tab (Handoff note, under SESSION) or
 `handoff.enabled: false`.
 
 ### New session check

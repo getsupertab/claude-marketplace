@@ -67,7 +67,7 @@ that the user can ask for a change with `/tokentab:budget <what to change>`.
    key that does not exist, and keeps the file's order and comments. `budget.py get` prints
    the file.
 3. Show the new values. They apply from the next prompt; no restart is needed. The same
-   limits are editable in the TokenTab pane's Options tab.
+   limits are editable in the TokenTab pane's Settings tab.
 
 TokenTab tells Claude never to raise a limit on its own. That rule is about Claude
 acting unasked; this skill acts only on what the user asked for in the same prompt. If TokenTab blocks the edit anyway (for example

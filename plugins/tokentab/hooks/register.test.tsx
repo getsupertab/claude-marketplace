@@ -405,12 +405,12 @@ test('an interactive session opens the pane and draws the Spend tab', async ($, 
   expect(ui.status).toEqual([undefined])
 
   const folded = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
-  // the tab row: Spend is the primary one, then Options and "Open full report"; then the details toggle
+  // the tab row: Spend is the primary one, then Settings and "Open full report"; then the details toggle
   expect(elements(folded, 'Button').map(b => [b.key, b.variant])).toEqual([
     ['tab-spend', 'primary'], ['tab-options', 'secondary'], ['open-browser', undefined], ['share', undefined],
     ['details-toggle', undefined], ['sessions-toggle', undefined],
   ])
-  expect(elements(folded, 'Button').slice(0, 3).map(b => b.label)).toEqual(['Spend', 'Options', 'Open full report ↗'])
+  expect(elements(folded, 'Button').slice(0, 3).map(b => b.label)).toEqual(['Spend', 'Settings', 'Open full report ↗'])
   // no keyboard shortcuts: Tab or the arrows and Enter reach every Button (Kate, 2026-11-17)
   expect(elements(folded, 'Button').filter(b => b.hotkey !== undefined)).toEqual([])
   // the breakdown starts folded: the toggle shows, the rate table and the tools do not
@@ -819,7 +819,7 @@ test('on Linux without xdg-open, the toast says the page could not be opened and
   expect(ui.store.get(`pageOpenedAt:${SID}`)).toBeUndefined()
 })
 
-test('the Options tab: auto-open through the config menu, the budget through the validator', async ($, on) => {
+test('the Settings tab: auto-open through the config menu, the budget through the validator', async ($, on) => {
   mock.env(on, { HOME: '/home/t' })
   const clock = mock.clock(on, { now: T0 })
   const { ui } = world(on, { ...FILES, '/tokentab/budget.json': JSON.stringify({ ...JSON.parse(BUDGET), budgets_on: true }) })
@@ -889,7 +889,7 @@ test('the Options tab: auto-open through the config menu, the budget through the
   expect(texts(mobile).some(x => x.text === 'Today')).toBe(true)
 })
 
-test('the Options tab hides the budget\'s rows while the budget is off', async ($, on) => {
+test('the Settings tab hides the budget\'s rows while the budget is off', async ($, on) => {
   mock.env(on, { HOME: '/home/t' })
   const clock = mock.clock(on, { now: T0 })
   world(on, { ...FILES, '/tokentab/budget.json': JSON.stringify({ ...JSON.parse(BUDGET), budgets_on: false }) })
@@ -907,7 +907,7 @@ test('the Options tab hides the budget\'s rows while the budget is off', async (
   expect(elements(tree, 'Button').map(button => button.key).filter(key => /hard_stop|spend_less|carry_over/.test(String(key)))).toEqual([])
 })
 
-test('the Options tab: spend_less, while unset, shows Stop at limit\'s on and stores off when pressed', async ($, on) => {
+test('the Settings tab: spend_less, while unset, shows Stop at limit\'s on and stores off when pressed', async ($, on) => {
   mock.env(on, { HOME: '/home/t' })
   const clock = mock.clock(on, { now: T0 })
   const { ui } = world(on, { ...FILES, '/tokentab/budget.json': JSON.stringify({ ...JSON.parse(BUDGET), budgets_on: true, hard_stop: true, spend_less: null }) })
@@ -922,7 +922,7 @@ test('the Options tab: spend_less, while unset, shows Stop at limit\'s on and st
   expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'spend_less', 'off'])
 })
 
-test('the Options tab offers the daily budget once the plan reports a usage window', async ($, on) => {
+test('the Settings tab offers the daily budget once the plan reports a usage window', async ($, on) => {
   mock.env(on, { HOME: '/home/t' })
   const clock = mock.clock(on, { now: T0 })
   const { ui } = world(on, { ...FILES, '/tokentab/budget.json': JSON.stringify({ ...JSON.parse(BUDGET), budgets_on: true }) })
@@ -1017,7 +1017,7 @@ test('the limit unit follows the account: percent where the plan reports a usage
   expect(withNewKeys({ _daily_comment: 'new' }, { _daily_comment: 'new' })).toBeUndefined()
 })
 
-test('a first usage-window reading redraws the open Options tab in percent, no tab switch', async ($, on) => {
+test('a first usage-window reading redraws the open Settings tab in percent, no tab switch', async ($, on) => {
   mock.env(on, { HOME: '/home/t' })
   const clock = mock.clock(on, { now: T0 })
   world(on, FILES)
@@ -1035,7 +1035,7 @@ test('a first usage-window reading redraws the open Options tab in percent, no t
   expect(await inputs()).toContain('b-weekly_limit_percent')
 })
 
-test('session.measure records the usage windows; the Options tab then shows the percent fields', async ($, on) => {
+test('session.measure records the usage windows; the Settings tab then shows the percent fields', async ($, on) => {
   mock.env(on, { HOME: '/home/t' })
   const clock = mock.clock(on, { now: T0 })
   const { fs } = world(on, FILES)

@@ -12,7 +12,7 @@ import { TOKENS } from './tokens'
 // `session.start` opens a pane beside the chat (the `autoOpen` option); `/tokentab:status`
 // (the status skill, answered by a hook) opens it asked. `ui.render` draws one of two
 // tabs: Spend, the session against its limit, its cost by rate and what each tool cost,
-// today and this month; Options, the auto-open switch and the budget limits. Spend draws
+// today and this month; Settings, the auto-open switch and the budget limits. Spend draws
 // `tokentab.py --report`, the same report() the terminal live view and the status line
 // print, so the figures cannot drift apart. While the pane is not placed
 // (a narrow terminal) one status line carries the numbers instead. Redrawn a second after
@@ -525,11 +525,11 @@ export function barCells(parts: { series: string; frac: number }[], cells: numbe
 export type View = 'spend' | 'options'
 export const TABS: { view: View; label: string }[] = [
   { view: 'spend', label: 'Spend' },
-  { view: 'options', label: 'Options' },
+  { view: 'options', label: 'Settings' },
 ]
 const TOOLS_SHOWN = 12
 
-// The settings the Options tab edits, in budget.json's keys (dotted below the top level),
+// The settings the Settings tab edits, in budget.json's keys (dotted below the top level),
 // as sections of rows: a limit is an Input, a switch an On/Off Button, a choice a Select.
 // A section's `toggle` sits in its heading. Every write goes through tokentab/budget.py,
 // the one validator.
@@ -603,7 +603,7 @@ export function budgetTypeOf(budget: Json | undefined, unit: Unit): string {
 
 export type Section = { title: string; toggle?: Setting; rows: Setting[] }
 
-/** The Options tab's sections below Display, for this file and account. The budget's rows show only
+/** The Settings tab's sections below Display, for this file and account. The budget's rows show only
  *  while it is on, and only its type's limit; each unit keeps its own type. Carry over is left to
  *  /tokentab:budget. */
 export function sections(budget: Json | undefined, unit: Unit): Section[] {
@@ -782,7 +782,7 @@ let lastWindows: string | undefined     // the last windows file written, for a 
 let autoOpenHere: boolean | undefined   // the switch set where /config had no row for it, `$.store`'s AUTO_OPEN
 
 // An SDK host (the Desktop app, `claude -p`) lists no plugin's /config row, so there the
-// Options tab's switch is kept in `$.store` with the option it was set over; it stands
+// Settings tab's switch is kept in `$.store` with the option it was set over; it stands
 // until /config changes that option, which a load sees without hooking `config.set`.
 const AUTO_OPEN = 'autoOpen'
 const optionAutoOpen = () => opts.autoOpen !== false
@@ -1184,7 +1184,7 @@ export const register: Register = (on, pluginOptions) => {
     )
   })
 
-  // Two tabs over one report (Spend) and budget.json (Options), the same tree on
+  // Two tabs over one report (Spend) and budget.json (Settings), the same tree on
   // every surface: the terminal ignores `size`, `weight` and `mono` and is monospaced
   // anyway; the bars are an Svg where the surface draws one and block characters in the
   // terminal. Only a Button takes a press, so the tabs and "Open full report" are Buttons.
@@ -1239,7 +1239,7 @@ export const register: Register = (on, pluginOptions) => {
     return { text: `${status}\n${where}`, context: figures === '' ? undefined : [`TokenTab, this session's figures as of now:\n${figures}`] }
   }).catch(() => ({ text: 'TokenTab: the status command failed' }))
 
-  // The Options tab's auto-open switch is the manifest's `userConfig` field: written as the
+  // The Settings tab's auto-open switch is the manifest's `userConfig` field: written as the
   // config menu would, so the menu, the install screen and the pane show one value. The
   // write reloads the module; `session.start` then runs again and is idempotent. Where
   // /config has no row for it (an SDK host), it is kept in `$.store` instead. A stored
@@ -1777,7 +1777,7 @@ function toolRow($: EngineInterface, e: RenderEvent, t: ToolRow, path: string, t
   )
 }
 
-/** Options, laid out as the issue #106 frame. Mobile has neither Input nor Select, so it shows the values. */
+/** Settings, laid out as the issue #106 frame. Mobile has neither Input nor Select, so it shows the values. */
 function optionsTab($: EngineInterface, e: RenderEvent): RenderChildren {
   const { Box, Text, Button } = $.ui.resolve(e)
   const o = options
