@@ -839,7 +839,7 @@ test('the Settings tab: auto-open through the config menu, the budget through th
   // the USD limit's field has the frame's $ before it, not a unit after its label
   expect(t.some(text => text.text === '$' && text.props.dimColor)).toBe(true)
   expect(t.some(text => text.text === 'Resets at midnight, all sessions.' && text.props.dimColor)).toBe(true)
-  expect(t.some(text => text.text === 'Holds new prompts at the limit.' && text.props.dimColor)).toBe(true)
+  expect(t.some(text => text.text === 'Stops prompts and tool calls at the limit.' && text.props.dimColor)).toBe(true)
   expect(t.some(text => text.text === 'Save a note before cache expires.' && text.props.dimColor)).toBe(true)
   expect(elements(tree, 'Button').find(button => button.key === 'auto-open')?.label).toBe('On')
   // one budget type; the file had only today's limit, so today is the type, and its limit the one field
@@ -947,8 +947,8 @@ test('the Settings tab offers the daily budget once the plan reports a usage win
   // the headline offers the plan's choices; the file's five_hour has no reading here (only the week reported), so it shows as auto
   const lead = elements(tree, 'Select').find(select => select.key === 'b-headline')
   expect(lead?.value).toBe('auto')
-  expect((lead?.options as { label: string }[]).map(option => option.label)).toEqual(['Auto', 'Left today', 'Left this week', 'Left this session'])
-  expect(t.some(text => text.text === 'e.g. "$31.40 left today"' && text.props.dimColor)).toBe(true)
+  expect((lead?.options as { label: string }[]).map(option => option.label)).toEqual(['Auto', 'Today', 'Week', 'Session'])
+  expect(t.some(text => text.text === 'The figure the pane and the status line show first. Auto follows the budget that is on.' && text.props.dimColor)).toBe(true)
   await $.ui.select({ plugin: 'tokentab', key: 'b-headline', value: 'today' })
   expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'headline', 'today'])
   // carry over, which sizes the daily budget, is not on the tab
@@ -984,7 +984,9 @@ test('the limit unit follows the account: percent where the plan reports a usage
   expect(typeNote({ budgets_on: true }, 'usd')).toBe('Resets at midnight, all sessions.')
   expect(typeNote({ budgets_on: true, budget_type: { usd: 'session' } }, 'usd')).toBeUndefined()
   expect(typeNote({ budgets_on: true, budget_type: { percent: 'today' } }, 'percent')).toBeUndefined()
-  expect(sections({ budgets_on: true, budget_type: { percent: 'session' } }, 'percent')[0]!.rows[1]!.unit).toBe('USD at API rates')
+  // the session limit on Pro and Max is dollars too: the $ before its field, at API rates
+  const percentSession = sections({ budgets_on: true, budget_type: { percent: 'session' } }, 'percent')[0]!.rows[1]!
+  expect([percentSession.prefix, percentSession.unit, percentSession.note]).toEqual(['$', undefined, 'At API rates.'])
   // spend_less follows hard_stop until it is set either way
   const spendLess = sections({ budgets_on: true }, 'usd').flatMap(section => section.rows).find(row => row.key === 'spend_less')!
   expect([{ hard_stop: true }, { hard_stop: true, spend_less: null }, { hard_stop: false }, { hard_stop: true, spend_less: false }, { hard_stop: false, spend_less: true }]
