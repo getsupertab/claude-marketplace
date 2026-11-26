@@ -542,8 +542,6 @@ export type Setting = {
   prefix?: string
   /** One line under the row saying what the setting does. */
   note?: string
-  /** A switch that is null until set shows this other switch's value. */
-  follows?: string
   /** A switch's state while its key is missing. */
   defaultOn?: boolean
   /** Tagged BETA beside its label. */
@@ -553,25 +551,10 @@ export type Setting = {
 /** A choice's words in the pane; budget.json keeps the value. */
 export const CHOICE_LABELS: Record<string, string> = { auto: 'Auto', today: 'Today', week: 'Week', five_hour: '5 hours', session: 'Session' }
 export const choiceLabel = (value: string): string => CHOICE_LABELS[value] ?? value
-/** A switch's state; one with `follows` shows that key's while its own is unset. */
+/** A switch's state: its own value, else its default. */
 export function switchOn(budget: Json | undefined, setting: Setting): boolean {
   const own = at(budget, setting.key)
-  if (typeof own === 'boolean') return own
-  if (setting.follows === undefined) return setting.defaultOn === true
-  return at(budget, setting.follows) === true
-}
-
-/** A followed switch by its label in the pane. */
-const FOLLOWED: Record<string, string> = { hard_stop: 'Stop at limit' }
-
-/** The line under a row; a switch with `follows` says whether it follows or was set, and how back. */
-export function noteOf(budget: Json | undefined, setting: Setting): string | undefined {
-  if (setting.follows === undefined) return setting.note
-  const followed = FOLLOWED[setting.follows] ?? setting.follows.replace(/_/g, ' ')
-  const state = typeof at(budget, setting.key) === 'boolean'
-    ? `Set by you; /tokentab:budget ${setting.key} auto follows ${followed} again.`
-    : `Follows ${followed} until you set it.`
-  return setting.note === undefined ? state : `${setting.note} ${state}`
+  return typeof own === 'boolean' ? own : setting.defaultOn === true
 }
 
 /** The budget types each unit offers, as BUDGET_TYPES in tokentab.py. */
@@ -613,8 +596,7 @@ export function sections(budget: Json | undefined, unit: Unit): Section[] {
     { title: 'budget', toggle: { key: 'budgets_on', label: 'Enable budget', kind: 'switch' }, rows: on ? [
       { key: `budget_type.${unit}`, label: 'Limit applies to', kind: 'choice', choices: BUDGET_TYPES[unit], ...resets },
       TYPE_LIMITS[`${unit}:${type}`]!,
-      { key: 'spend_less', label: 'Economy mode', kind: 'switch', beta: true, follows: 'hard_stop',
-        note: 'Spends less as you near the limit.' },
+      { key: 'spend_less', label: 'Economy mode', kind: 'switch', beta: true, note: 'Spends less as you near the limit.' },
       { key: 'hard_stop', label: 'Stop at limit', kind: 'switch', note: 'Stops prompts and tool calls at the limit.' },
     ] : [] },
     { title: 'session', rows: [
@@ -706,12 +688,9 @@ export function weekBaseline(
   return out
 }
 
-/** 1.8.0–1.9.0 shipped `spend_less: false` under this comment, where false was the default, not a choice. */
-export const SPEND_LESS_1_8_COMMENT = 'true also asks Claude to spend less (cheaper actions, shorter replies, and with hard_stop on, to wrap up) at each warning. false (the default) only warns you.'
-
 /** The user's budget.json with the keys a newer shipped file has added, in the shipped
  *  order, one level into objects (daily_budget.carry_over), like budget.py's upgraded(), and
- *  the shipped `_comment` texts, a 1.8–1.9 `spend_less: false` put back to null; undefined
+ *  the shipped `_comment` texts, a 1.10–1.12 `spend_less: null` written as false (off); undefined
  *  when nothing changes. */
 export function withNewKeys(user: Json, shipped: Json, nested = false): Json | undefined {
   const isObject = (candidate: unknown): candidate is Json =>
@@ -726,8 +705,7 @@ export function withNewKeys(user: Json, shipped: Json, nested = false): Json | u
     if (inner) added = true
     out[key] = inner ?? mine
   }
-  // Once, while the old comment is still there: that false follows hard_stop like a new file's null
-  if (!nested && user._spend_less_comment === SPEND_LESS_1_8_COMMENT && user.spend_less === false) { out.spend_less = null; added = true }
+  if (!nested && 'spend_less' in user && user.spend_less === null) { out.spend_less = false; added = true }
   if (!added) return undefined
   for (const [key, value] of Object.entries(user)) if (!(key in out)) out[key] = value
   return out
@@ -1785,14 +1763,13 @@ function optionsTab($: EngineInterface, e: RenderEvent): RenderChildren {
     <Box width={16} flexShrink={0} flexDirection="column" alignItems={align}>{ctl}</Box>
   )
   // Off and On a space apart.
-  // A switch still following another can be pressed on its filled side, to set it as shown.
-  const toggle = (key: string, isOn: boolean, set: (on: boolean) => void, following = false): RenderChildren => mobile
+  const toggle = (key: string, isOn: boolean, set: (on: boolean) => void): RenderChildren => mobile
     ? <Text size="footnote" mono weight="semibold">{isOn ? 'On' : 'Off'}</Text>
     : (
       <Box gap={1}>
         {([false, true] as const).map(side => (
           <Button key={`${key}:${side ? 'on' : 'off'}`} label={side ? 'On' : 'Off'} variant={side === isOn ? 'primary' : 'secondary'}
-            onPress={() => { if (side !== isOn || following) set(side) }} />
+            onPress={() => { if (side !== isOn) set(side) }} />
         ))}
       </Box>
     )
@@ -1800,8 +1777,7 @@ function optionsTab($: EngineInterface, e: RenderEvent): RenderChildren {
   const control = (s: Setting): RenderChildren => {
     const v = at(o?.budget, s.key)
     if (s.kind === 'switch') {
-      return column(toggle(`b-${s.key}`, switchOn(o?.budget, s), on => { void setBudget($, s.key, on ? 'on' : 'off') },
-        s.follows !== undefined && typeof v !== 'boolean'), 'flex-end')
+      return column(toggle(`b-${s.key}`, switchOn(o?.budget, s), on => { void setBudget($, s.key, on ? 'on' : 'off') }), 'flex-end')
     }
     if (s.kind === 'choice') {
       const choices = s.key === HEADLINE.key ? headlineChoices(unit, (o?.windows ?? []).map(window => window.kind)) : s.choices ?? []
@@ -1850,7 +1826,7 @@ function optionsTab($: EngineInterface, e: RenderEvent): RenderChildren {
           section(settingsSection.title, settingsSection.toggle && control(settingsSection.toggle), [
             ...(toggleError !== undefined ? [<Text size="footnote" key="toggle-error" color="error">{toggleError}</Text>] : []),
             ...settingsSection.rows.map(setting => row(setting.key, setting.unit === undefined ? setting.label : `${setting.label} (${setting.unit})`, control(setting),
-              { error: o?.errors[setting.key], note: noteOf(o?.budget, setting), beta: setting.beta })),
+              { error: o?.errors[setting.key], note: setting.note, beta: setting.beta })),
           ]),
           rule($, e, `rule-${settingsSection.title}`),
         ]

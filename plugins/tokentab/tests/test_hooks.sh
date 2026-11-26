@@ -155,8 +155,8 @@ rm "$DATA/state/windows/s-guard.json" "$DATA/state/week_baseline.json"
 
 # Warnings reach Claude only with spend_less: each case is a new 5-hour window, so it warns afresh
 n=4   # past the window an earlier check already warned on
-# spend_less null follows hard_stop; the third word is whether Claude should hear it
-for case in "false false false" "false true true" "true false false" "true true true" "false null false" "true null true"; do
+# spend_less null (a 1.10-1.12 file) is off, whatever hard_stop is; the third word is whether Claude should hear it
+for case in "false false false" "false true true" "true false false" "true true true" "false null false" "true null false"; do
   set -- $case; n=$((n + 1))
   printf '{"budgets_on": true, "five_hour_limit_percent": 100, "weekly_limit_percent": null, "hard_stop": %s, "spend_less": %s}\n' "$1" "$2" > "$DATA/budget.json"
   printf '{"windows": [{"kind": "five_hour", "percentUsed": 92, "resetsAt": "2999-01-%02dT00:00:00Z"}]}\n' "$n" > "$DATA/state/windows/s-guard.json"

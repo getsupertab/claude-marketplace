@@ -8,7 +8,7 @@ and the budget skill alike.
   budget.py set KEY VALUE   change one existing key and write the file back, its order and
                             its _comment keys kept. VALUE: a number; "off", "none" or "" for
                             a limit that is switched off (null); on/off/true/false/yes/no
-                            for a switch (auto puts spend_less back to following hard_stop);
+                            for a switch;
                             auto, session, today, five_hour or week for headline;
                             budget_type.usd: today or session; budget_type.percent: today,
                             week, five_hour or session (auto for either: from the limits set).
@@ -27,12 +27,9 @@ PATH = os.path.join(kt.CFG, "budget.json")
 SHIPPED = os.path.join(os.path.dirname(os.path.abspath(__file__)), "budget.json")
 HEADLINES = ("auto", "session", "today", "five_hour", "week")
 TRUE, FALSE = ("on", "true", "yes", "1"), ("off", "false", "no", "0")
-# Switches that are null until set, following another key; "auto" sets them back to null
-FOLLOWS = {"spend_less": "hard_stop"}
 AUTO = ("auto", "default", "null", "none")
-# 1.8.0-1.9.0 shipped spend_less false under this comment, where false was the default, not a choice
-SPEND_LESS_1_8_COMMENT = ("true also asks Claude to spend less (cheaper actions, shorter replies, and with "
-                          "hard_stop on, to wrap up) at each warning. false (the default) only warns you.")
+# Switches a 1.10-1.12 file may still hold as null, which now means off
+WAS_NULL = ("spend_less",)
 
 
 def load():
@@ -42,7 +39,7 @@ def load():
 
 def upgraded(cfg):
     """cfg with the keys the shipped file has and cfg lacks, in the shipped order, one level into objects,
-    the shipped _comment texts, and a 1.8-1.9 spend_less false put back to null. register.tsx's
+    the shipped _comment texts, and a 1.10-1.12 spend_less null written as false (off). register.tsx's
     withNewKeys does the same."""
     with open(SHIPPED, encoding="utf-8") as f:
         shipped = json.load(f)
@@ -55,8 +52,9 @@ def upgraded(cfg):
         return mine
     out = {**{key: merged(key, value) for key, value in shipped.items()},
            **{key: value for key, value in cfg.items() if key not in shipped}}
-    if cfg.get("_spend_less_comment") == SPEND_LESS_1_8_COMMENT and cfg.get("spend_less") is False:
-        out["spend_less"] = None
+    for key in WAS_NULL:
+        if out.get(key) is None:
+            out[key] = False
     return out
 
 
@@ -95,12 +93,10 @@ def parse(key, old, raw):
         return text
     if isinstance(old, str):
         raise ValueError(f"{key}: edit this one in the file")
-    if leaf in FOLLOWS and text in AUTO:
-        return None
-    if isinstance(old, bool) or (old is None and leaf in FOLLOWS):
+    if isinstance(old, bool) or (old is None and leaf in WAS_NULL):
         if text in TRUE: return True
         if text in FALSE: return False
-        raise ValueError(f"{key}: on, off or auto, not {raw!r}" if leaf in FOLLOWS else f"{key}: on or off, not {raw!r}")
+        raise ValueError(f"{key}: on or off, not {raw!r}")
     if isinstance(old, (list, dict)):
         raise ValueError(f"{key}: edit this one in the file")
     if text in ("", "off", "none", "null"):

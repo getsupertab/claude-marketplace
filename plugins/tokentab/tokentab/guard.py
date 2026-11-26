@@ -479,8 +479,7 @@ def main():
 
     marks = [100 - left for left in WARN_LEFT]
     hard    = bool(b.get("hard_stop", False))
-    # Unset (null) follows hard_stop, so Claude is not cut off at 100% unwarned
-    spend_less = b["spend_less"] if isinstance(b.get("spend_less"), bool) else hard
+    spend_less = b.get("spend_less") is True
 
     # Each scope is judged on its own and keeps its own warn band, so a scope
     # that is already over (today) cannot hide another's warning (this session).

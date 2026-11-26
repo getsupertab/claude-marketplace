@@ -365,32 +365,20 @@ def day_budget_case():
             errs.append(f"budget.parse: {key}={raw} should be refused")
         except ValueError:
             pass
-    # spend_less: null until set, then a switch; auto sets it back
-    got = [budget.parse("spend_less", None, "on"), budget.parse("spend_less", True, "off"), budget.parse("spend_less", False, "auto")]
-    if got != [True, False, None]:
-        errs.append(f"budget.parse: spend_less should take on, off and auto: {got}")
-    got = [budget.parse("spend_less", True, raw) for raw in ("null", "none", "default")]
-    if got != [None, None, None]:
-        errs.append(f"budget.parse: spend_less should take null, none and default as auto: {got}")
-    try:
-        budget.parse("spend_less", None, "maybe")
-        errs.append("budget.parse: spend_less=maybe should be refused")
-    except ValueError as e:
-        if "on, off or auto" not in str(e):
-            errs.append(f"budget.parse: spend_less's refusal should name auto: {e}")
-    for key, old in (("hard_stop", True), ("other", None)):
+    # spend_less: a plain switch, also where a 1.10-1.12 file still holds null
+    got = [budget.parse("spend_less", None, "on"), budget.parse("spend_less", True, "off"), budget.parse("spend_less", False, "on")]
+    if got != [True, False, True]:
+        errs.append(f"budget.parse: spend_less should take on and off: {got}")
+    for key, old in (("spend_less", None), ("spend_less", False), ("hard_stop", True), ("other", None)):
         try:
             budget.parse(key, old, "auto")
             errs.append(f"budget.parse: {key}=auto should be refused")
         except ValueError:
             pass
-    # A 1.8-1.9 file's spend_less false was that version's default: it follows hard_stop again, once
-    old = {"_spend_less_comment": budget.SPEND_LESS_1_8_COMMENT, "spend_less": False}
-    if budget.upgraded(old).get("spend_less", "missing") is not None:
-        errs.append("budget.upgraded: a 1.8-1.9 spend_less false should become null")
-    for kept in ({**old, "spend_less": True}, {"_spend_less_comment": "newer", "spend_less": False}):
-        if budget.upgraded(kept).get("spend_less") is not kept["spend_less"]:
-            errs.append(f"budget.upgraded: spend_less should be kept: {kept}")
+    # A 1.10-1.12 file's spend_less null is written as off; a set value is kept
+    for mine, want in ((None, False), (True, True), (False, False)):
+        if budget.upgraded({"spend_less": mine}).get("spend_less") is not want:
+            errs.append(f"budget.upgraded: spend_less {mine} should become {want}")
     # budget_type: each unit's own words, auto back to following the limits set
     got = [budget.parse("budget_type.usd", None, "Session"), budget.parse("budget_type.percent", "today", "five_hour"),
            budget.parse("budget_type.percent", "week", "auto")]
