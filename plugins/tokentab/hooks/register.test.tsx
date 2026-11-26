@@ -146,6 +146,9 @@ const BUDGET = JSON.stringify({
   cold_resume: { confirm_seconds: 120, min_context_tokens: 100000 },
 }, null, 2)
 
+/** The last budget.py run: a settings change redraws after it, so it is not the last run. */
+const lastSet = (ui: { runs: string[][] }): string[] => ui.runs.filter(run => run.some(arg => arg.endsWith('budget.py'))).at(-1)!
+
 const PANE_PROPS = { title: 'TokenTab', isFocused: false, bodyColumns: 80, placement: 'dock' as const, scroll: { offset: 0, bodyRows: 40 }, view: {} }
 
 /** The `source` of every element of one type (Svg, Code) in a tree. */
@@ -879,7 +882,7 @@ test('the Settings tab: auto-open through the config menu, the budget through th
   const typeColumn = boxesTo(tree, 'b-budget_type.usd')!.at(-1)!
   expect([typeColumn.width, typeColumn.alignItems]).toEqual([fieldColumn.width, 'flex-end'])
   await $.ui.select({ plugin: 'tokentab', key: 'b-budget_type.usd', value: 'session' })
-  expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'budget_type.usd', 'session'])
+  expect(lastSet(ui).slice(2)).toEqual(['set', 'budget_type.usd', 'session'])
 
   // the switch is the manifest's userConfig field, written as the menu would
   ui.store.set('autoOpen', true)
@@ -891,7 +894,7 @@ test('the Settings tab: auto-open through the config menu, the budget through th
 
   // a limit goes through budget.py; a refused value is shown under its field
   await $.ui.input({ plugin: 'tokentab', key: 'b-daily_limit_usd', text: '30' })
-  expect(ui.runs[ui.runs.length - 1]!.slice(1).map((s, i) => i === 0 ? s.split('/').pop() : s)).toEqual(['budget.py', 'set', 'daily_limit_usd', '30'])
+  expect(lastSet(ui).slice(1).map((s, i) => i === 0 ? s.split('/').pop() : s)).toEqual(['budget.py', 'set', 'daily_limit_usd', '30'])
   await $.ui.input({ plugin: 'tokentab', key: 'b-daily_limit_usd', text: 'bad' })
   const after = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   expect(texts(after).find(x => x.props.color === 'error')?.text.trim()).toBe("daily_limit_usd: a number is needed, not 'bad'")
@@ -899,11 +902,11 @@ test('the Settings tab: auto-open through the config menu, the budget through th
   await $.ui.press(press('b-hard_stop:off'))
   expect(ui.runs.length).toBe(runs)
   await $.ui.press(press('b-hard_stop:on'))
-  expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'hard_stop', 'on'])
+  expect(lastSet(ui).slice(2)).toEqual(['set', 'hard_stop', 'on'])
   // spend_less is Economy mode, on with no such key yet
   expect(switchState(tree, 'b-spend_less')).toBe('On')
   await $.ui.press(press('b-spend_less:off'))
-  expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'spend_less', 'off'])
+  expect(lastSet(ui).slice(2)).toEqual(['set', 'spend_less', 'off'])
   // carry over is a percent setting; Lead with is gone
   expect(elements(tree, 'Button').some(button => String(button.key).startsWith('b-daily_budget.carry_over'))).toBe(false)
   expect(t.some(x => x.text === 'Lead with')).toBe(false)
@@ -961,9 +964,11 @@ test('the Settings tab on a plan: Watch with no limit, carry over while watching
   expect(t.filter(x => ['Enabled', 'Watch', 'Carry over', 'Economy mode', 'Handoff note'].includes(x.text)).map(x => x.text))
     .toEqual(['Enabled', 'Watch', 'Carry over', 'Economy mode', 'Handoff note'])
   await $.ui.press(press('b-daily_budget.carry_over:on'))
-  expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'daily_budget.carry_over', 'on'])
+  expect(lastSet(ui).slice(2)).toEqual(['set', 'daily_budget.carry_over', 'on'])
+  // the change redraws at once, report included, so the Today line follows it
+  expect(ui.runs.at(-1)).toContain('--report')
   await $.ui.select({ plugin: 'tokentab', key: 'b-budget_type.percent', value: 'week' })
-  expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'budget_type.percent', 'week'])
+  expect(lastSet(ui).slice(2)).toEqual(['set', 'budget_type.percent', 'week'])
   const mobile = await $.ui.render({ surface: 'mobile', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   expect(texts(mobile).some(x => x.text === 'Today')).toBe(true)
   // mobile shows values only, every one at the column's left, switches too
@@ -1166,7 +1171,7 @@ test('with only `py` installed and a Store stub as python3, the helpers run unde
   await clock.settle()
   expect(ui.probes.length).toBe(3)
   expect(new Set(ui.launchers)).toEqual(new Set(['py -3']))
-  expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'budgets_on', 'on'])
+  expect(lastSet(ui).slice(2)).toEqual(['set', 'budgets_on', 'on'])
 })
 
 test('a python3 that is Python 2 is passed over for `python`', async ($, on) => {

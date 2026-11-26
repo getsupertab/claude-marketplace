@@ -993,8 +993,8 @@ async function setBudget($: EngineInterface, key: string, value: string): Promis
   } catch (err) {
     errors[key] = err instanceof Error ? err.message : String(err)
   }
-  await readBudget($)
-  $.ui.invalidate('ui.render')
+  // A full redraw, not just the file: Watch's Today line reads the report, which the change moves
+  await refresh($)
 }
 
 /** Once a session someone looks at, from whichever comes first, `session.start` with a
