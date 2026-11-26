@@ -1,7 +1,7 @@
 import { test, expect, mock } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On, RenderElement, RenderNode } from 'claude-code'
-import { at, barCells, barSvg, chevronSvg, COPY_HANDOFF, dataDir, DONT_SEND, freshNote, HANDOFF_DEFAULTS, HANDOFF_PROMPT, handoffPrompt, handoffStep, HELD_HANDOFF, NEW_CHAT, SEND_HERE, budgetTypeOf, int, liveLines, pct, reopenLabel, SERIES, shareCard, shareCardSvg, shareLinks, sharePageHtml, sections, shareText, shown, SPEND_LESS_1_8_COMMENT, stripAnsi, switchOn, timedOut, toneOf, ttlOf, unitOf, usd, weekBaseline, withNewKeys, wrapWords } from './register'
+import { at, barCells, barSvg, chevronSvg, COPY_HANDOFF, dataDir, DONT_SEND, freshNote, HANDOFF_DEFAULTS, HANDOFF_PROMPT, handoffPrompt, handoffStep, HELD_HANDOFF, NEW_CHAT, SEND_HERE, budgetTypeOf, int, liveLines, noteOf, pct, reopenLabel, SERIES, shareCard, shareCardSvg, shareLinks, sharePageHtml, sections, shareText, shown, SPEND_LESS_1_8_COMMENT, stripAnsi, switchOn, timedOut, toneOf, ttlOf, unitOf, usd, weekBaseline, withNewKeys, wrapWords } from './register'
 import type { Idle, Report } from './register'
 
 // The world beneath the plugin: `$.fs` reaches nothing under `claude plugin test`, and
@@ -162,6 +162,18 @@ function elements(node: RenderNode, type: string): Record<string, unknown>[] {
   const el = node as RenderElement & { children?: RenderNode[]; props?: Record<string, unknown> }
   const below = (el.children ?? []).flatMap(c => elements(c, type))
   return el.type === type ? [(el.props ?? {}) as Record<string, unknown>, ...below] : below
+}
+
+/** The props of each Box from the root down to the element with this key, nearest last. */
+function boxesTo(node: RenderNode, key: string): Record<string, unknown>[] | undefined {
+  if (typeof node === 'string') return undefined
+  const el = node as RenderElement & { children?: RenderNode[]; props?: Record<string, unknown> }
+  if (el.props?.key === key) return []
+  for (const child of el.children ?? []) {
+    const below = boxesTo(child, key)
+    if (below) return el.type === 'Box' ? [el.props ?? {}, ...below] : below
+  }
+  return undefined
 }
 
 /** Every Text in a tree, each as its own string plus its style props. */
@@ -833,13 +845,13 @@ test('the Settings tab: auto-open through the config menu, the budget through th
   const t = texts(tree)
   expect(t.some(text => text.text === 'Open automatically')).toBe(true)
   expect(t.filter(text => /^[A-Z][A-Z ]+$/.test(text.text) && text.props.dimColor).map(text => text.text)).toEqual(['BUDGET', 'SESSION', 'DISPLAY'])
-  // Economy mode and the handoff note are each tagged beta, in colour
-  expect(t.filter(text => text.text === 'BETA').map(text => text.props.color)).toEqual(['warning', 'warning'])
+  // Economy mode is the one row tagged beta, in colour
+  expect(t.filter(text => text.text === 'BETA').map(text => text.props.color)).toEqual(['warning'])
   // the budget's rows in the frame's order, each with its line on what it does
   expect(t.filter(text => ['Limit applies to', 'Limit', 'Economy mode', 'Stop at limit'].includes(text.text)).map(text => text.text))
     .toEqual(['Limit applies to', 'Limit', 'Economy mode', 'Stop at limit'])
   expect(t.some(text => text.text === 'Resets at midnight, all sessions.' && text.props.dimColor)).toBe(true)
-  expect(t.some(text => text.text === 'Holds new prompts at the limit.' && text.props.dimColor)).toBe(true)
+  expect(t.some(text => text.text === 'Stops prompts and tool calls at the limit.' && text.props.dimColor)).toBe(true)
   expect(t.some(text => text.text === 'Save a note before cache expires.' && text.props.dimColor)).toBe(true)
   expect(switchState(tree, 'auto-open')).toBe('On')
   // one budget type; the file had only today's limit, so today is the type, and its limit the one field
@@ -854,9 +866,14 @@ test('the Settings tab: auto-open through the config menu, the budget through th
   expect(switchState(tree, 'b-budgets_on')).toBe('On')
   expect(switchState(tree, 'b-hard_stop')).toBe('Off')
   expect(switchState(tree, 'b-handoff.enabled')).toBe('On')
-  // each switch is Off then On side by side, as in the frame
+  // each switch is Off then On across the controls column, apart
   expect(elements(tree, 'Button').filter(button => String(button.key).startsWith('b-hard_stop:')).map(button => [button.label, button.variant]))
     .toEqual([['Off', 'primary'], ['On', 'secondary']])
+  // the pair fills the column the limit field fills, so On ends where the field's save does
+  const [pair, switchColumn] = boxesTo(tree, 'b-hard_stop:on')!.reverse()
+  const fieldColumn = boxesTo(tree, 'b-daily_limit_usd')!.at(-1)!
+  expect([pair!.justifyContent, pair!.gap]).toEqual(['space-between', 1])
+  expect([switchColumn!.width, switchColumn!.alignItems]).toEqual([fieldColumn.width, 'stretch'])
   await $.ui.select({ plugin: 'tokentab', key: 'b-budget_type.usd', value: 'session' })
   expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'budget_type.usd', 'session'])
 
@@ -910,8 +927,8 @@ test('the Settings tab hides the budget\'s rows while the budget is off', async 
   const tree = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   expect(switchState(tree, 'b-budgets_on')).toBe('Off')
   expect(texts(tree).some(text => text.text === 'Enable budget')).toBe(false)
-  // the handoff note's is the one beta tag left
-  expect(texts(tree).filter(text => text.text === 'BETA').length).toBe(1)
+  // with Economy mode hidden, no beta tag is left
+  expect(texts(tree).filter(text => text.text === 'BETA').length).toBe(0)
   expect(elements(tree, 'Input')).toEqual([])
   expect(elements(tree, 'Select').map(select => select.key)).toEqual(['b-headline'])
   expect(elements(tree, 'Button').map(button => button.key).filter(key => /hard_stop|spend_less|carry_over/.test(String(key)))).toEqual([])
@@ -927,7 +944,10 @@ test('the Settings tab: spend_less, while unset, shows Stop at limit\'s on and s
   await $.ui.press(press('tab-options'))
   const tree = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   expect(switchState(tree, 'b-spend_less')).toBe('On')
-  expect(texts(tree).some(text => text.text === 'Spends less as you near the limit.')).toBe(true)
+  expect(texts(tree).some(text => text.text === 'Spends less as you near the limit. Follows Stop at limit until you set it.')).toBe(true)
+  // while it follows, its filled side sets it as shown
+  await $.ui.press(press('b-spend_less:on'))
+  expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'spend_less', 'on'])
   await $.ui.press(press('b-spend_less:off'))
   expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'spend_less', 'off'])
 })
@@ -957,8 +977,8 @@ test('the Settings tab offers the daily budget once the plan reports a usage win
   // the headline offers the plan's choices; the file's five_hour has no reading here (only the week reported), so it shows as auto
   const lead = elements(tree, 'Select').find(select => select.key === 'b-headline')
   expect(lead?.value).toBe('auto')
-  expect((lead?.options as { label: string }[]).map(option => option.label)).toEqual(['Auto', 'Left today', 'Left this week', 'Left this session'])
-  expect(t.some(text => text.text === 'e.g. "$31.40 left today"' && text.props.dimColor)).toBe(true)
+  expect((lead?.options as { label: string }[]).map(option => option.label)).toEqual(['Auto', 'Today', 'Week', 'Session'])
+  expect(t.some(text => text.text === 'The figure the pane and the status line show first. Auto follows the budget that is on.' && text.props.dimColor)).toBe(true)
   await $.ui.select({ plugin: 'tokentab', key: 'b-headline', value: 'today' })
   expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'headline', 'today'])
   // carry over, which sizes the daily budget, is not on the tab
@@ -1001,6 +1021,8 @@ test('the limit unit follows the account: percent where the plan reports a usage
   const spendLess = sections({ budgets_on: true }, 'usd').flatMap(section => section.rows).find(row => row.key === 'spend_less')!
   expect([{ hard_stop: true }, { hard_stop: true, spend_less: null }, { hard_stop: false }, { hard_stop: true, spend_less: false }, { hard_stop: false, spend_less: true }]
     .map(budget => switchOn(budget, spendLess))).toEqual([true, true, false, false, true])
+  expect(noteOf({ hard_stop: true }, spendLess)).toBe('Spends less as you near the limit. Follows Stop at limit until you set it.')
+  expect(noteOf({ spend_less: false }, spendLess)).toBe('Spends less as you near the limit. Set by you; /tokentab:budget spend_less auto follows Stop at limit again.')
   // a 1.8–1.9 false was that version's default: it follows hard_stop again, once; a newer file's false stays
   expect(withNewKeys({ _spend_less_comment: SPEND_LESS_1_8_COMMENT, spend_less: false }, { _spend_less_comment: 'new', spend_less: null }))
     .toEqual({ _spend_less_comment: 'new', spend_less: null })
