@@ -530,24 +530,33 @@ export const TABS: { view: View; label: string }[] = [
 const TOOLS_SHOWN = 12
 
 // The settings the Options tab edits, in budget.json's keys (dotted below the top level),
-// as sections of rows: a limit is an Input, a switch an on/off Button, a choice a Button
-// that sets the next. A section's `toggle` sits in its heading. Every write goes through
-// tokentab/budget.py, the one validator.
+// as sections of rows: a limit is an Input, a switch an On/Off Button, a choice a Select.
+// A section's `toggle` sits in its heading. Every write goes through tokentab/budget.py,
+// the one validator.
 export type Unit = 'usd' | 'percent'
 export type Setting = {
   key: string; label: string; kind: 'limit' | 'switch' | 'choice'; unit?: string
-  /** A `choice` cycles through these, each press setting the next. */
+  /** A `choice` picks one of these. */
   choices?: string[]
   /** One line under the row saying what the setting does. */
   note?: string
   /** A switch that is null until set shows this other switch's value. */
   follows?: string
+  /** A switch's state while its key is missing. */
+  defaultOn?: boolean
+  /** Tagged BETA beside its label. */
+  beta?: true
 }
+
+/** A choice's words in the pane; budget.json keeps the value. */
+export const CHOICE_LABELS: Record<string, string> = { auto: 'Auto', today: 'Today', week: 'Week', five_hour: '5 hours', session: 'Session' }
+export const choiceLabel = (value: string): string => CHOICE_LABELS[value] ?? value
 /** A switch's state; one with `follows` shows that key's while its own is unset. */
 export function switchOn(budget: Json | undefined, setting: Setting): boolean {
   const own = at(budget, setting.key)
   if (typeof own === 'boolean') return own
-  return setting.follows !== undefined && at(budget, setting.follows) === true
+  if (setting.follows === undefined) return setting.defaultOn === true
+  return at(budget, setting.follows) === true
 }
 
 /** A followed switch by its label in the pane. */
@@ -557,9 +566,10 @@ const FOLLOWED: Record<string, string> = { hard_stop: 'Stop at limit' }
 export function noteOf(budget: Json | undefined, setting: Setting): string | undefined {
   if (setting.follows === undefined) return setting.note
   const followed = FOLLOWED[setting.follows] ?? setting.follows.replace(/_/g, ' ')
-  return typeof at(budget, setting.key) === 'boolean'
+  const state = typeof at(budget, setting.key) === 'boolean'
     ? `Set by you; /tokentab:budget ${setting.key} auto follows ${followed} again.`
     : `Follows ${followed} until you set it.`
+  return setting.note === undefined ? state : `${setting.note} ${state}`
 }
 
 /** The budget types each unit offers, as BUDGET_TYPES in tokentab.py. */
@@ -587,44 +597,34 @@ export function budgetTypeOf(budget: Json | undefined, unit: Unit): string {
   return at(budget, 'five_hour_limit_percent') && !at(budget, 'weekly_limit_percent') ? 'five_hour' : 'week'
 }
 
-export type Section = { title: string; toggle?: Setting; rows: Setting[]; tone?: 'warning' }
+export type Section = { title: string; toggle?: Setting; rows: Setting[] }
 
-/** Whether the daily budget shows on Pro and Max, as headline() and pane_report() in tokentab.py: as the
- *  budget, as the headline picked, or as auto's lead from an older file's daily budget switch. */
-export function dailyShown(budget: Json | undefined, unit: Unit): boolean {
-  if (unit !== 'percent') return false
-  const on = at(budget, 'budgets_on') === true
-  const headline = at(budget, 'headline')
-  if (on && budgetTypeOf(budget, unit) === 'today') return true
-  const auto = !['today', 'week', 'five_hour', 'session'].includes(String(headline))
-  return headline === 'today' || (auto && !on && at(budget, 'daily_budget.enabled') === true)
-}
-
-/** The Options tab's settings below Display, for this file and account. The budget's rows show only
- *  while it is on, and only its type's limit; each unit keeps its own type. Spend less acts on the
- *  budget, so it shows with it; carry over wherever the daily budget shows, since it sizes it. */
+/** The Options tab's sections below Display, for this file and account. The budget's rows show only
+ *  while it is on, and only its type's limit; each unit keeps its own type. Carry over is left to
+ *  /tokentab:budget. */
 export function sections(budget: Json | undefined, unit: Unit): Section[] {
   const on = at(budget, 'budgets_on') === true
   const type = budgetTypeOf(budget, unit)
-  const beta: Setting[] = [
-    ...(dailyShown(budget, unit) ? [{ key: 'daily_budget.carry_over', label: 'Carry over', kind: 'switch' as const,
-      note: 'Unused budget rolls into the next day of this week; overspend shrinks it.' }] : []),
-    ...(on ? [{ key: 'spend_less', label: 'Ask Claude to spend less near the limit', kind: 'switch' as const, follows: 'hard_stop' }] : []),
-  ]
+  // Only the USD daily budget is a plain local day; on Pro and Max it is spread from the week's cap
+  const resets = unit === 'usd' && type === 'today' ? { note: 'Resets at midnight, all sessions.' } : {}
   return [
     { title: 'budget', toggle: { key: 'budgets_on', label: 'Enable budget', kind: 'switch' }, rows: on ? [
-      { key: `budget_type.${unit}`, label: 'Budget type', kind: 'choice', choices: BUDGET_TYPES[unit] },
+      { key: `budget_type.${unit}`, label: 'Limit applies to', kind: 'choice', choices: BUDGET_TYPES[unit], ...resets },
       TYPE_LIMITS[`${unit}:${type}`]!,
-      { key: 'hard_stop', label: 'Stop at limit', kind: 'switch' },
+      { key: 'spend_less', label: 'Economy mode', kind: 'switch', beta: true, follows: 'hard_stop',
+        note: 'Spends less as you near the limit.' },
+      { key: 'hard_stop', label: 'Stop at limit', kind: 'switch', note: 'Stops prompts and tool calls at the limit.' },
     ] : [] },
-    { title: 'handoff note', toggle: { key: 'handoff.enabled', label: 'handoff note before the cache expires', kind: 'switch' }, rows: [] },
-    ...(beta.length > 0 ? [{ title: 'beta', tone: 'warning' as const, rows: beta }] : []),
+    { title: 'session', rows: [
+      { key: 'handoff.enabled', label: 'Handoff note', kind: 'switch', beta: true, defaultOn: HANDOFF_DEFAULTS.enabled,
+        note: 'Save a note before cache expires.' },
+    ] },
   ]
 }
 
 /** The figure that leads the pane, the status line and the reopen button. Its choices follow the account. */
-export const HEADLINE: Setting = { key: 'headline', label: 'Headline', kind: 'choice',
-  note: 'The figure the pane and the status line lead with, as what is left. auto follows the budget that is on.' }
+export const HEADLINE: Setting = { key: 'headline', label: 'Lead with', kind: 'choice',
+  note: 'The figure the pane and the status line show first. Auto follows the budget that is on.' }
 
 /** The headline words this account can show, as headline() in tokentab.py: a window only with its reading,
  *  and today (the daily budget on Pro and Max) only while the week has a reading. */
@@ -1772,11 +1772,12 @@ function toolRow($: EngineInterface, e: RenderEvent, t: ToolRow, path: string, t
   )
 }
 
-/** Options, Figma's "TokenTab / Limits", set like Spend: the pane's auto-open switch
- *  (the manifest's `userConfig` field, as in /config) and the headline under Display, then
- *  sections() over budget.json, a label on the left and its control on the right: a limit as an
- *  Input with "save", a switch as an on/off Button. Mobile has no Input, so it shows
- *  the values. */
+/** Options, Figma's "TokenTab / Limits", set like Spend: Display (the pane's auto-open switch,
+ *  the manifest's `userConfig` field as in /config, and the headline), then sections() over
+ *  budget.json, a label on the left and its control on the right: a limit as an Input with
+ *  "save", a switch as an On/Off Button, a choice as a Select. Mobile has neither Input nor
+ *  Select, so it shows the values. Spacing follows the issue #106 frame: caption to rows sm,
+ *  between rows lg, around each divider md. */
 function optionsTab($: EngineInterface, e: RenderEvent): RenderChildren {
   const { Box, Text, Button } = $.ui.resolve(e)
   const o = options
@@ -1786,8 +1787,8 @@ function optionsTab($: EngineInterface, e: RenderEvent): RenderChildren {
     <Box width={16} flexShrink={0} flexDirection="column" alignItems={stretch ? 'stretch' : 'flex-start'}>{ctl}</Box>
   )
   const toggle = (key: string, isOn: boolean, onPress: () => void): RenderChildren => mobile
-    ? <Text size="footnote" mono weight="semibold">{isOn ? 'on' : 'off'}</Text>
-    : <Button key={key} label={isOn ? 'on' : 'off'} variant={isOn ? 'primary' : 'secondary'} onPress={onPress} />
+    ? <Text size="footnote" mono weight="semibold">{isOn ? 'On' : 'Off'}</Text>
+    : <Button key={key} label={isOn ? 'On' : 'Off'} variant={isOn ? 'primary' : 'secondary'} onPress={onPress} />
   const unit = unitOf(o?.windows ?? [])
   const control = (s: Setting): RenderChildren => {
     const v = at(o?.budget, s.key)
@@ -1800,48 +1801,55 @@ function optionsTab($: EngineInterface, e: RenderEvent): RenderChildren {
       // The budget type shows the one in effect while unset; a headline this account cannot show falls back to auto, as tokentab.py does
       const picked = s.key.startsWith('budget_type.') ? budgetTypeOf(o?.budget, unit) : String(v)
       const current = choices.includes(picked) ? picked : choices[0] ?? shown(v)
-      if (mobile) return column(<Text size="footnote" mono weight="semibold">{current}</Text>)
-      const next = choices[(choices.indexOf(current) + 1) % choices.length] ?? ''
-      return column(<Button key={`b-${s.key}`} label={current} variant="secondary" onPress={() => { void setBudget($, s.key, next) }} />)
+      if (mobile) return column(<Text size="footnote" mono weight="semibold">{choiceLabel(current)}</Text>)
+      const { Select } = $.ui.resolve(e)
+      return column(<Select key={`b-${s.key}`} value={current} options={choices.map(choice => ({ value: choice, label: choiceLabel(choice) }))}
+        onSelect={value => { void setBudget($, s.key, value) }} />, true)
     }
     if (mobile) return column(<Text size="footnote" mono tabular weight="semibold">{shown(v)}</Text>)
     const { Input } = $.ui.resolve(e)
     return column(<Input key={`b-${s.key}`} value={shown(v)} placeholder="off" submitLabel="save" onSubmit={t => { void setBudget($, s.key, t) }} />, true)
   }
-  const row = (key: string, name: string, ctl: RenderChildren, error?: string, note?: string) => (
+  const row = (key: string, name: string, ctl: RenderChildren, opts: { error?: string; note?: string; beta?: boolean } = {}) => (
     <Box key={`row-${key}`} flexDirection="column">
       <Box gap={1} alignItems="center" justifyContent="space-between">
-        <Text size="footnote">{name}</Text>
+        <Box gap={1} alignItems="center" flexShrink={1}>
+          <Text size="footnote">{name}</Text>
+          {opts.beta && label($, e, 'beta', 'warning')}
+        </Box>
         {ctl}
       </Box>
-      {note !== undefined && <Text size="footnote" dimColor>{note}</Text>}
-      {error !== undefined && <Text size="footnote" color="error">{error}</Text>}
+      {opts.note !== undefined && <Text size="footnote" dimColor>{opts.note}</Text>}
+      {opts.error !== undefined && <Text size="footnote" color="error">{opts.error}</Text>}
     </Box>
   )
-  const section = (title: string, head: RenderChildren, rows: RenderChildren[], tone?: 'warning') => (
-    <Box key={`section-${title}`} flexDirection="column" gap="xs">
+  const section = (title: string, head: RenderChildren, rows: RenderChildren[]) => (
+    <Box key={`section-${title}`} flexDirection="column" gap="sm">
       <Box justifyContent="space-between" alignItems="center">
-        {label($, e, title, tone)}
+        {label($, e, title)}
         {head}
       </Box>
-      {rows}
+      {rows.length > 0 && <Box key="rows" flexDirection="column" gap="lg">{rows}</Box>}
     </Box>
   )
   return (
-    <Box flexDirection="column" gap={1}>
+    <Box flexDirection="column" gap="md">
       {section('display', undefined, [
-        row('auto-open', 'Open pane at session start', column(toggle('auto-open', autoOpen(), () => {}))),
-        row(HEADLINE.key, HEADLINE.label, control(HEADLINE), o?.errors[HEADLINE.key], HEADLINE.note),
+        row('auto-open', 'Open automatically', column(toggle('auto-open', autoOpen(), () => {}))),
+        row(HEADLINE.key, HEADLINE.label, control(HEADLINE), { error: o?.errors[HEADLINE.key], note: HEADLINE.note }),
       ])}
       {o?.error !== undefined && <Text size="footnote" color="error">{o.error}</Text>}
-      {sections(o?.budget, unit).flatMap(settingsSection => [
-        rule($, e, `rule-${settingsSection.title}`),
-        section(settingsSection.title, settingsSection.toggle && control(settingsSection.toggle), [
-          ...settingsSection.rows.map(s => row(s.key, s.unit === undefined ? s.label : `${s.label} (${s.unit})`, control(s), o?.errors[s.key], noteOf(o?.budget, s))),
-          settingsSection.toggle !== undefined && o?.errors[settingsSection.toggle.key] !== undefined
-            && <Text size="footnote" key="toggle-error" color="error">{o.errors[settingsSection.toggle.key]}</Text>,
-        ], settingsSection.tone),
-      ])}
+      {sections(o?.budget, unit).flatMap(settingsSection => {
+        const toggleError = settingsSection.toggle && o?.errors[settingsSection.toggle.key]
+        return [
+          rule($, e, `rule-${settingsSection.title}`),
+          section(settingsSection.title, settingsSection.toggle && control(settingsSection.toggle), [
+            ...(toggleError !== undefined ? [<Text size="footnote" key="toggle-error" color="error">{toggleError}</Text>] : []),
+            ...settingsSection.rows.map(s => row(s.key, s.unit === undefined ? s.label : `${s.label} (${s.unit})`, control(s),
+              { error: o?.errors[s.key], note: noteOf(o?.budget, s), beta: s.beta })),
+          ]),
+        ]
+      })}
     </Box>
   )
 }

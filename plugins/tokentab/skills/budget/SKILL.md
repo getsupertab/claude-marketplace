@@ -18,7 +18,7 @@ Arguments: $ARGUMENTS
 
 ## No arguments: show the limits
 
-Read the file and show, in a short list: whether `budgets_on` is on ("Enable budget"; off, or
+Read the file and show, in a short list: whether `budgets_on` is on (the BUDGET switch; off, or
 missing, means nothing is checked), the unit in effect, the budget type for that unit and its
 limit (`null` means off), and `hard_stop` ("Stop at limit": true blocks at the limit, false only
 warns; warnings come at 10%, 5% and 2% of the budget left, fixed, not a setting) and `spend_less`
