@@ -1783,12 +1783,12 @@ function optionsTab($: EngineInterface, e: RenderEvent): RenderChildren {
   const column = (ctl: RenderChildren, stretch = false) => (
     <Box width={16} flexShrink={0} flexDirection="column" alignItems={stretch ? 'stretch' : 'flex-start'}>{ctl}</Box>
   )
-  // Off and On across the controls column, so On ends where the limit field's save does.
+  // Off and On right-aligned in the controls column, a space apart, so On ends where the limit field's save does.
   // A switch still following another can be pressed on its filled side, to set it as shown.
   const toggle = (key: string, isOn: boolean, set: (on: boolean) => void, following = false): RenderChildren => mobile
     ? <Text size="footnote" mono weight="semibold">{isOn ? 'On' : 'Off'}</Text>
     : (
-      <Box gap={1} justifyContent="space-between">
+      <Box gap={1} justifyContent="flex-end">
         {([false, true] as const).map(side => (
           <Button key={`${key}:${side ? 'on' : 'off'}`} label={side ? 'On' : 'Off'} variant={side === isOn ? 'primary' : 'secondary'}
             onPress={() => { if (side !== isOn || following) set(side) }} />

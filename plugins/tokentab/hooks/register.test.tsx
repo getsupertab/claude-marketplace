@@ -869,10 +869,10 @@ test('the Settings tab: auto-open through the config menu, the budget through th
   // each switch is Off then On across the controls column, apart
   expect(elements(tree, 'Button').filter(button => String(button.key).startsWith('b-hard_stop:')).map(button => [button.label, button.variant]))
     .toEqual([['Off', 'primary'], ['On', 'secondary']])
-  // the pair fills the column the limit field fills, so On ends where the field's save does
+  // the pair sits at the right of the column the limit field fills, so On ends where the field's save does
   const [pair, switchColumn] = boxesTo(tree, 'b-hard_stop:on')!.reverse()
   const fieldColumn = boxesTo(tree, 'b-daily_limit_usd')!.at(-1)!
-  expect([pair!.justifyContent, pair!.gap]).toEqual(['space-between', 1])
+  expect([pair!.justifyContent, pair!.gap]).toEqual(['flex-end', 1])
   expect([switchColumn!.width, switchColumn!.alignItems]).toEqual([fieldColumn.width, 'stretch'])
   await $.ui.select({ plugin: 'tokentab', key: 'b-budget_type.usd', value: 'session' })
   expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'budget_type.usd', 'session'])
