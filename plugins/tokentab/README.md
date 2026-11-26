@@ -122,9 +122,11 @@ two differences:
 
 - **No pane and no status line.** Claude Code doesn't draw plugin panes in cloud sessions
   yet. `/tokentab:status` puts the figures in its reply instead.
-- **Its own figures and limits.** The ledger and `budget.json` live in the cloud
-  session's environment, so its daily and monthly totals don't include your local
-  sessions, and it starts from the default limits rather than the ones you set locally.
+- **Its own ledger and settings.** The ledger and `budget.json` live in the cloud
+  session's environment, so it starts from the default settings rather than the ones you
+  set locally, and its dollar totals don't include your local sessions. Percent figures
+  on Pro, Max and Team are your plan's usage windows, which count every session on the
+  account, local ones included.
 
 
 **Requirements:** Claude Code 2.1.304 or later, and Python 3 (standard library only) on
