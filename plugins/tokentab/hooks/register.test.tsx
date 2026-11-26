@@ -834,10 +834,12 @@ test('the Options tab: auto-open through the config menu, the budget through the
   // Economy mode and the handoff note are each tagged beta, in colour
   expect(t.filter(text => text.text === 'BETA').map(text => text.props.color)).toEqual(['warning', 'warning'])
   // the budget's rows in the frame's order, each with its line on what it does
-  expect(t.filter(text => ['Limit applies to', 'Limit (USD)', 'Economy mode', 'Stop at limit'].includes(text.text)).map(text => text.text))
-    .toEqual(['Limit applies to', 'Limit (USD)', 'Economy mode', 'Stop at limit'])
+  expect(t.filter(text => ['Limit applies to', 'Limit', 'Economy mode', 'Stop at limit'].includes(text.text)).map(text => text.text))
+    .toEqual(['Limit applies to', 'Limit', 'Economy mode', 'Stop at limit'])
+  // the USD limit's field has the frame's $ before it, not a unit after its label
+  expect(t.some(text => text.text === '$' && text.props.dimColor)).toBe(true)
   expect(t.some(text => text.text === 'Resets at midnight, all sessions.' && text.props.dimColor)).toBe(true)
-  expect(t.some(text => text.text === 'Stops prompts and tool calls at the limit.' && text.props.dimColor)).toBe(true)
+  expect(t.some(text => text.text === 'Holds new prompts at the limit.' && text.props.dimColor)).toBe(true)
   expect(t.some(text => text.text === 'Save a note before cache expires.' && text.props.dimColor)).toBe(true)
   expect(elements(tree, 'Button').find(button => button.key === 'auto-open')?.label).toBe('On')
   // one budget type; the file had only today's limit, so today is the type, and its limit the one field
@@ -883,7 +885,7 @@ test('the Options tab: auto-open through the config menu, the budget through the
   const mobile = await $.ui.render({ surface: 'mobile', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   expect(elements(mobile, 'Input')).toEqual([])
   expect(elements(mobile, 'Select')).toEqual([])
-  expect(texts(mobile).some(x => x.text === '40')).toBe(true)
+  expect(texts(mobile).some(text => text.text === '$40')).toBe(true)
   expect(texts(mobile).some(x => x.text === 'Today')).toBe(true)
 })
 
@@ -945,7 +947,8 @@ test('the Options tab offers the daily budget once the plan reports a usage wind
   // the headline offers the plan's choices; the file's five_hour has no reading here (only the week reported), so it shows as auto
   const lead = elements(tree, 'Select').find(select => select.key === 'b-headline')
   expect(lead?.value).toBe('auto')
-  expect((lead?.options as { label: string }[]).map(option => option.label)).toEqual(['Auto', 'Today', 'Week', 'Session'])
+  expect((lead?.options as { label: string }[]).map(option => option.label)).toEqual(['Auto', 'Left today', 'Left this week', 'Left this session'])
+  expect(t.some(text => text.text === 'e.g. "$31.40 left today"' && text.props.dimColor)).toBe(true)
   await $.ui.select({ plugin: 'tokentab', key: 'b-headline', value: 'today' })
   expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'headline', 'today'])
   // carry over, which sizes the daily budget, is not on the tab

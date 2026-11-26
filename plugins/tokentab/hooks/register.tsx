@@ -538,6 +538,10 @@ export type Setting = {
   key: string; label: string; kind: 'limit' | 'switch' | 'choice'; unit?: string
   /** A `choice` picks one of these. */
   choices?: string[]
+  /** A `choice`'s own words for its values, before CHOICE_LABELS. */
+  labels?: Record<string, string>
+  /** Drawn before a limit's field, as the frame's `$`. */
+  prefix?: string
   /** One line under the row saying what the setting does. */
   note?: string
   /** A switch that is null until set shows this other switch's value. */
@@ -550,7 +554,7 @@ export type Setting = {
 
 /** A choice's words in the pane; budget.json keeps the value. */
 export const CHOICE_LABELS: Record<string, string> = { auto: 'Auto', today: 'Today', week: 'Week', five_hour: '5 hours', session: 'Session' }
-export const choiceLabel = (value: string): string => CHOICE_LABELS[value] ?? value
+export const choiceLabel = (value: string, setting?: Setting): string => setting?.labels?.[value] ?? CHOICE_LABELS[value] ?? value
 /** A switch's state; one with `follows` shows that key's while its own is unset. */
 export function switchOn(budget: Json | undefined, setting: Setting): boolean {
   const own = at(budget, setting.key)
@@ -578,8 +582,8 @@ export const BUDGET_TYPES: Record<Unit, string[]> = { usd: ['today', 'session'],
 /** The limit field of each budget type, as TYPE_LIMITS in tokentab.py. On Pro and Max a session
  *  budget is dollars at API rates, and today's is spread from the week's cap. */
 const TYPE_LIMITS: Record<string, Setting> = {
-  'usd:today': { key: 'daily_limit_usd', label: 'Limit', unit: 'USD', kind: 'limit' },
-  'usd:session': { key: 'session_limit_usd', label: 'Limit', unit: 'USD', kind: 'limit' },
+  'usd:today': { key: 'daily_limit_usd', label: 'Limit', prefix: '$', kind: 'limit' },
+  'usd:session': { key: 'session_limit_usd', label: 'Limit', prefix: '$', kind: 'limit' },
   'percent:today': { key: 'weekly_limit_percent', label: 'Week cap', unit: '%', kind: 'limit',
     note: "Today's budget is what is left of the cap, spread over the days left." },
   'percent:week': { key: 'weekly_limit_percent', label: 'Limit', unit: '% of the week', kind: 'limit' },
@@ -613,7 +617,7 @@ export function sections(budget: Json | undefined, unit: Unit): Section[] {
       TYPE_LIMITS[`${unit}:${type}`]!,
       { key: 'spend_less', label: 'Economy mode', kind: 'switch', beta: true, follows: 'hard_stop',
         note: 'Spends less as you near the limit.' },
-      { key: 'hard_stop', label: 'Stop at limit', kind: 'switch', note: 'Stops prompts and tool calls at the limit.' },
+      { key: 'hard_stop', label: 'Stop at limit', kind: 'switch', note: 'Holds new prompts at the limit.' },
     ] : [] },
     { title: 'session', rows: [
       { key: 'handoff.enabled', label: 'Handoff note', kind: 'switch', beta: true, defaultOn: HANDOFF_DEFAULTS.enabled,
@@ -624,7 +628,8 @@ export function sections(budget: Json | undefined, unit: Unit): Section[] {
 
 /** The figure that leads the pane, the status line and the reopen button. Its choices follow the account. */
 export const HEADLINE: Setting = { key: 'headline', label: 'Lead with', kind: 'choice',
-  note: 'The figure the pane and the status line show first. Auto follows the budget that is on.' }
+  labels: { today: 'Left today', week: 'Left this week', five_hour: 'Left in 5 hours', session: 'Left this session' },
+  note: 'e.g. "$31.40 left today"' }
 
 /** The headline words this account can show, as headline() in tokentab.py: a window only with its reading,
  *  and today (the daily budget on Pro and Max) only while the week has a reading. */
@@ -1796,14 +1801,20 @@ function optionsTab($: EngineInterface, e: RenderEvent): RenderChildren {
       // The budget type shows the one in effect while unset; a headline this account cannot show falls back to auto, as tokentab.py does
       const picked = s.key.startsWith('budget_type.') ? budgetTypeOf(o?.budget, unit) : String(v)
       const current = choices.includes(picked) ? picked : choices[0] ?? shown(v)
-      if (mobile) return column(<Text size="footnote" mono weight="semibold">{choiceLabel(current)}</Text>)
+      if (mobile) return column(<Text size="footnote" mono weight="semibold">{choiceLabel(current, s)}</Text>)
       const { Select } = $.ui.resolve(e)
-      return column(<Select key={`b-${s.key}`} value={current} options={choices.map(choice => ({ value: choice, label: choiceLabel(choice) }))}
+      return column(<Select key={`b-${s.key}`} value={current} options={choices.map(choice => ({ value: choice, label: choiceLabel(choice, s) }))}
         onSelect={value => { void setBudget($, s.key, value) }} />, true)
     }
-    if (mobile) return column(<Text size="footnote" mono tabular weight="semibold">{shown(v)}</Text>)
+    if (mobile) return column(<Text size="footnote" mono tabular weight="semibold">{typeof v === 'number' && s.prefix ? `${s.prefix}${shown(v)}` : shown(v)}</Text>)
     const { Input } = $.ui.resolve(e)
-    return column(<Input key={`b-${s.key}`} value={shown(v)} placeholder="off" submitLabel="save" onSubmit={t => { void setBudget($, s.key, t) }} />, true)
+    const input = <Input key={`b-${s.key}`} value={shown(v)} placeholder="off" submitLabel="save" onSubmit={text => { void setBudget($, s.key, text) }} />
+    return column(s.prefix === undefined ? input : (
+      <Box gap={1} alignItems="center">
+        <Text size="footnote" dimColor>{s.prefix}</Text>
+        <Box flexGrow={1} flexDirection="column">{input}</Box>
+      </Box>
+    ), true)
   }
   const row = (key: string, name: string, ctl: RenderChildren, opts: { error?: string; note?: string; beta?: boolean } = {}) => (
     <Box key={`row-${key}`} flexDirection="column">
