@@ -607,8 +607,10 @@ export function sections(budget: Json | undefined, unit: Unit): Section[] {
 }
 
 /** The figure that leads the pane, the status line and the reopen button. Its choices follow the account. */
-export const HEADLINE: Setting = { key: 'headline', label: 'Lead with', kind: 'choice',
-  note: 'e.g. "$31.40 left today"' }
+export const HEADLINE: Setting = { key: 'headline', label: 'Lead with', kind: 'choice' }
+/** Lead with's note: an example in the account's own unit, as the pane's hero reads it. */
+export const headlineNote = (unit: Unit): string =>
+  unit === 'percent' ? 'e.g. "62% left of weekly window"' : 'e.g. "$31.40 left today"'
 
 /** The headline words this account can show, as headline() in tokentab.py: a window only with its reading,
  *  and today (the daily budget on Pro and Max) only while the week has a reading. */
@@ -1758,9 +1760,9 @@ function optionsTab($: EngineInterface, e: RenderEvent): RenderChildren {
   const o = options
   const mobile = e.surface === 'mobile'
   // One column for every control: the fields fill it, switches and dropdowns sit at its right edge,
-  // so each ends where the limit field's save does
+  // so each ends where the limit field's save does. Mobile shows only values, all at the left.
   const column = (ctl: RenderChildren, align: 'flex-start' | 'stretch' | 'flex-end' = 'flex-start') => (
-    <Box width={16} flexShrink={0} flexDirection="column" alignItems={align}>{ctl}</Box>
+    <Box width={16} flexShrink={0} flexDirection="column" alignItems={mobile ? 'flex-start' : align}>{ctl}</Box>
   )
   // Off and On a space apart.
   const toggle = (key: string, isOn: boolean, set: (on: boolean) => void): RenderChildren => mobile
@@ -1833,7 +1835,7 @@ function optionsTab($: EngineInterface, e: RenderEvent): RenderChildren {
       })}
       {section('display', undefined, [
         row('auto-open', 'Open automatically', column(toggle('auto-open', autoOpen(), () => {}), 'flex-end')),
-        row(HEADLINE.key, HEADLINE.label, control(HEADLINE), { error: o?.errors[HEADLINE.key], note: HEADLINE.note }),
+        row(HEADLINE.key, HEADLINE.label, control(HEADLINE), { error: o?.errors[HEADLINE.key], note: headlineNote(unit) }),
       ])}
     </Box>
   )

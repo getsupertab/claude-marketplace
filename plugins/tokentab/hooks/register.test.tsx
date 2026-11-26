@@ -1,7 +1,7 @@
 import { test, expect, mock } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On, RenderElement, RenderNode } from 'claude-code'
-import { at, barCells, barSvg, chevronSvg, COPY_HANDOFF, dataDir, DONT_SEND, freshNote, HANDOFF_DEFAULTS, HANDOFF_PROMPT, handoffPrompt, handoffStep, HELD_HANDOFF, NEW_CHAT, SEND_HERE, budgetTypeOf, int, liveLines, pct, reopenLabel, SERIES, shareCard, shareCardSvg, shareLinks, sharePageHtml, sections, shareText, shown, stripAnsi, switchOn, timedOut, toneOf, ttlOf, unitOf, usd, weekBaseline, withNewKeys, wrapWords } from './register'
+import { at, barCells, barSvg, chevronSvg, COPY_HANDOFF, dataDir, DONT_SEND, freshNote, HANDOFF_DEFAULTS, HANDOFF_PROMPT, handoffPrompt, handoffStep, headlineNote, HELD_HANDOFF,NEW_CHAT, SEND_HERE, budgetTypeOf, int, liveLines, pct, reopenLabel, SERIES, shareCard, shareCardSvg, shareLinks, sharePageHtml, sections, shareText, shown, stripAnsi, switchOn, timedOut, toneOf, ttlOf, unitOf, usd, weekBaseline, withNewKeys, wrapWords } from './register'
 import type { Idle, Report } from './register'
 
 // The world beneath the plugin: `$.fs` reaches nothing under `claude plugin test`, and
@@ -981,13 +981,19 @@ test('the Settings tab offers the daily budget once the plan reports a usage win
   const lead = elements(tree, 'Select').find(select => select.key === 'b-headline')
   expect(lead?.value).toBe('auto')
   expect((lead?.options as { label: string }[]).map(option => option.label)).toEqual(['Auto', 'Today', 'Week', 'Session'])
-  expect(t.some(text => text.text === 'e.g. "$31.40 left today"' && text.props.dimColor)).toBe(true)
+  // its example is in the account's unit
+  expect(t.some(text => text.text === 'e.g. "62% left of weekly window"' && text.props.dimColor)).toBe(true)
+  expect(headlineNote('usd')).toBe('e.g. "$31.40 left today"')
   await $.ui.select({ plugin: 'tokentab', key: 'b-headline', value: 'today' })
   expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'headline', 'today'])
   // carry over, which sizes the daily budget, is not on the tab
   expect(t.some(x => x.text === 'Carry over')).toBe(false)
   const mobile = await $.ui.render({ surface: 'mobile', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   expect(texts(mobile).some(x => x.text === 'Auto')).toBe(true)
+  // mobile shows values only, every one at the column's left, switches too
+  const mobileColumns = elements(mobile, 'Box').filter(box => box.width === 16)
+  expect(mobileColumns.length).toBeGreaterThan(0)
+  expect(mobileColumns.every(box => box.alignItems === 'flex-start')).toBe(true)
 })
 
 test('the limit unit follows the account: percent where the plan reports a usage window; one field per scope', () => {

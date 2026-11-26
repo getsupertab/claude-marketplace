@@ -376,9 +376,9 @@ def day_budget_case():
         except ValueError:
             pass
     # A 1.10-1.12 file's spend_less null is written as off; a set value is kept
-    for mine, want in ((None, False), (True, True), (False, False)):
-        if budget.upgraded({"spend_less": mine}).get("spend_less") is not want:
-            errs.append(f"budget.upgraded: spend_less {mine} should become {want}")
+    for mine, expected in ((None, False), (True, True), (False, False)):
+        if budget.upgraded({"spend_less": mine}).get("spend_less") is not expected:
+            errs.append(f"budget.upgraded: spend_less {mine} should become {expected}")
     # budget_type: each unit's own words, auto back to following the limits set
     got = [budget.parse("budget_type.usd", None, "Session"), budget.parse("budget_type.percent", "today", "five_hour"),
            budget.parse("budget_type.percent", "week", "auto")]

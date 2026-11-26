@@ -23,8 +23,9 @@ missing, means nothing is checked), the unit in effect, the budget type for that
 limit (`null` means off), and `hard_stop` ("Stop at limit": true blocks at the limit, false only
 warns; warnings come at 10%, 5% and 2% of the budget left, fixed, not a setting) and `spend_less`
 (beta; true also asks Claude to spend less at each warning, and to wrap up when `hard_stop` is
-on; false, the default, only warns the user, whatever `hard_stop` is). "Turn budgets on/off" means `budgets_on`. Also show `headline` (`auto`, `session`,
-`today`, `five_hour` or `week`: which figure leads in the pane, status line and reopen button,
+on; false, the default, only warns the user, whatever `hard_stop` is; a `null` left by 1.10 to
+1.12 is off too, show it as off). "Turn budgets on/off" means `budgets_on`. Also show `headline`
+(`auto`, `session`, `today`, `five_hour` or `week`: which figure leads in the pane, status line and reopen button,
 as what is left; `auto` follows the budget type while the budget is on, else the week on Pro
 and Max (the daily budget if an older file's `daily_budget.enabled` is on) and today in USD; `five_hour` and `week` are Pro and Max only).
 
