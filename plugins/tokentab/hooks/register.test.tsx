@@ -981,7 +981,7 @@ test('the Settings tab offers the daily budget once the plan reports a usage win
   const lead = elements(tree, 'Select').find(select => select.key === 'b-headline')
   expect(lead?.value).toBe('auto')
   expect((lead?.options as { label: string }[]).map(option => option.label)).toEqual(['Auto', 'Today', 'Week', 'Session'])
-  expect(t.some(text => text.text === 'The figure the pane and the status line show first. Auto follows the budget that is on.' && text.props.dimColor)).toBe(true)
+  expect(t.some(text => text.text === 'e.g. "$31.40 left today"' && text.props.dimColor)).toBe(true)
   await $.ui.select({ plugin: 'tokentab', key: 'b-headline', value: 'today' })
   expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'headline', 'today'])
   // carry over, which sizes the daily budget, is not on the tab

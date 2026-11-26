@@ -626,7 +626,7 @@ export function sections(budget: Json | undefined, unit: Unit): Section[] {
 
 /** The figure that leads the pane, the status line and the reopen button. Its choices follow the account. */
 export const HEADLINE: Setting = { key: 'headline', label: 'Lead with', kind: 'choice',
-  note: 'The figure the pane and the status line show first. Auto follows the budget that is on.' }
+  note: 'e.g. "$31.40 left today"' }
 
 /** The headline words this account can show, as headline() in tokentab.py: a window only with its reading,
  *  and today (the daily budget on Pro and Max) only while the week has a reading. */
