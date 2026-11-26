@@ -23,9 +23,9 @@ missing, means nothing is checked), the unit in effect, the budget type for that
 limit (`null` means off), and `hard_stop` ("Stop at limit": true blocks at the limit, false only
 warns; warnings come at 10%, 5% and 2% of the budget left, fixed, not a setting) and `spend_less`
 (beta; true also asks Claude to spend less at each warning, and to wrap up when `hard_stop` is
-on; false only warns the user; null, the default, follows `hard_stop`, and `auto` sets it back
-to null). "Turn budgets on/off" means `budgets_on`. Also show `headline` (`auto`, `session`,
-`today`, `five_hour` or `week`: which figure leads in the pane, status line and reopen button,
+on; false, the default, only warns the user, whatever `hard_stop` is; a `null` left by 1.10 to
+1.12 is off too, show it as off). "Turn budgets on/off" means `budgets_on`. Also show `headline`
+(`auto`, `session`, `today`, `five_hour` or `week`: which figure leads in the pane, status line and reopen button,
 as what is left; `auto` follows the budget type while the budget is on, else the week on Pro
 and Max (the daily budget if an older file's `daily_budget.enabled` is on) and today in USD; `five_hour` and `week` are Pro and Max only).
 
@@ -63,7 +63,7 @@ that the user can ask for a change with `/tokentab:budget <what to change>`.
 
    Where `python3` is missing or is not Python 3 (Windows), run the same with `python`, else `py -3`, in its place.
    KEY is dotted for nested settings (`cold_resume.confirm_seconds`); VALUE is a number, `off` for a
-   limit switched off, `on`/`off` for a switch (also `auto` for `spend_less`, back to following `hard_stop`), `auto`, `session`, `today`, `five_hour` or `week` for `headline`; for `budget_type.usd` `today` or `session`, for `budget_type.percent` `today`, `week`, `five_hour` or `session`, and `auto` for either. It refuses a value that does not fit or a
+   limit switched off, `on`/`off` for a switch, `auto`, `session`, `today`, `five_hour` or `week` for `headline`; for `budget_type.usd` `today` or `session`, for `budget_type.percent` `today`, `week`, `five_hour` or `session`, and `auto` for either. It refuses a value that does not fit or a
    key that does not exist, and keeps the file's order and comments. `budget.py get` prints
    the file.
 3. Show the new values. They apply from the next prompt; no restart is needed. The same

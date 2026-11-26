@@ -193,11 +193,13 @@ TokenTab warns with 10%, 5% and 2% of the budget left, and at the limit, counted
 left ("10% of today's budget left"). It only warns unless you switch on Stop at limit
 (`hard_stop`), which blocks tool calls past the limit. Whether Claude hears the warnings too is
 `spend_less` (beta, Economy mode on the Settings tab): on, Claude is
-asked to spend less, or to wrap up when it will be stopped; off, the warnings are yours alone.
-Until you set it, it follows `hard_stop`, so stopping at the limit warns Claude first and a
-warn-only budget tells only you. With `hard_stop` on and `spend_less` off, Claude hears nothing
-until its tool calls are blocked. 1.8.0 and 1.9.0 wrote `false` as their default; 1.10.0 puts
-it back to following `hard_stop` once, so if you had chosen off, switch it off again.
+asked to spend less, or to wrap up when it will be stopped; off (the default), the warnings are
+yours alone, whatever `hard_stop` is. With `hard_stop` on and `spend_less` off, Claude hears
+nothing until its tool calls are blocked.
+
+**Changed in 1.13.0.** `spend_less` no longer follows `hard_stop` while unset: it is off unless
+you switch it on. A file from 1.10 to 1.12 that still holds `null` is written as `false`, so if
+you had Stop at limit on and relied on Claude being warned, switch Economy mode on.
 
 **Changed in 1.11.0.** Before, both limits of a unit were checked at once (session and today,
 or the 5-hour and weekly windows), and the daily budget only showed a number. Now only the
