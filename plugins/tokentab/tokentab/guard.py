@@ -478,7 +478,8 @@ def main():
     unit, limits = limit_rows(b, {"session": cost, "today": day_c}, read_windows(sid)) if on else (None, [])
 
     marks = [100 - left for left in WARN_LEFT]
-    hard    = bool(b.get("hard_stop", False))
+    # On Pro, Max and Team Anthropic stops at 100% itself; only USD budgets stop
+    hard    = unit == "usd" and b.get("hard_stop") is True
     spend_less = b.get("spend_less") is True
 
     # Each scope is judged on its own and keeps its own warn band, so a scope
@@ -494,13 +495,7 @@ def main():
         if frac >= 1.0 and hard:
             st[band_key] = 100
             scope = {"session": "session", "today": "daily", "five_hour": "5-hour", "seven_day": "weekly"}[name]
-            # On Pro and Max today's budget has no limit of its own: it is spread from the week's cap
-            if unit == "percent" and name == "today":
-                fix = ("Raise the week cap (weekly_limit_percent) in budget.json (/tokentab:budget) to continue, "
-                       "or wait for tomorrow's budget." if isinstance(b.get("weekly_limit_percent"), (int, float))
-                       else "Tomorrow brings a new budget; /tokentab:budget changes the budget type.")
-            else:
-                fix = f"Raise the {scope} limit in budget.json (/tokentab:budget) to continue."
+            fix = f"Raise the {scope} limit in budget.json (/tokentab:budget) to continue."
             return ("deny",
                 f"TokenTab: {scope} budget exhausted. {detail} ({pct}%). {fix}",
                 f"The {scope} budget is exhausted: {detail}. No further tool calls are "
@@ -530,8 +525,8 @@ def main():
                 f"flight rather than starting new work. At the limit tool calls stop.")
         # Without spend_less the warning is the user's alone; Claude hears nothing.
         if not spend_less:
-            return ("note", f"{told} /tokentab:budget changes the limit.", None)
-        return ("note", f"{told} {asked} /tokentab:budget changes the limit.", ask)
+            return ("note", f"{told} /tokentab:budget changes the budget.", None)
+        return ("note", f"{told} {asked} /tokentab:budget changes the budget.", ask)
 
     verdicts = []
     last = last_call(transcript, sid)

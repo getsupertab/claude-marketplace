@@ -451,6 +451,8 @@ export type Report = {
 export type PlanWindow = {
   scope: 'five_hour' | 'seven_day' | 'today'; used: number; allowed?: number
   daily?: number; carried?: number
+  /** today only: the local days left in the week, today included. */
+  days?: number
   limit: number | null; frac: number | null; resets: string | null
 }
 const WINDOW_NAME = { five_hour: '5-hour window', seven_day: 'weekly window', today: "today's budget" } as const
@@ -558,67 +560,55 @@ export function switchOn(budget: Json | undefined, setting: Setting): boolean {
 }
 
 /** The budget types each unit offers, as BUDGET_TYPES in tokentab.py. */
-export const BUDGET_TYPES: Record<Unit, string[]> = { usd: ['today', 'session'], percent: ['today', 'week', 'five_hour', 'session'] }
+export const BUDGET_TYPES: Record<Unit, string[]> = { usd: ['today', 'session'], percent: ['today', 'week', 'five_hour'] }
 
-/** The limit field of each budget type, as TYPE_LIMITS in tokentab.py. On Pro and Max a session
- *  budget is dollars at API rates, and today's is spread from the week's cap. */
-const TYPE_LIMITS: Record<string, Setting> = {
-  'usd:today': { key: 'daily_limit_usd', label: 'Limit', prefix: '$', kind: 'limit' },
-  'usd:session': { key: 'session_limit_usd', label: 'Limit', prefix: '$', kind: 'limit' },
-  'percent:today': { key: 'weekly_limit_percent', label: 'Week cap', unit: '%', kind: 'limit',
-    note: "Today's budget is what is left of the cap, spread over the days left." },
-  'percent:week': { key: 'weekly_limit_percent', label: 'Limit', unit: '% of the week', kind: 'limit' },
-  'percent:five_hour': { key: 'five_hour_limit_percent', label: 'Limit', unit: '% of 5 hours', kind: 'limit' },
-  'percent:session': { key: 'session_limit_usd', label: 'Limit', prefix: '$', kind: 'limit', note: 'At API rates.' },
-}
-
-/** The one budget type checked in this unit, as budget_type() in tokentab.py: budget_type's pick,
- *  else, for a file from before it, the limit the user had set. */
+/** The one budget type checked in this unit, as budget_type() in tokentab.py: budget_type's pick, else today. */
 export function budgetTypeOf(budget: Json | undefined, unit: Unit): string {
   const pick = at(budget, `budget_type.${unit}`)
-  if (typeof pick === 'string' && BUDGET_TYPES[unit].includes(pick)) return pick
-  if (unit === 'usd') return at(budget, 'session_limit_usd') && !at(budget, 'daily_limit_usd') ? 'session' : 'today'
-  if (at(budget, 'daily_budget.enabled') === true) return 'today'
-  return at(budget, 'five_hour_limit_percent') && !at(budget, 'weekly_limit_percent') ? 'five_hour' : 'week'
+  return typeof pick === 'string' && BUDGET_TYPES[unit].includes(pick) ? pick : 'today'
 }
 
-export type Section = { title: string; toggle?: Setting; rows: Setting[] }
+export type Section = { title: string; rows: Setting[] }
 
-/** The Settings tab's sections above Display, for this file and account. The budget's rows show only
- *  while it is on, and only its type's limit; each unit keeps its own type. Carry over is left to
- *  /tokentab:budget. */
-export function sections(budget: Json | undefined, unit: Unit): Section[] {
+/** Watch's line while it watches today: today's budget out of the week, from the report's today
+ *  window, and a day that starts overspent. */
+export function todayNote(today: PlanWindow | undefined): string | undefined {
+  if (today?.allowed === undefined) return undefined
+  const days = today.days === undefined ? '' : ` · ${today.days} ${today.days === 1 ? 'day' : 'days'} left`
+  const carried = today.carried !== undefined && today.carried <= -0.05 ? ` · −${percent(-today.carried)} carried` : ''
+  return `Today: ${percent(today.allowed)} of your week${days}${carried}`
+}
+
+const ECONOMY: Setting = { key: 'spend_less', label: 'Economy mode', kind: 'switch', beta: true, defaultOn: true,
+  note: 'Asks Claude to spend less as spending nears the limit.' }
+
+/** The Settings tab's sections below Display, for this file and account. The budget's rows show only
+ *  while it is on; each unit keeps its own type. Percent watches Anthropic's own 100%, so it has no
+ *  limit and no stop. */
+export function sections(budget: Json | undefined, unit: Unit, today?: PlanWindow): Section[] {
   const on = at(budget, 'budgets_on') === true
   const type = budgetTypeOf(budget, unit)
-  // Only the USD daily budget is a plain local day; on Pro and Max it is spread from the week's cap
-  const resets = unit === 'usd' && type === 'today' ? { note: 'Resets at midnight, all sessions.' } : {}
+  const enabled: Setting = { key: 'budgets_on', label: 'Enabled', kind: 'switch' }
+  const rows: Setting[] = !on ? [] : unit === 'usd' ? [
+    { key: 'budget_type.usd', label: 'Limit applies to', kind: 'choice', choices: BUDGET_TYPES.usd,
+      ...(type === 'today' ? { note: 'Resets at midnight, all sessions.' } : {}) },
+    { key: type === 'today' ? 'daily_limit_usd' : 'session_limit_usd', label: 'Limit', prefix: '$', kind: 'limit' },
+    ECONOMY,
+    { key: 'hard_stop', label: 'Stop at limit', kind: 'switch', note: 'Stops prompts and tool calls at the limit.' },
+  ] : [
+    { key: 'budget_type.percent', label: 'Watch', kind: 'choice', choices: BUDGET_TYPES.percent,
+      ...(type === 'today' ? { note: todayNote(today) } : {}) },
+    ...(type === 'today' ? [{ key: 'daily_budget.carry_over', label: 'Carry over', kind: 'switch', beta: true,
+      note: 'Unused budget carries over to tomorrow.' } as Setting] : []),
+    ECONOMY,
+  ]
   return [
-    { title: 'budget', toggle: { key: 'budgets_on', label: 'Enable budget', kind: 'switch' }, rows: on ? [
-      { key: `budget_type.${unit}`, label: 'Limit applies to', kind: 'choice', choices: BUDGET_TYPES[unit], ...resets },
-      TYPE_LIMITS[`${unit}:${type}`]!,
-      { key: 'spend_less', label: 'Economy mode', kind: 'switch', beta: true, note: 'Spends less as you near the limit.' },
-      { key: 'hard_stop', label: 'Stop at limit', kind: 'switch', note: 'Stops prompts and tool calls at the limit.' },
-    ] : [] },
+    { title: 'budget', rows: [enabled, ...rows] },
     { title: 'session', rows: [
-      { key: 'handoff.enabled', label: 'Handoff note', kind: 'switch', defaultOn: HANDOFF_DEFAULTS.enabled,
+      { key: 'handoff.enabled', label: 'Handoff note', kind: 'switch', beta: true, defaultOn: HANDOFF_DEFAULTS.enabled,
         note: 'Save a note before cache expires.' },
     ] },
   ]
-}
-
-/** The figure that leads the pane, the status line and the reopen button. Its choices follow the account. */
-export const HEADLINE: Setting = { key: 'headline', label: 'Lead with', kind: 'choice' }
-/** Lead with's note: an example in the account's own unit, as the pane's hero reads it. */
-export const headlineNote = (unit: Unit): string =>
-  unit === 'percent' ? 'e.g. "62% left of weekly window"' : 'e.g. "$31.40 left today"'
-
-/** The headline words this account can show, as headline() in tokentab.py: a window only with its reading,
- *  and today (the daily budget on Pro and Max) only while the week has a reading. */
-export function headlineChoices(unit: Unit, kinds: string[]): string[] {
-  if (unit === 'usd') return ['auto', 'today', 'session']
-  const week = kinds.includes('seven_day')
-  return ['auto', ...(week ? ['today', 'week'] : []),
-    ...(kinds.includes('five_hour') ? ['five_hour'] : []), 'session']
 }
 
 type Json = Record<string, unknown>
@@ -692,8 +682,7 @@ export function weekBaseline(
 
 /** The user's budget.json with the keys a newer shipped file has added, in the shipped
  *  order, one level into objects (daily_budget.carry_over), like budget.py's upgraded(), and
- *  the shipped `_comment` texts, a 1.10–1.12 `spend_less: null` written as false (off); undefined
- *  when nothing changes. */
+ *  the shipped `_comment` texts; undefined when nothing changes. */
 export function withNewKeys(user: Json, shipped: Json, nested = false): Json | undefined {
   const isObject = (candidate: unknown): candidate is Json =>
     typeof candidate === 'object' && candidate !== null && !Array.isArray(candidate)
@@ -707,7 +696,6 @@ export function withNewKeys(user: Json, shipped: Json, nested = false): Json | u
     if (inner) added = true
     out[key] = inner ?? mine
   }
-  if (!nested && 'spend_less' in user && user.spend_less === null) { out.spend_less = false; added = true }
   if (!added) return undefined
   for (const [key, value] of Object.entries(user)) if (!(key in out)) out[key] = value
   return out
@@ -891,7 +879,8 @@ async function refreshNow($: EngineInterface): Promise<void> {
   try {
     if (await isPlaced($)) {
       if (view === 'options') await readBudget($)
-      else report = JSON.parse(await python($, 'tokentab.py', ['--report', '--session', id])) as Report
+      // Settings' Watch line reads today's budget off the report too
+      report = JSON.parse(await python($, 'tokentab.py', ['--report', '--session', id])) as Report
       $.ui.status(undefined)
     } else {
       const out = JSON.parse(await python($, 'tokentab.py', ['--status-json', '--session', id])) as { line: string; button?: string | null }
@@ -1004,8 +993,8 @@ async function setBudget($: EngineInterface, key: string, value: string): Promis
   } catch (err) {
     errors[key] = err instanceof Error ? err.message : String(err)
   }
-  await readBudget($)
-  $.ui.invalidate('ui.render')
+  // A full redraw, not just the file: Watch's Today line reads the report, which the change moves
+  await refresh($)
 }
 
 /** Once a session someone looks at, from whichever comes first, `session.start` with a
@@ -1062,15 +1051,26 @@ export const register: Register = (on, pluginOptions) => {
       const data = await dataRoot($)
       await markLoaded($, data, await sid($))
       // First run: the shipped limits become the user's budget.json. After that only keys
-      // a newer version ships are added, the user's values kept.
+      // a newer version ships are added, the user's values kept. A file from before version 2
+      // is kept as budget.json.old and replaced by the shipped one.
       const shipped = await $.fs.read(`${$.plugin.root}/tokentab/budget.json`)
-      if (!(await $.fs.exists(`${data}/budget.json`))) {
-        await $.fs.write(`${data}/budget.json`, shipped)
+      const path = `${data}/budget.json`
+      if (!(await $.fs.exists(path))) {
+        await $.fs.write(path, shipped)
       } else {
+        let text: string | undefined, user: Json | undefined
         try {
-          const added = withNewKeys(JSON.parse(await $.fs.read(`${data}/budget.json`)) as Json, JSON.parse(shipped) as Json)
-          if (added) await $.fs.write(`${data}/budget.json`, JSON.stringify(added, null, 2) + '\n')
+          text = await $.fs.read(path)
+          user = JSON.parse(text) as Json
         } catch { /* a file that does not parse is the guard's to report, never overwritten */ }
+        if (text !== undefined && user !== undefined && user.version !== 2) {
+          await $.fs.write(`${path}.old`, text)
+          await $.fs.write(path, shipped)
+          $.ui.toast('TokenTab: budgets are simpler in 1.14, so your old settings were reset to the defaults (kept as budget.json.old).')
+        } else if (user !== undefined) {
+          const added = withNewKeys(user, JSON.parse(shipped) as Json)
+          if (added) await $.fs.write(path, JSON.stringify(added, null, 2) + '\n')
+        }
       }
     } catch { /* nothing to track yet; the shell gate reports a module that did not load */ }
 
@@ -1782,8 +1782,8 @@ function optionsTab($: EngineInterface, e: RenderEvent): RenderChildren {
       return column(toggle(`b-${s.key}`, switchOn(o?.budget, s), on => { void setBudget($, s.key, on ? 'on' : 'off') }), 'flex-end')
     }
     if (s.kind === 'choice') {
-      const choices = s.key === HEADLINE.key ? headlineChoices(unit, (o?.windows ?? []).map(window => window.kind)) : s.choices ?? []
-      // The budget type shows the one in effect while unset; a headline this account cannot show falls back to auto, as tokentab.py does
+      const choices = s.choices ?? []
+      // The budget type shows the one in effect while unset
       const picked = s.key.startsWith('budget_type.') ? budgetTypeOf(o?.budget, unit) : String(v)
       const current = choices.includes(picked) ? picked : choices[0] ?? shown(v)
       if (mobile) return column(<Text size="footnote" mono weight="semibold">{choiceLabel(current)}</Text>)
@@ -1819,23 +1819,18 @@ function optionsTab($: EngineInterface, e: RenderEvent): RenderChildren {
       {rows.length > 0 && <Box key="rows" flexDirection="column" gap="lg">{rows}</Box>}
     </Box>
   )
+  const today = report?.session?.windows?.find(w => w.scope === 'today')
   return (
     <Box flexDirection="column" gap="md">
       {o?.error !== undefined && <Text size="footnote" color="error">{o.error}</Text>}
-      {sections(o?.budget, unit).flatMap(settingsSection => {
-        const toggleError = settingsSection.toggle && o?.errors[settingsSection.toggle.key]
-        return [
-          section(settingsSection.title, settingsSection.toggle && control(settingsSection.toggle), [
-            ...(toggleError !== undefined ? [<Text size="footnote" key="toggle-error" color="error">{toggleError}</Text>] : []),
-            ...settingsSection.rows.map(setting => row(setting.key, setting.unit === undefined ? setting.label : `${setting.label} (${setting.unit})`, control(setting),
-              { error: o?.errors[setting.key], note: setting.note, beta: setting.beta })),
-          ]),
-          rule($, e, `rule-${settingsSection.title}`),
-        ]
-      })}
       {section('display', undefined, [
         row('auto-open', 'Open automatically', column(toggle('auto-open', autoOpen(), () => {}), 'flex-end')),
-        row(HEADLINE.key, HEADLINE.label, control(HEADLINE), { error: o?.errors[HEADLINE.key], note: headlineNote(unit) }),
+      ])}
+      {sections(o?.budget, unit, today).flatMap(settingsSection => [
+        rule($, e, `rule-${settingsSection.title}`),
+        section(settingsSection.title, undefined,
+          settingsSection.rows.map(setting => row(setting.key, setting.unit === undefined ? setting.label : `${setting.label} (${setting.unit})`, control(setting),
+            { error: o?.errors[setting.key], note: setting.note, beta: setting.beta }))),
       ])}
     </Box>
   )

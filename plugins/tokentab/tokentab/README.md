@@ -90,16 +90,14 @@ Everything is in `budget.json` in your data folder. `null` turns a limit off. `/
 
 | Setting | Default | What it does |
 |---|---|---|
-| `budgets_on` | `false` | The switch beside BUDGET on the Settings tab: switches the budget below on or off. Its values are kept while it's off. |
-| `budget_type` | from your limits | The one budget checked, per unit: `usd` is `today` or `session`; `percent` (Pro, Max) is `today` (the daily budget), `week`, `five_hour` or `session` (dollars at API rates). `null` takes it from the limits set: `today` in USD unless only the session limit is set; on Pro and Max `today` if the old `daily_budget.enabled` is on, else `week` unless only the 5-hour limit is set. |
-| `session_limit_usd` | `25` | Limit for one session, in US dollars (at API rates on Pro and Max). Resets with a new session. |
-| `daily_limit_usd` | `40` | Limit across all sessions and projects, in US dollars. Resets at midnight. |
-| `five_hour_limit_percent` | `80` | Limit on the plan's 5-hour usage window. Resets with the window. |
-| `weekly_limit_percent` | `90` | Limit on the plan's weekly usage window, and the daily budget's cap. Resets with the window. |
-| `hard_stop` | `false` | Stop at limit: `true` stops Claude at the limit; `false` only warns. Either way TokenTab warns once each at 10%, 5% and 2% of the budget left; that is fixed. |
-| `spend_less` | `false` | Beta. `true` also asks Claude, with each warning, to spend less: cheaper actions and shorter replies, and with `hard_stop` on, to wrap up. `false` warns only you, whatever `hard_stop` is. A `null` from 1.10 to 1.12 becomes `false`. |
-| `daily_budget` | | Budget type `today` on Pro and Max: what is left of the week, spread evenly over the time left, fixed at the start of each local day. An older file's `enabled` picks the default type and, with the budget off, keeps it the `auto` headline. |
-| `headline` | `auto` | Which figure leads in the pane, the status line and the reopen button, counted as what is left: `auto`, `session`, `today` (the daily budget on Pro and Max, today's spend in USD), `five_hour` or `week`. `auto` follows the budget type while the budget is on, else the week on Pro and Max (the daily budget if an older file's `daily_budget.enabled` is on) and today in USD; a choice without a reading falls back to it. The status line shows at most two figures: the headline, then the budget, else the next figure. |
+| `version` | `2` | The file's format. A file without it is from before 1.14: TokenTab renames it `budget.json.old` and writes the defaults. |
+| `budgets_on` | `false` | Enabled under BUDGET on the Settings tab: switches the budget below on or off. Its values are kept while it's off. |
+| `budget_type` | `today` | The one budget checked, per unit: `usd` (Enterprise, API key) is `today` or `session`; `percent` (Pro, Max, Team) is `today` (the daily budget), `week` or `five_hour`, each against Anthropic's own 100%. The headline follows it while the budget is on, else today in USD and the week in percent. |
+| `session_limit_usd` | `25` | USD: limit for one session. Resets with a new session. |
+| `daily_limit_usd` | `40` | USD: limit across all sessions and projects. Resets at midnight. |
+| `hard_stop` | `false` | USD only. Stop at limit: `true` stops prompts and tool calls at the limit; `false` only warns. Either way TokenTab warns once each at 10%, 5% and 2% of the budget left; that is fixed. |
+| `spend_less` | `true` | Beta. Economy mode: also asks Claude, with each warning, to spend less: cheaper actions and shorter replies, and with `hard_stop` on, to wrap up. `false` warns only you. |
+| `daily_budget.carry_over` | `false` | Beta, percent type `today`: an even seventh of the week a day, plus what earlier days left unused, minus what they overspent. |
 | `context_warn_tokens` | `[200000, 350000]` | Tells you and Claude when the context passes each size. Re-arms after a compaction. |
 | `cold_resume` | on | Holds back the first prompt after the prompt cache has expired. See below. |
 | `handoff` | on | Writes a handoff note shortly before the cache expires, for a new chat to start from. See below. |
@@ -108,7 +106,7 @@ Everything is in `budget.json` in your data folder. `null` turns a limit off. `/
 
 The last seven work whether or not `budgets_on` is set.
 
-The daily budget is the weekly limit's remainder over the days left. The cap is `weekly_limit_percent`, or 100 when it is `null`. At the first reading of each local day, TokenTab records in `state/week_baseline.json` where the week stood when the day began. That reading comes after the day's first request on this machine. If the week rose one point or less since the last reading, the rise is that request and counts toward today. A larger rise means use on claude.ai or another machine overnight: the day starts at the first reading, so that use and the first request on this machine count toward no day. Today's allowance is what is left under the cap, times today's share of the time to the reset. Spending today does not change it. Unused allowance and overspend carry into tomorrow's, spread over the days left.
+The daily budget is what is left of the week (of 100%) over the days left. At the first reading of each local day, TokenTab records in `state/week_baseline.json` where the week stood when the day began. That reading comes after the day's first request on this machine. If the week rose one point or less since the last reading, the rise is that request and counts toward today. A larger rise means use on claude.ai or another machine overnight: the day starts at the first reading, so that use and the first request on this machine count toward no day. Today's allowance is what is left of the week, times today's share of the time to the reset. Spending today does not change it. Unused allowance and overspend carry into tomorrow's, spread over the days left.
 
 Each session keeps its own usage-window reading in `state/windows/<session>.json`. The
 latest reading of any session also goes to `state/rate_limits.json`, for the budget skill;

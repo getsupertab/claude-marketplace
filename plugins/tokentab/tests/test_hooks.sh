@@ -57,7 +57,7 @@ check "guard passes when no budget file exists" \
   "$(printf '%s' '{"session_id": "s1", "hook_event_name": "PreToolUse", "tool_name": "Read"}' | "$SCRIPTS/guard.sh")" ""
 
 cat > "$DATA/budget.json" <<'EOF'
-{"budgets_on": true, "session_limit_usd": 0.000001, "daily_limit_usd": null, "hard_stop": true}
+{"version": 2, "budgets_on": true, "budget_type": {"usd": "session"}, "session_limit_usd": 0.000001, "hard_stop": true}
 EOF
 T="$TMP/s-guard.jsonl"
 cat > "$T" <<'EOF'
@@ -76,18 +76,17 @@ check "guard denies a tool call past a hard session limit" \
 mkdir -p "$DATA/state/windows"
 W85='[{"kind": "five_hour", "percentUsed": 85, "resetsAt": "2999-01-01T00:00:00Z"}]'
 cat > "$DATA/budget.json" <<'EOF'
-{"budgets_on": true, "session_limit_usd": 0.000001, "five_hour_limit_percent": 90, "weekly_limit_percent": null, "hard_stop": true}
+{"version": 2, "budgets_on": true, "budget_type": {"usd": "session", "percent": "five_hour"}, "session_limit_usd": 0.000001, "hard_stop": true}
 EOF
 # Before the session's own reading, the last one written (maybe another login's) is not used
 printf '{"windows": %s}\n' "$W85" > "$DATA/state/rate_limits.json"
 check "guard ignores another session's usage windows and counts USD" \
   "$(tool Read "" | "$SCRIPTS/guard.sh")" '"permissionDecision": "deny"'
-printf '{"windows": [{"kind": "five_hour", "percentUsed": 95, "resetsAt": "2999-01-01T00:00:00Z"}]}\n' > "$DATA/state/windows/s-guard.json"
-check "guard counts the plan's 5-hour window in percent and stops past its limit" \
-  "$(tool Read "" | "$SCRIPTS/guard.sh")" "95% used"
-sed 's/"budgets_on": true,/"budgets_on": true, "limit_unit": "usd",/' "$DATA/budget.json" > "$DATA/b.tmp" && mv "$DATA/b.tmp" "$DATA/budget.json"
-check "guard ignores an old file's limit_unit while the plan reports windows" \
-  "$(tool Read "" | "$SCRIPTS/guard.sh")" "95% used"
+printf '{"windows": [{"kind": "five_hour", "percentUsed": 100, "resetsAt": "2999-01-01T00:00:00Z"}]}\n' > "$DATA/state/windows/s-guard.json"
+# Anthropic stops at 100% itself, so hard_stop does not apply in percent: a warning, no stop
+out="$(tool Read "" | "$SCRIPTS/guard.sh")"
+check "guard counts the plan's 5-hour window in percent against 100%" "$out" "100% used"
+refute "guard never stops a percent budget, hard_stop or not" "$out" '"permissionDecision": "deny"'
 rm "$DATA/state/rate_limits.json" "$DATA/state/windows/s-guard.json"
 check "guard lets TokenTab's own report command through" \
   "$(tool Bash "python3 /plugins/tokentab/tokentab/tokentab.py --status" | "$SCRIPTS/guard.sh")" ""
@@ -125,40 +124,33 @@ check "guard counts today's backfilled calls against the daily limit" \
   "$(tool Read "" | "$SCRIPTS/guard.sh")" '"permissionDecision": "deny"'
 rm "$DATA/state/backfill.json"
 week() { printf '{"windows": [{"kind": "seven_day", "percentUsed": %s, "resetsAt": "%s"}]}\n' "$1" "$RESET" > "$DATA/state/windows/s-guard.json"; }
-# The type picked, and a file from before budget_type whose old daily switch was on
-for typed in '"budget_type": {"usd": null, "percent": "today"}' '"daily_budget": {"enabled": true}'; do
-  rm -f "$DATA/state/s-guard.json"   # the same day warns once per mark: start each case unwarned
-  printf '{"budgets_on": false, "hard_stop": true, "weekly_limit_percent": null, %s}\n' "$typed" > "$DATA/budget.json"
-  week 45
-  check "day budget: guard silent with the budget off, {$typed}" "$(tool Read "" | "$SCRIPTS/guard.sh")" ""
-  printf '{"budgets_on": true, "hard_stop": true, "weekly_limit_percent": null, %s}\n' "$typed" > "$DATA/budget.json"
-  week 5
-  check "day budget: guard silent at 5% of the week, {$typed}" "$(tool Read "" | "$SCRIPTS/guard.sh")" ""
-  week 31
-  check "day budget: guard warns with what is left at 31% of the week, {$typed}" \
-    "$(tool Read "" | "$SCRIPTS/guard.sh")" "of today's budget left"
-  week 45
-  out="$(tool Read "" | "$SCRIPTS/guard.sh")"
-  check "day budget: guard stops past today's budget, {$typed}" "$out" '"permissionDecision": "deny"'
-  # No week cap to raise: the stop names tomorrow, not a daily limit Pro and Max have none of
-  check "day budget: the stop without a week cap points to tomorrow, {$typed}" "$out" "Tomorrow brings a new budget"
-done
-# With a week cap the stop names it: 90% over the three days left is 30% today, and 45% is past it
+rm -f "$DATA/state/s-guard.json"   # the same day warns once per mark: start unwarned
+printf '{"version": 2, "budgets_on": false, "hard_stop": true, "budget_type": {"percent": "today"}}\n' > "$DATA/budget.json"
+week 45
+check "day budget: guard silent with the budget off" "$(tool Read "" | "$SCRIPTS/guard.sh")" ""
+printf '{"version": 2, "budgets_on": true, "hard_stop": true, "budget_type": {"percent": "today"}}\n' > "$DATA/budget.json"
+week 5
+check "day budget: guard silent at 5% of the week" "$(tool Read "" | "$SCRIPTS/guard.sh")" ""
+week 31
+check "day budget: guard warns with what is left at 31% of the week" \
+  "$(tool Read "" | "$SCRIPTS/guard.sh")" "of today's budget left"
+week 45
+out="$(tool Read "" | "$SCRIPTS/guard.sh")"
+check "day budget: guard says past today's budget" "$out" "today's limit reached"
+refute "day budget: guard never stops past today's budget" "$out" '"permissionDecision": "deny"'
+# Only the type picked is checked: the week is at 45% of 100, so today's overspend says nothing
 rm -f "$DATA/state/s-guard.json"
-printf '{"budgets_on": true, "hard_stop": true, "weekly_limit_percent": 90, "budget_type": {"percent": "today"}}\n' > "$DATA/budget.json"
-check "day budget: the stop names the week cap" "$(tool Read "" | "$SCRIPTS/guard.sh")" "Raise the week cap (weekly_limit_percent)"
-# Only the type picked is checked: the week has no limit here, so today's overspend says nothing
-printf '{"budgets_on": true, "hard_stop": true, "weekly_limit_percent": null, "budget_type": {"percent": "week"}, "daily_budget": {"enabled": true}}\n' > "$DATA/budget.json"
+printf '{"version": 2, "budgets_on": true, "hard_stop": true, "budget_type": {"percent": "week"}}\n' > "$DATA/budget.json"
 week 45
 check "day budget: guard silent while another type is the budget" "$(tool Read "" | "$SCRIPTS/guard.sh")" ""
 rm "$DATA/state/windows/s-guard.json" "$DATA/state/week_baseline.json"
 
 # Warnings reach Claude only with spend_less: each case is a new 5-hour window, so it warns afresh
 n=4   # past the window an earlier check already warned on
-# spend_less null (a 1.10-1.12 file) is off, whatever hard_stop is; the third word is whether Claude should hear it
-for case in "false false false" "false true true" "true false false" "true true true" "false null false" "true null false"; do
+# whatever hard_stop is; the third word is whether Claude should hear it
+for case in "false false false" "false true true" "true false false" "true true true"; do
   set -- $case; n=$((n + 1))
-  printf '{"budgets_on": true, "five_hour_limit_percent": 100, "weekly_limit_percent": null, "hard_stop": %s, "spend_less": %s}\n' "$1" "$2" > "$DATA/budget.json"
+  printf '{"version": 2, "budgets_on": true, "budget_type": {"percent": "five_hour"}, "hard_stop": %s, "spend_less": %s}\n' "$1" "$2" > "$DATA/budget.json"
   printf '{"windows": [{"kind": "five_hour", "percentUsed": 92, "resetsAt": "2999-01-%02dT00:00:00Z"}]}\n' "$n" > "$DATA/state/windows/s-guard.json"
   out="$(tool Read "" | "$SCRIPTS/guard.sh")"
   check "warning shown to the user, hard_stop $1, spend_less $2" "$out" "TokenTab: "
