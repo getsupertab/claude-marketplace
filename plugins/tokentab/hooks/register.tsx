@@ -1462,15 +1462,26 @@ function foldToggle($: EngineInterface, e: RenderEvent, key: string, name: strin
   )
 }
 const sessionSeries = (rank: number) => (rank < SESSIONS_COLOURED ? `session_${rank + 1}` : 'session_other')
+/** The pane lists this many of the month's sessions, the coloured ones, plus this session
+ *  when it ranks lower; one dim row counts the rest, which the full report lists. Each row
+ *  is about 0.9k chars of Desktop tree: all 149 of a busy month, with DETAILS open too, made
+ *  a 172k tree, and Desktop then stopped handling presses (2026-11-19). Ten keeps a month of
+ *  long titles under 80k with both folds open. */
+const SESSIONS_LISTED = SESSIONS_COLOURED
+/** Desktop truncates a title to the pane's width anyway; past this the chars only weigh. */
+const SESSION_NAME_MAX = 80
+const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, max - 1)}…` : text)
 
 /** Spend, Figma's "A · Hero number": the session against its limit as one figure and a
  *  bar, the rate breakdown, what each tool and each model cost (folded under "details"), then every
- *  session today and this month, with this month's sessions as a table (folded too). */
+ *  session today and this month, with this month's costliest sessions as a table (folded too). */
 function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren {
   const { Box, Text, Button } = $.ui.resolve(e)
   const s = r.session
   const sessions = r.sessions ?? []
   const othersShare = sessions.slice(SESSIONS_COLOURED).reduce((sum, session) => sum + session.share, 0)
+  const listed = sessions.flatMap((session, rank) => (rank < SESSIONS_LISTED || session.sid === r.sid ? [{ session, rank }] : []))
+  const unlisted = sessions.length - listed.length
   const sessionParts = sessions.slice(0, SESSIONS_COLOURED).map((session, rank) => ({ series: sessionSeries(rank), frac: session.share }))
     .concat(othersShare > 0 ? [{ series: 'session_other', frac: othersShare }] : [])
   const allSessions = (
@@ -1505,12 +1516,12 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
               {cell($, e, '% of costs', 11, { dim: true })}
             </Box>
             {rule($, e, 'all-head-rule')}
-            {sessions.map((session, rank) => (
+            {listed.map(({ session, rank }) => (
               <Box key={`all-${session.sid}`} alignItems="center">
                 {/* minWidth 0 lets the row shrink below the title, so Desktop truncates it instead of wrapping */}
                 <Box flexGrow={1} flexShrink={1} minWidth={0}>
                   <Text size="footnote" mono bold={session.sid === r.sid} wrap="truncate">
-                    <Text color={SERIES[sessionSeries(rank)]![0]}>● </Text>{session.name}
+                    <Text color={SERIES[sessionSeries(rank)]![0]}>● </Text>{clip(session.name, SESSION_NAME_MAX)}
                     {session.detail ? <Text dimColor>{` · ${session.detail}`}</Text> : null}
                   </Text>
                 </Box>
@@ -1518,6 +1529,15 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
                 {cell($, e, pct(session.share), 11, { dim: true })}
               </Box>
             ))}
+            {unlisted > 0 && (
+              // The rest are on the status page: the row opens it, like "Open full report ↗". Dim, as
+              // the table's other notes, and in line with the titles after their "● ": two cells in the
+              // terminal, one on Desktop, where the native button adds about 7 px of its own.
+              <Box key="all-more" paddingLeft={e.surface === 'terminal' ? 2 : 1}>
+                <Button key="sessions-more" label={`${unlisted} more in the full report ↗`} plain dimColor
+                  onPress={() => { void openSnapshot($) }} />
+              </Box>
+            )}
           </Box>
         </Box>
       )}
