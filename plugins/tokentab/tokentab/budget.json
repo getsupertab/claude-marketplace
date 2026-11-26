@@ -1,5 +1,5 @@
 {
-  "_budgets_comment": "Master switch for the budget: the type and limit below. false (the default) checks nothing and keeps the values for when you turn it on (/tokentab:budget or the pane, where it is Enable budget).",
+  "_budgets_comment": "Master switch for the budget: the type and limit below. false (the default) checks nothing and keeps the values for when you turn it on (/tokentab:budget or the pane, the switch beside BUDGET on the Options tab).",
   "budgets_on": false,
   "_unit_comment": "Your account decides what a budget counts: percent of the plan's usage windows on Pro and Max, else USD (priced from prices.json). Only the budget type picked for that unit is checked.",
   "_type_comment": "The one budget checked, per unit, so switching accounts keeps each one's pick. usd: today (daily_limit_usd) or session (session_limit_usd). percent: today (the daily budget below, its cap weekly_limit_percent), week (weekly_limit_percent), five_hour (five_hour_limit_percent) or session (session_limit_usd, dollars at API rates). null (the default) takes the limit you had set: today in USD unless only the session limit is set; on Pro and Max today if the old daily budget switch was on, else week unless only the 5-hour limit is set.",
@@ -15,7 +15,7 @@
   "hard_stop": false,
   "_spend_less_comment": "Beta. true also asks Claude to spend less (cheaper actions, shorter replies, and with hard_stop on, to wrap up) at each warning. false only warns you. null (the default) follows hard_stop, so stopping at the limit never cuts Claude off unwarned.",
   "spend_less": null,
-  "_daily_comment": "On Pro and Max, budget type today: what is left of the week, spread evenly over the time left, fixed at the start of each local day. The week's own limit (weekly_limit_percent, else 100) is its cap. carry_over (beta) instead gives each full day a seventh of the cap (the days the week starts and ends on their part of one) plus what earlier days of the week left unused, minus what they overspent: a day unused makes the next one twice as large.",
+  "_daily_comment": "On Pro and Max, budget type today: what is left of the week, spread evenly over the time left, fixed at the start of each local day. The week's own limit (weekly_limit_percent, else 100) is its cap.",
   "daily_budget": {
     "carry_over": false
   },

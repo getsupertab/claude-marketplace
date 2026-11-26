@@ -18,7 +18,7 @@ Arguments: $ARGUMENTS
 
 ## No arguments: show the limits
 
-Read the file and show, in a short list: whether `budgets_on` is on ("Enable budget"; off, or
+Read the file and show, in a short list: whether `budgets_on` is on (the BUDGET switch; off, or
 missing, means nothing is checked), the unit in effect, the budget type for that unit and its
 limit (`null` means off), and `hard_stop` ("Stop at limit": true blocks at the limit, false only
 warns; warnings come at 10%, 5% and 2% of the budget left, fixed, not a setting) and `spend_less`
@@ -44,10 +44,7 @@ effect. Each type has one limit key:
 A `null` type takes the limit the file had set: `today` in USD unless only the session limit is
 set; in percent `today` if an older file's `daily_budget.enabled` is true, else `week` unless only
 the 5-hour limit is set. The daily budget (type `today` in percent) is what is left of the week
-spread over the days left, fixed at the start of each local day; its beta
-`daily_budget.carry_over` (on: each full day gets a seventh of the week, the days the week
-starts and ends on their part of one, plus what earlier days left unused, minus what they
-overspent, so a day unused doubles the next).
+spread over the days left, fixed at the start of each local day.
 
 The account decides the unit; it is not a setting. Percent where Claude Code reports the plan's
 usage windows (Pro, Max), else USD (Enterprise, API key). `state/rate_limits.json` beside

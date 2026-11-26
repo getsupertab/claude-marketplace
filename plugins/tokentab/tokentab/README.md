@@ -90,7 +90,7 @@ Everything is in `budget.json` in your data folder. `null` turns a limit off. `/
 
 | Setting | Default | What it does |
 |---|---|---|
-| `budgets_on` | `false` | Enable budget: switches the budget below on or off. Its values are kept while it's off. |
+| `budgets_on` | `false` | The switch beside BUDGET on the Options tab: switches the budget below on or off. Its values are kept while it's off. |
 | `budget_type` | from your limits | The one budget checked, per unit: `usd` is `today` or `session`; `percent` (Pro, Max) is `today` (the daily budget), `week`, `five_hour` or `session` (dollars at API rates). `null` takes it from the limits set: `today` in USD unless only the session limit is set; on Pro and Max `today` if the old `daily_budget.enabled` is on, else `week` unless only the 5-hour limit is set. |
 | `session_limit_usd` | `25` | Limit for one session, in US dollars (at API rates on Pro and Max). Resets with a new session. |
 | `daily_limit_usd` | `40` | Limit across all sessions and projects, in US dollars. Resets at midnight. |
@@ -98,7 +98,7 @@ Everything is in `budget.json` in your data folder. `null` turns a limit off. `/
 | `weekly_limit_percent` | `90` | Limit on the plan's weekly usage window, and the daily budget's cap. Resets with the window. |
 | `hard_stop` | `false` | Stop at limit: `true` stops Claude at the limit; `false` only warns. Either way TokenTab warns once each at 10%, 5% and 2% of the budget left; that is fixed. |
 | `spend_less` | `null` | Beta. `true` also asks Claude, with each warning, to spend less: cheaper actions and shorter replies, and with `hard_stop` on, to wrap up. `false` warns only you. `null` follows `hard_stop`; `/tokentab:budget` takes `auto` to set it back. A `false` that 1.8.0 or 1.9.0 wrote as their default becomes `null` once. |
-| `daily_budget` | | Budget type `today` on Pro and Max: what is left of the week, spread evenly over the time left, fixed at the start of each local day. `carry_over` (beta, off) instead gives each full day a seventh of the cap (the week's first and last days their part of one) plus what earlier days of the week left unused, minus what they overspent. An older file's `enabled` picks the default type and, with the budget off, keeps it the `auto` headline. |
+| `daily_budget` | | Budget type `today` on Pro and Max: what is left of the week, spread evenly over the time left, fixed at the start of each local day. An older file's `enabled` picks the default type and, with the budget off, keeps it the `auto` headline. |
 | `headline` | `auto` | Which figure leads in the pane, the status line and the reopen button, counted as what is left: `auto`, `session`, `today` (the daily budget on Pro and Max, today's spend in USD), `five_hour` or `week`. `auto` follows the budget type while the budget is on, else the week on Pro and Max (the daily budget if an older file's `daily_budget.enabled` is on) and today in USD; a choice without a reading falls back to it. The status line shows at most two figures: the headline, then the budget, else the next figure. |
 | `context_warn_tokens` | `[200000, 350000]` | Tells you and Claude when the context passes each size. Re-arms after a compaction. |
 | `cold_resume` | on | Holds back the first prompt after the prompt cache has expired. See below. |
@@ -109,8 +109,6 @@ Everything is in `budget.json` in your data folder. `null` turns a limit off. `/
 The last seven work whether or not `budgets_on` is set.
 
 The daily budget is the weekly limit's remainder over the days left. The cap is `weekly_limit_percent`, or 100 when it is `null`. At the first reading of each local day, TokenTab records in `state/week_baseline.json` where the week stood when the day began. That reading comes after the day's first request on this machine. If the week rose one point or less since the last reading, the rise is that request and counts toward today. A larger rise means use on claude.ai or another machine overnight: the day starts at the first reading, so that use and the first request on this machine count toward no day. Today's allowance is what is left under the cap, times today's share of the time to the reset. Spending today does not change it. Unused allowance and overspend carry into tomorrow's, spread over the days left.
-
-With `carry_over` (beta), today's allowance is the cap's share of the week from its start to the end of today, less where the week stood when the day began: a seventh of the cap a full day (`daily`; the days the week starts and ends on, which rarely begin or end at midnight, get the part of a seventh that falls in them), plus what earlier days left unused or minus what they overspent (`carried`), never below zero. Use overnight on claude.ai or another machine counts against `carried`. The status line names the allowance's size and `carried` (`28% of week, +14% carried`), and the pane shows `daily` and `carried`.
 
 Each session keeps its own usage-window reading in `state/windows/<session>.json`. The
 latest reading of any session also goes to `state/rate_limits.json`, for the budget skill;
@@ -149,7 +147,7 @@ expired-cache question offers it:
 - **Don't send** sends nothing.
 
 A computer that sleeps stops the timer, and so does an agent waiting on a permission
-prompt (it is mid-turn). Turn it off with the pane's Options tab (HANDOFF NOTE) or
+prompt (it is mid-turn). Turn it off with the pane's Options tab (Handoff note, under SESSION) or
 `handoff.enabled: false`.
 
 ### New session check

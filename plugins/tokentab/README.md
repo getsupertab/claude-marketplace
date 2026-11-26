@@ -168,15 +168,15 @@ python3 ~/.claude/plugins/cache/supertab/tokentab/*/tokentab/tokentab.py
 
 Add `--once` for a single snapshot or `--json` for the raw numbers.
 
-To stop the pane opening on its own, switch it off on the Options tab, or in a terminal
+To stop the pane opening on its own, switch off Open automatically on the Options tab, or in a terminal
 session set `tokentab.autoOpen` in `/config`.
 
 ## Budgets
 
-Budgets are off until you turn them on, with `/tokentab:budget` or Enable budget on the
-Options tab. You can also just ask: "raise my daily limit to 30", "stop at the limit".
+Budgets are off until you turn them on, with `/tokentab:budget` or the switch beside BUDGET on
+the Options tab. You can also just ask: "raise my daily limit to 30", "stop at the limit".
 
-One budget is checked at a time. Pick its type and limit on the Options tab (the rows show
+One budget is checked at a time. Pick its type (Limit applies to) and limit on the Options tab (the rows show
 once the budget is on) or ask: "make my budget the session, $5".
 
 - **API billing (Enterprise, API key)** counts dollars: `today` (every session, every
@@ -192,7 +192,7 @@ loads that account's budget and switching back restores the other.
 TokenTab warns with 10%, 5% and 2% of the budget left, and at the limit, counted as what is
 left ("10% of today's budget left"). It only warns unless you switch on Stop at limit
 (`hard_stop`), which blocks tool calls past the limit. Whether Claude hears the warnings too is
-`spend_less` (beta, "Ask Claude to spend less near the limit" on the Options tab): on, Claude is
+`spend_less` (beta, Economy mode on the Options tab): on, Claude is
 asked to spend less, or to wrap up when it will be stopped; off, the warnings are yours alone.
 Until you set it, it follows `hard_stop`, so stopping at the limit warns Claude first and a
 warn-only budget tells only you. With `hard_stop` on and `spend_less` off, Claude hears nothing
@@ -215,20 +215,11 @@ daily allowance, fixed at the start of each local day. Its limit field is the we
 brings a closed pane back show how much of it is left. You can lead with it as the headline
 without making it the budget; it is then only a number.
 
-**Carry over (beta).** With `daily_budget.carry_over` on (Carry over under Beta, shown wherever the
-daily budget shows, or ask: "turn on budget carry-over"), each day gets a seventh of the week, about
-14%, plus whatever earlier days of the week left unused, minus what they overspent. Skip a
-day and the next one has about 28%; overspend and tomorrow's shrinks. The week rarely
-resets at midnight, so the days it starts and ends on get the part of a seventh that falls
-in them. The status line then names the day's size and what moved it
-(`today's budget 90% left (28% of week, +14% carried)`, or `−6% overspent`), and the pane
-shows how it is made up (`14.3% a day + 14.3% carried over`).
-
 ### Headline
 
 `headline` picks the figure that leads the pane, the status line and the button that brings
 a closed pane back, counted as what is left, the same way the warnings count:
-`auto` (the default), `session`, `today`, `five_hour` or `week`. Set it in the Options tab
+`auto` (the default), `session`, `today`, `five_hour` or `week`. Set it with Lead with in the Options tab
 or ask: "make the week my headline".
 
 - `auto` follows the budget type while the budget is on. With it off, the week leads on
@@ -259,7 +250,7 @@ The limits are off, but these checks run from the start. Each one is set in
   to a cold cache, the question above the prompt box offers **New chat from handoff**,
   which clears the chat and starts again from the note with your prompt, or **Copy
   handoff** to paste it into a new chat yourself. The session must stay open and the
-  computer awake. Turn it off on the pane's Options tab (HANDOFF NOTE).
+  computer awake. Turn it off on the pane's Options tab (Handoff note, under SESSION).
 - **Helpers can't start helpers.** A helper agent that tries to start or message another
   agent is stopped. Set `helpers_may_delegate` to `true` to allow it.
 - **Notes to Claude.** When a session's context passes 200k and again 350k tokens, Claude
@@ -337,7 +328,7 @@ For a reviewer reading `hooks/register.tsx`, each kind of call it makes and why:
   The environment variables it reads are folder paths and the platform name, never a key
   or token.
 - **Configuration it sets (`$.config.set`).** Only `tokentab.autoOpen`, its own option,
-  when you flip "Open at session start" in the Options tab. It sets no environment variable
+  when you flip "Open automatically" in the Options tab. It sets no environment variable
   and no other setting, and it does not hook `config.set`.
 - **Events it hooks.** `session.start` and `session.attach` (open the pane),
   `ui.render` and `ui.press` (its own pane), `command.run` for `/tokentab:status` only
