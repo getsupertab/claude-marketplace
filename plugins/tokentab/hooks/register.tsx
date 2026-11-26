@@ -538,8 +538,6 @@ export type Setting = {
   key: string; label: string; kind: 'limit' | 'switch' | 'choice'; unit?: string
   /** A `choice` picks one of these. */
   choices?: string[]
-  /** A `choice`'s own words for its values, before CHOICE_LABELS. */
-  labels?: Record<string, string>
   /** Drawn before a limit's field, as the frame's `$`. */
   prefix?: string
   /** One line under the row saying what the setting does. */
@@ -554,7 +552,7 @@ export type Setting = {
 
 /** A choice's words in the pane; budget.json keeps the value. */
 export const CHOICE_LABELS: Record<string, string> = { auto: 'Auto', today: 'Today', week: 'Week', five_hour: '5 hours', session: 'Session' }
-export const choiceLabel = (value: string, setting?: Setting): string => setting?.labels?.[value] ?? CHOICE_LABELS[value] ?? value
+export const choiceLabel = (value: string): string => CHOICE_LABELS[value] ?? value
 /** A switch's state; one with `follows` shows that key's while its own is unset. */
 export function switchOn(budget: Json | undefined, setting: Setting): boolean {
   const own = at(budget, setting.key)
@@ -588,7 +586,7 @@ const TYPE_LIMITS: Record<string, Setting> = {
     note: "Today's budget is what is left of the cap, spread over the days left." },
   'percent:week': { key: 'weekly_limit_percent', label: 'Limit', unit: '% of the week', kind: 'limit' },
   'percent:five_hour': { key: 'five_hour_limit_percent', label: 'Limit', unit: '% of 5 hours', kind: 'limit' },
-  'percent:session': { key: 'session_limit_usd', label: 'Limit', unit: 'USD at API rates', kind: 'limit' },
+  'percent:session': { key: 'session_limit_usd', label: 'Limit', prefix: '$', kind: 'limit', note: 'At API rates.' },
 }
 
 /** The one budget type checked in this unit, as budget_type() in tokentab.py: budget_type's pick,
@@ -617,7 +615,7 @@ export function sections(budget: Json | undefined, unit: Unit): Section[] {
       TYPE_LIMITS[`${unit}:${type}`]!,
       { key: 'spend_less', label: 'Economy mode', kind: 'switch', beta: true, follows: 'hard_stop',
         note: 'Spends less as you near the limit.' },
-      { key: 'hard_stop', label: 'Stop at limit', kind: 'switch', note: 'Holds new prompts at the limit.' },
+      { key: 'hard_stop', label: 'Stop at limit', kind: 'switch', note: 'Stops prompts and tool calls at the limit.' },
     ] : [] },
     { title: 'session', rows: [
       { key: 'handoff.enabled', label: 'Handoff note', kind: 'switch', beta: true, defaultOn: HANDOFF_DEFAULTS.enabled,
@@ -628,8 +626,7 @@ export function sections(budget: Json | undefined, unit: Unit): Section[] {
 
 /** The figure that leads the pane, the status line and the reopen button. Its choices follow the account. */
 export const HEADLINE: Setting = { key: 'headline', label: 'Lead with', kind: 'choice',
-  labels: { today: 'Left today', week: 'Left this week', five_hour: 'Left in 5 hours', session: 'Left this session' },
-  note: 'e.g. "$31.40 left today"' }
+  note: 'The figure the pane and the status line show first. Auto follows the budget that is on.' }
 
 /** The headline words this account can show, as headline() in tokentab.py: a window only with its reading,
  *  and today (the daily budget on Pro and Max) only while the week has a reading. */
@@ -1801,9 +1798,9 @@ function optionsTab($: EngineInterface, e: RenderEvent): RenderChildren {
       // The budget type shows the one in effect while unset; a headline this account cannot show falls back to auto, as tokentab.py does
       const picked = s.key.startsWith('budget_type.') ? budgetTypeOf(o?.budget, unit) : String(v)
       const current = choices.includes(picked) ? picked : choices[0] ?? shown(v)
-      if (mobile) return column(<Text size="footnote" mono weight="semibold">{choiceLabel(current, s)}</Text>)
+      if (mobile) return column(<Text size="footnote" mono weight="semibold">{choiceLabel(current)}</Text>)
       const { Select } = $.ui.resolve(e)
-      return column(<Select key={`b-${s.key}`} value={current} options={choices.map(choice => ({ value: choice, label: choiceLabel(choice, s) }))}
+      return column(<Select key={`b-${s.key}`} value={current} options={choices.map(choice => ({ value: choice, label: choiceLabel(choice) }))}
         onSelect={value => { void setBudget($, s.key, value) }} />, true)
     }
     if (mobile) return column(<Text size="footnote" mono tabular weight="semibold">{typeof v === 'number' && s.prefix ? `${s.prefix}${shown(v)}` : shown(v)}</Text>)
