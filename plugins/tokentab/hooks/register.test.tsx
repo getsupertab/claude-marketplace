@@ -829,27 +829,27 @@ test('the Options tab: auto-open through the config menu, the budget through the
   await $.ui.press(press('tab-options'))
   const tree = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   const t = texts(tree)
-  expect(t.some(x => x.text === 'Open automatically')).toBe(true)
-  expect(t.filter(x => /^[A-Z][A-Z ]+$/.test(x.text) && x.props.dimColor).map(x => x.text)).toEqual(['DISPLAY', 'BUDGET', 'SESSION'])
+  expect(t.some(text => text.text === 'Open automatically')).toBe(true)
+  expect(t.filter(text => /^[A-Z][A-Z ]+$/.test(text.text) && text.props.dimColor).map(text => text.text)).toEqual(['DISPLAY', 'BUDGET', 'SESSION'])
   // Economy mode and the handoff note are each tagged beta, in colour
-  expect(t.filter(x => x.text === 'BETA').map(x => x.props.color)).toEqual(['warning', 'warning'])
+  expect(t.filter(text => text.text === 'BETA').map(text => text.props.color)).toEqual(['warning', 'warning'])
   // the budget's rows in the frame's order, each with its line on what it does
-  expect(t.filter(x => ['Limit applies to', 'Limit (USD)', 'Economy mode', 'Stop at limit'].includes(x.text)).map(x => x.text))
+  expect(t.filter(text => ['Limit applies to', 'Limit (USD)', 'Economy mode', 'Stop at limit'].includes(text.text)).map(text => text.text))
     .toEqual(['Limit applies to', 'Limit (USD)', 'Economy mode', 'Stop at limit'])
-  expect(t.some(x => x.text === 'Resets at midnight, all sessions.' && x.props.dimColor)).toBe(true)
-  expect(t.some(x => x.text === 'Stops prompts and tool calls at the limit.' && x.props.dimColor)).toBe(true)
-  expect(t.some(x => x.text === 'Save a note before cache expires.' && x.props.dimColor)).toBe(true)
-  expect(elements(tree, 'Button').find(b => b.key === 'auto-open')?.label).toBe('On')
+  expect(t.some(text => text.text === 'Resets at midnight, all sessions.' && text.props.dimColor)).toBe(true)
+  expect(t.some(text => text.text === 'Stops prompts and tool calls at the limit.' && text.props.dimColor)).toBe(true)
+  expect(t.some(text => text.text === 'Save a note before cache expires.' && text.props.dimColor)).toBe(true)
+  expect(elements(tree, 'Button').find(button => button.key === 'auto-open')?.label).toBe('On')
   // one budget type; the file had only today's limit, so today is the type, and its limit the one field
   const type = elements(tree, 'Select').find(select => select.key === 'b-budget_type.usd')
   expect(type?.value).toBe('today')
   expect(type?.options).toEqual([{ value: 'today', label: 'Today' }, { value: 'session', label: 'Session' }])
   const inputs = elements(tree, 'Input')
-  expect(inputs.map(i => i.key)).toEqual(['b-daily_limit_usd'])
+  expect(inputs.map(input => input.key)).toEqual(['b-daily_limit_usd'])
   expect(inputs[0]?.value).toBe('40')
-  expect(elements(tree, 'Button').find(b => b.key === 'b-budgets_on')?.label).toBe('On')
-  expect(elements(tree, 'Button').find(b => b.key === 'b-hard_stop')?.label).toBe('Off')
-  expect(elements(tree, 'Button').find(b => b.key === 'b-handoff.enabled')?.label).toBe('On')
+  expect(elements(tree, 'Button').find(button => button.key === 'b-budgets_on')?.label).toBe('On')
+  expect(elements(tree, 'Button').find(button => button.key === 'b-hard_stop')?.label).toBe('Off')
+  expect(elements(tree, 'Button').find(button => button.key === 'b-handoff.enabled')?.label).toBe('On')
   await $.ui.select({ plugin: 'tokentab', key: 'b-budget_type.usd', value: 'session' })
   expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'budget_type.usd', 'session'])
 
@@ -981,6 +981,15 @@ test('the limit unit follows the account: percent where the plan reports a usage
   expect(typeNote({ budgets_on: true }, 'usd')).toBe('Resets at midnight, all sessions.')
   expect(typeNote({ budgets_on: true, budget_type: { usd: 'session' } }, 'usd')).toBeUndefined()
   expect(typeNote({ budgets_on: true, budget_type: { percent: 'today' } }, 'percent')).toBeUndefined()
+  // carry over is not a row, so the daily budget's note says when it is on
+  const limitNote = (budget: Record<string, unknown>) => sections({ budgets_on: true, budget_type: { percent: 'today' }, ...budget }, 'percent')[0]!.rows[1]!.note
+  expect(limitNote({})).toBe("Today's budget is what is left of the cap, spread over the days left.")
+  expect(limitNote({ daily_budget: { carry_over: true } })).toBe('Carry over (beta) is on: a seventh of the cap a day, plus what earlier days left.')
+  // the handoff note is written only while cold_resume is on, whatever its switch says
+  const handoffNote = (budget: Record<string, unknown>) => sections(budget, 'usd')[1]!.rows[0]!.note
+  expect(handoffNote({ cold_resume: { confirm_seconds: 120 } })).toBe('Save a note before cache expires.')
+  expect(handoffNote({ cold_resume: {} })).toBe('Saves no note while cold_resume is off.')
+  expect(handoffNote({})).toBe('Saves no note while cold_resume is off.')
   expect(sections({ budgets_on: true, budget_type: { percent: 'session' } }, 'percent')[0]!.rows[1]!.unit).toBe('USD at API rates')
   // spend_less follows hard_stop until it is set either way
   const spendLess = sections({ budgets_on: true }, 'usd').flatMap(section => section.rows).find(row => row.key === 'spend_less')!

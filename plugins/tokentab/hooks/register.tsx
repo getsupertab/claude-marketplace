@@ -600,24 +600,29 @@ export function budgetTypeOf(budget: Json | undefined, unit: Unit): string {
 export type Section = { title: string; toggle?: Setting; rows: Setting[] }
 
 /** The Options tab's sections below Display, for this file and account. The budget's rows show only
- *  while it is on, and only its type's limit; each unit keeps its own type. Carry over is left to
- *  /tokentab:budget. */
+ *  while it is on, and only its type's limit; each unit keeps its own type. Carry over is set with
+ *  /tokentab:budget; the daily budget's note says when it is on. */
 export function sections(budget: Json | undefined, unit: Unit): Section[] {
   const on = at(budget, 'budgets_on') === true
   const type = budgetTypeOf(budget, unit)
   // Only the USD daily budget is a plain local day; on Pro and Max it is spread from the week's cap
   const resets = unit === 'usd' && type === 'today' ? { note: 'Resets at midnight, all sessions.' } : {}
+  const limit = TYPE_LIMITS[`${unit}:${type}`]!
+  const carryOver = unit === 'percent' && type === 'today' && at(budget, 'daily_budget.carry_over') === true
+  // handoffConfig() saves no note while cold_resume is off, whatever handoff.enabled says
+  const cold = at(budget, 'cold_resume')
+  const coldOn = typeof cold === 'object' && cold !== null && Object.keys(cold).length > 0
   return [
     { title: 'budget', toggle: { key: 'budgets_on', label: 'Enable budget', kind: 'switch' }, rows: on ? [
       { key: `budget_type.${unit}`, label: 'Limit applies to', kind: 'choice', choices: BUDGET_TYPES[unit], ...resets },
-      TYPE_LIMITS[`${unit}:${type}`]!,
+      carryOver ? { ...limit, note: 'Carry over (beta) is on: a seventh of the cap a day, plus what earlier days left.' } : limit,
       { key: 'spend_less', label: 'Economy mode', kind: 'switch', beta: true, follows: 'hard_stop',
         note: 'Spends less as you near the limit.' },
       { key: 'hard_stop', label: 'Stop at limit', kind: 'switch', note: 'Stops prompts and tool calls at the limit.' },
     ] : [] },
     { title: 'session', rows: [
       { key: 'handoff.enabled', label: 'Handoff note', kind: 'switch', beta: true, defaultOn: HANDOFF_DEFAULTS.enabled,
-        note: 'Save a note before cache expires.' },
+        note: coldOn ? 'Save a note before cache expires.' : 'Saves no note while cold_resume is off.' },
     ] },
   ]
 }
@@ -1772,12 +1777,7 @@ function toolRow($: EngineInterface, e: RenderEvent, t: ToolRow, path: string, t
   )
 }
 
-/** Options, Figma's "TokenTab / Limits", set like Spend: Display (the pane's auto-open switch,
- *  the manifest's `userConfig` field as in /config, and the headline), then sections() over
- *  budget.json, a label on the left and its control on the right: a limit as an Input with
- *  "save", a switch as an On/Off Button, a choice as a Select. Mobile has neither Input nor
- *  Select, so it shows the values. Spacing follows the issue #106 frame: caption to rows sm,
- *  between rows lg, around each divider md. */
+/** Options, laid out as the issue #106 frame. Mobile has neither Input nor Select, so it shows the values. */
 function optionsTab($: EngineInterface, e: RenderEvent): RenderChildren {
   const { Box, Text, Button } = $.ui.resolve(e)
   const o = options
@@ -1845,8 +1845,8 @@ function optionsTab($: EngineInterface, e: RenderEvent): RenderChildren {
           rule($, e, `rule-${settingsSection.title}`),
           section(settingsSection.title, settingsSection.toggle && control(settingsSection.toggle), [
             ...(toggleError !== undefined ? [<Text size="footnote" key="toggle-error" color="error">{toggleError}</Text>] : []),
-            ...settingsSection.rows.map(s => row(s.key, s.unit === undefined ? s.label : `${s.label} (${s.unit})`, control(s),
-              { error: o?.errors[s.key], note: noteOf(o?.budget, s), beta: s.beta })),
+            ...settingsSection.rows.map(setting => row(setting.key, setting.unit === undefined ? setting.label : `${setting.label} (${setting.unit})`, control(setting),
+              { error: o?.errors[setting.key], note: noteOf(o?.budget, setting), beta: setting.beta })),
           ]),
         ]
       })}

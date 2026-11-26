@@ -90,7 +90,7 @@ Everything is in `budget.json` in your data folder. `null` turns a limit off. `/
 
 | Setting | Default | What it does |
 |---|---|---|
-| `budgets_on` | `false` | Enable budget: switches the budget below on or off. Its values are kept while it's off. |
+| `budgets_on` | `false` | The switch beside BUDGET on the Options tab: switches the budget below on or off. Its values are kept while it's off. |
 | `budget_type` | from your limits | The one budget checked, per unit: `usd` is `today` or `session`; `percent` (Pro, Max) is `today` (the daily budget), `week`, `five_hour` or `session` (dollars at API rates). `null` takes it from the limits set: `today` in USD unless only the session limit is set; on Pro and Max `today` if the old `daily_budget.enabled` is on, else `week` unless only the 5-hour limit is set. |
 | `session_limit_usd` | `25` | Limit for one session, in US dollars (at API rates on Pro and Max). Resets with a new session. |
 | `daily_limit_usd` | `40` | Limit across all sessions and projects, in US dollars. Resets at midnight. |
