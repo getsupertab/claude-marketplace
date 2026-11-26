@@ -215,15 +215,6 @@ daily allowance, fixed at the start of each local day. Its limit field is the we
 brings a closed pane back show how much of it is left. You can lead with it as the headline
 without making it the budget; it is then only a number.
 
-**Carry over (beta).** With `daily_budget.carry_over` on (`/tokentab:budget daily_budget.carry_over on`,
-or ask: "turn on budget carry-over"), each day gets a seventh of the week, about
-14%, plus whatever earlier days of the week left unused, minus what they overspent. Skip a
-day and the next one has about 28%; overspend and tomorrow's shrinks. The week rarely
-resets at midnight, so the days it starts and ends on get the part of a seventh that falls
-in them. The status line then names the day's size and what moved it
-(`today's budget 90% left (28% of week, +14% carried)`, or `−6% overspent`), and the pane
-shows how it is made up (`14.3% a day + 14.3% carried over`).
-
 ### Headline
 
 `headline` picks the figure that leads the pane, the status line and the button that brings

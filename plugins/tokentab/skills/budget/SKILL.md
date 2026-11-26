@@ -44,10 +44,7 @@ effect. Each type has one limit key:
 A `null` type takes the limit the file had set: `today` in USD unless only the session limit is
 set; in percent `today` if an older file's `daily_budget.enabled` is true, else `week` unless only
 the 5-hour limit is set. The daily budget (type `today` in percent) is what is left of the week
-spread over the days left, fixed at the start of each local day; its beta
-`daily_budget.carry_over` (on: each full day gets a seventh of the week, the days the week
-starts and ends on their part of one, plus what earlier days left unused, minus what they
-overspent, so a day unused doubles the next).
+spread over the days left, fixed at the start of each local day.
 
 The account decides the unit; it is not a setting. Percent where Claude Code reports the plan's
 usage windows (Pro, Max), else USD (Enterprise, API key). `state/rate_limits.json` beside
@@ -70,7 +67,7 @@ that the user can ask for a change with `/tokentab:budget <what to change>`.
    key that does not exist, and keeps the file's order and comments. `budget.py get` prints
    the file.
 3. Show the new values. They apply from the next prompt; no restart is needed. The same
-   limits are editable in the TokenTab pane's Options tab, all but `daily_budget.carry_over`.
+   limits are editable in the TokenTab pane's Options tab.
 
 TokenTab tells Claude never to raise a limit on its own. That rule is about Claude
 acting unasked; this skill acts only on what the user asked for in the same prompt. If TokenTab blocks the edit anyway (for example

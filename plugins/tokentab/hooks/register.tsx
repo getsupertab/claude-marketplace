@@ -600,29 +600,24 @@ export function budgetTypeOf(budget: Json | undefined, unit: Unit): string {
 export type Section = { title: string; toggle?: Setting; rows: Setting[] }
 
 /** The Options tab's sections below Display, for this file and account. The budget's rows show only
- *  while it is on, and only its type's limit; each unit keeps its own type. Carry over is set with
- *  /tokentab:budget; the daily budget's note says when it is on. */
+ *  while it is on, and only its type's limit; each unit keeps its own type. Carry over is left to
+ *  /tokentab:budget. */
 export function sections(budget: Json | undefined, unit: Unit): Section[] {
   const on = at(budget, 'budgets_on') === true
   const type = budgetTypeOf(budget, unit)
   // Only the USD daily budget is a plain local day; on Pro and Max it is spread from the week's cap
   const resets = unit === 'usd' && type === 'today' ? { note: 'Resets at midnight, all sessions.' } : {}
-  const limit = TYPE_LIMITS[`${unit}:${type}`]!
-  const carryOver = unit === 'percent' && type === 'today' && at(budget, 'daily_budget.carry_over') === true
-  // handoffConfig() saves no note while cold_resume is off, whatever handoff.enabled says
-  const cold = at(budget, 'cold_resume')
-  const coldOn = typeof cold === 'object' && cold !== null && Object.keys(cold).length > 0
   return [
     { title: 'budget', toggle: { key: 'budgets_on', label: 'Enable budget', kind: 'switch' }, rows: on ? [
       { key: `budget_type.${unit}`, label: 'Limit applies to', kind: 'choice', choices: BUDGET_TYPES[unit], ...resets },
-      carryOver ? { ...limit, note: 'Carry over (beta) is on: a seventh of the cap a day, plus what earlier days left.' } : limit,
+      TYPE_LIMITS[`${unit}:${type}`]!,
       { key: 'spend_less', label: 'Economy mode', kind: 'switch', beta: true, follows: 'hard_stop',
         note: 'Spends less as you near the limit.' },
       { key: 'hard_stop', label: 'Stop at limit', kind: 'switch', note: 'Stops prompts and tool calls at the limit.' },
     ] : [] },
     { title: 'session', rows: [
       { key: 'handoff.enabled', label: 'Handoff note', kind: 'switch', beta: true, defaultOn: HANDOFF_DEFAULTS.enabled,
-        note: coldOn ? 'Save a note before cache expires.' : 'Saves no note while cold_resume is off.' },
+        note: 'Save a note before cache expires.' },
     ] },
   ]
 }

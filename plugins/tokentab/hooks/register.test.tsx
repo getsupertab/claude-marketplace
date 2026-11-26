@@ -981,15 +981,6 @@ test('the limit unit follows the account: percent where the plan reports a usage
   expect(typeNote({ budgets_on: true }, 'usd')).toBe('Resets at midnight, all sessions.')
   expect(typeNote({ budgets_on: true, budget_type: { usd: 'session' } }, 'usd')).toBeUndefined()
   expect(typeNote({ budgets_on: true, budget_type: { percent: 'today' } }, 'percent')).toBeUndefined()
-  // carry over is not a row, so the daily budget's note says when it is on
-  const limitNote = (budget: Record<string, unknown>) => sections({ budgets_on: true, budget_type: { percent: 'today' }, ...budget }, 'percent')[0]!.rows[1]!.note
-  expect(limitNote({})).toBe("Today's budget is what is left of the cap, spread over the days left.")
-  expect(limitNote({ daily_budget: { carry_over: true } })).toBe('Carry over (beta) is on: a seventh of the cap a day, plus what earlier days left.')
-  // the handoff note is written only while cold_resume is on, whatever its switch says
-  const handoffNote = (budget: Record<string, unknown>) => sections(budget, 'usd')[1]!.rows[0]!.note
-  expect(handoffNote({ cold_resume: { confirm_seconds: 120 } })).toBe('Save a note before cache expires.')
-  expect(handoffNote({ cold_resume: {} })).toBe('Saves no note while cold_resume is off.')
-  expect(handoffNote({})).toBe('Saves no note while cold_resume is off.')
   expect(sections({ budgets_on: true, budget_type: { percent: 'session' } }, 'percent')[0]!.rows[1]!.unit).toBe('USD at API rates')
   // spend_less follows hard_stop until it is set either way
   const spendLess = sections({ budgets_on: true }, 'usd').flatMap(section => section.rows).find(row => row.key === 'spend_less')!

@@ -442,7 +442,9 @@ def day_budget_case():
             or up.get("mine") != 1 or list(up)[-1] != "mine":
         errs.append(f"budget.upgraded: nested key not added: {up}")
     up = budget.upgraded({"_daily_comment": "old", "_mine": "note"})
-    if "carry_over" not in up["_daily_comment"] or up.get("_mine") != "note":
+    with open(budget.SHIPPED, encoding="utf-8") as f:
+        shipped_comment = json.load(f)["_daily_comment"]
+    if up["_daily_comment"] != shipped_comment or up.get("_mine") != "note":
         errs.append(f"budget.upgraded: shipped comment not refreshed: {up}")
     return errs
 
