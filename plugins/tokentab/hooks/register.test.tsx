@@ -405,12 +405,12 @@ test('an interactive session opens the pane and draws the Spend tab', async ($, 
   expect(ui.status).toEqual([undefined])
 
   const folded = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
-  // the tab row: Spend is the primary one, then Options and "Open full report"; then the details toggle
+  // the tab row: Spend is the primary one, then Settings and "Open full report"; then the details toggle
   expect(elements(folded, 'Button').map(b => [b.key, b.variant])).toEqual([
     ['tab-spend', 'primary'], ['tab-options', 'secondary'], ['open-browser', undefined], ['share', undefined],
     ['details-toggle', undefined], ['sessions-toggle', undefined],
   ])
-  expect(elements(folded, 'Button').slice(0, 3).map(b => b.label)).toEqual(['Spend', 'Options', 'Open full report ↗'])
+  expect(elements(folded, 'Button').slice(0, 3).map(b => b.label)).toEqual(['Spend', 'Settings', 'Open full report ↗'])
   // no keyboard shortcuts: Tab or the arrows and Enter reach every Button (Kate, 2026-11-17)
   expect(elements(folded, 'Button').filter(b => b.hotkey !== undefined)).toEqual([])
   // the breakdown starts folded: the toggle shows, the rate table and the tools do not
@@ -819,7 +819,7 @@ test('on Linux without xdg-open, the toast says the page could not be opened and
   expect(ui.store.get(`pageOpenedAt:${SID}`)).toBeUndefined()
 })
 
-test('the Options tab: auto-open through the config menu, the budget through the validator', async ($, on) => {
+test('the Settings tab: auto-open through the config menu, the budget through the validator', async ($, on) => {
   mock.env(on, { HOME: '/home/t' })
   const clock = mock.clock(on, { now: T0 })
   const { ui } = world(on, { ...FILES, '/tokentab/budget.json': JSON.stringify({ ...JSON.parse(BUDGET), budgets_on: true }) })
@@ -834,10 +834,12 @@ test('the Options tab: auto-open through the config menu, the budget through the
   // Economy mode and the handoff note are each tagged beta, in colour
   expect(t.filter(text => text.text === 'BETA').map(text => text.props.color)).toEqual(['warning', 'warning'])
   // the budget's rows in the frame's order, each with its line on what it does
-  expect(t.filter(text => ['Limit applies to', 'Limit (USD)', 'Economy mode', 'Stop at limit'].includes(text.text)).map(text => text.text))
-    .toEqual(['Limit applies to', 'Limit (USD)', 'Economy mode', 'Stop at limit'])
+  expect(t.filter(text => ['Limit applies to', 'Limit', 'Economy mode', 'Stop at limit'].includes(text.text)).map(text => text.text))
+    .toEqual(['Limit applies to', 'Limit', 'Economy mode', 'Stop at limit'])
+  // the USD limit's field has the frame's $ before it, not a unit after its label
+  expect(t.some(text => text.text === '$' && text.props.dimColor)).toBe(true)
   expect(t.some(text => text.text === 'Resets at midnight, all sessions.' && text.props.dimColor)).toBe(true)
-  expect(t.some(text => text.text === 'Stops prompts and tool calls at the limit.' && text.props.dimColor)).toBe(true)
+  expect(t.some(text => text.text === 'Holds new prompts at the limit.' && text.props.dimColor)).toBe(true)
   expect(t.some(text => text.text === 'Save a note before cache expires.' && text.props.dimColor)).toBe(true)
   expect(elements(tree, 'Button').find(button => button.key === 'auto-open')?.label).toBe('On')
   // one budget type; the file had only today's limit, so today is the type, and its limit the one field
@@ -883,11 +885,11 @@ test('the Options tab: auto-open through the config menu, the budget through the
   const mobile = await $.ui.render({ surface: 'mobile', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   expect(elements(mobile, 'Input')).toEqual([])
   expect(elements(mobile, 'Select')).toEqual([])
-  expect(texts(mobile).some(x => x.text === '40')).toBe(true)
+  expect(texts(mobile).some(text => text.text === '$40')).toBe(true)
   expect(texts(mobile).some(x => x.text === 'Today')).toBe(true)
 })
 
-test('the Options tab hides the budget\'s rows while the budget is off', async ($, on) => {
+test('the Settings tab hides the budget\'s rows while the budget is off', async ($, on) => {
   mock.env(on, { HOME: '/home/t' })
   const clock = mock.clock(on, { now: T0 })
   world(on, { ...FILES, '/tokentab/budget.json': JSON.stringify({ ...JSON.parse(BUDGET), budgets_on: false }) })
@@ -905,7 +907,7 @@ test('the Options tab hides the budget\'s rows while the budget is off', async (
   expect(elements(tree, 'Button').map(button => button.key).filter(key => /hard_stop|spend_less|carry_over/.test(String(key)))).toEqual([])
 })
 
-test('the Options tab: spend_less, while unset, shows Stop at limit\'s on and stores off when pressed', async ($, on) => {
+test('the Settings tab: spend_less, while unset, shows Stop at limit\'s on and stores off when pressed', async ($, on) => {
   mock.env(on, { HOME: '/home/t' })
   const clock = mock.clock(on, { now: T0 })
   const { ui } = world(on, { ...FILES, '/tokentab/budget.json': JSON.stringify({ ...JSON.parse(BUDGET), budgets_on: true, hard_stop: true, spend_less: null }) })
@@ -920,7 +922,7 @@ test('the Options tab: spend_less, while unset, shows Stop at limit\'s on and st
   expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'spend_less', 'off'])
 })
 
-test('the Options tab offers the daily budget once the plan reports a usage window', async ($, on) => {
+test('the Settings tab offers the daily budget once the plan reports a usage window', async ($, on) => {
   mock.env(on, { HOME: '/home/t' })
   const clock = mock.clock(on, { now: T0 })
   const { ui } = world(on, { ...FILES, '/tokentab/budget.json': JSON.stringify({ ...JSON.parse(BUDGET), budgets_on: true }) })
@@ -945,7 +947,8 @@ test('the Options tab offers the daily budget once the plan reports a usage wind
   // the headline offers the plan's choices; the file's five_hour has no reading here (only the week reported), so it shows as auto
   const lead = elements(tree, 'Select').find(select => select.key === 'b-headline')
   expect(lead?.value).toBe('auto')
-  expect((lead?.options as { label: string }[]).map(option => option.label)).toEqual(['Auto', 'Today', 'Week', 'Session'])
+  expect((lead?.options as { label: string }[]).map(option => option.label)).toEqual(['Auto', 'Left today', 'Left this week', 'Left this session'])
+  expect(t.some(text => text.text === 'e.g. "$31.40 left today"' && text.props.dimColor)).toBe(true)
   await $.ui.select({ plugin: 'tokentab', key: 'b-headline', value: 'today' })
   expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'headline', 'today'])
   // carry over, which sizes the daily budget, is not on the tab
@@ -1014,7 +1017,7 @@ test('the limit unit follows the account: percent where the plan reports a usage
   expect(withNewKeys({ _daily_comment: 'new' }, { _daily_comment: 'new' })).toBeUndefined()
 })
 
-test('a first usage-window reading redraws the open Options tab in percent, no tab switch', async ($, on) => {
+test('a first usage-window reading redraws the open Settings tab in percent, no tab switch', async ($, on) => {
   mock.env(on, { HOME: '/home/t' })
   const clock = mock.clock(on, { now: T0 })
   world(on, FILES)
@@ -1032,7 +1035,7 @@ test('a first usage-window reading redraws the open Options tab in percent, no t
   expect(await inputs()).toContain('b-weekly_limit_percent')
 })
 
-test('session.measure records the usage windows; the Options tab then shows the percent fields', async ($, on) => {
+test('session.measure records the usage windows; the Settings tab then shows the percent fields', async ($, on) => {
   mock.env(on, { HOME: '/home/t' })
   const clock = mock.clock(on, { now: T0 })
   const { fs } = world(on, FILES)

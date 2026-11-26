@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-budget.py — the one validator for TokenTab's budget.json, used by the pane's Options view
+budget.py — the one validator for TokenTab's budget.json, used by the pane's Settings tab
 and the budget skill alike.
 
   budget.py get [KEY]       print the value under KEY (dotted: cold_resume.confirm_seconds), or the

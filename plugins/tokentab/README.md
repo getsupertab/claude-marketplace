@@ -140,7 +140,7 @@ The pane has two tabs:
   writes, cache reads, output, thinking), cost per tool, and every session today and
   this month. "Share" shows the session as a card to copy, or as a page in the
   browser with an image to download and links to post it on X or LinkedIn.
-- **Options**: your limits, editable in place, and the switch that opens the pane
+- **Settings**: your limits, editable in place, and the switch that opens the pane
   at session start.
 
 The pane has no keyboard shortcuts. From the keyboard, `ctrl+x tab` moves into the pane,
@@ -168,15 +168,15 @@ python3 ~/.claude/plugins/cache/supertab/tokentab/*/tokentab/tokentab.py
 
 Add `--once` for a single snapshot or `--json` for the raw numbers.
 
-To stop the pane opening on its own, switch off Open automatically on the Options tab, or in a terminal
+To stop the pane opening on its own, switch off Open automatically on the Settings tab, or in a terminal
 session set `tokentab.autoOpen` in `/config`.
 
 ## Budgets
 
 Budgets are off until you turn them on, with `/tokentab:budget` or the switch beside BUDGET on
-the Options tab. You can also just ask: "raise my daily limit to 30", "stop at the limit".
+the Settings tab. You can also just ask: "raise my daily limit to 30", "stop at the limit".
 
-One budget is checked at a time. Pick its type (Limit applies to) and limit on the Options tab (the rows show
+One budget is checked at a time. Pick its type (Limit applies to) and limit on the Settings tab (the rows show
 once the budget is on) or ask: "make my budget the session, $5".
 
 - **API billing (Enterprise, API key)** counts dollars: `today` (every session, every
@@ -192,7 +192,7 @@ loads that account's budget and switching back restores the other.
 TokenTab warns with 10%, 5% and 2% of the budget left, and at the limit, counted as what is
 left ("10% of today's budget left"). It only warns unless you switch on Stop at limit
 (`hard_stop`), which blocks tool calls past the limit. Whether Claude hears the warnings too is
-`spend_less` (beta, Economy mode on the Options tab): on, Claude is
+`spend_less` (beta, Economy mode on the Settings tab): on, Claude is
 asked to spend less, or to wrap up when it will be stopped; off, the warnings are yours alone.
 Until you set it, it follows `hard_stop`, so stopping at the limit warns Claude first and a
 warn-only budget tells only you. With `hard_stop` on and `spend_less` off, Claude hears nothing
@@ -219,7 +219,7 @@ without making it the budget; it is then only a number.
 
 `headline` picks the figure that leads the pane, the status line and the button that brings
 a closed pane back, counted as what is left, the same way the warnings count:
-`auto` (the default), `session`, `today`, `five_hour` or `week`. Set it with Lead with in the Options tab
+`auto` (the default), `session`, `today`, `five_hour` or `week`. Set it with Lead with in the Settings tab
 or ask: "make the week my headline".
 
 - `auto` follows the budget type while the budget is on. With it off, the week leads on
@@ -250,7 +250,7 @@ The limits are off, but these checks run from the start. Each one is set in
   to a cold cache, the question above the prompt box offers **New chat from handoff**,
   which clears the chat and starts again from the note with your prompt, or **Copy
   handoff** to paste it into a new chat yourself. The session must stay open and the
-  computer awake. Turn it off on the pane's Options tab (Handoff note, under SESSION).
+  computer awake. Turn it off on the pane's Settings tab (Handoff note, under SESSION).
 - **Helpers can't start helpers.** A helper agent that tries to start or message another
   agent is stopped. Set `helpers_may_delegate` to `true` to allow it.
 - **Notes to Claude.** When a session's context passes 200k and again 350k tokens, Claude
@@ -291,7 +291,7 @@ For a reviewer reading `hooks/register.tsx`, each kind of call it makes and why:
     once, to find a Python 3; the launcher found is kept in the plugin's store.
   - That Python with one of the plugin's own files, `tokentab/tokentab.py` (costs, the
     pane's figures, the status page) or `tokentab/budget.py` (a limit you change in the
-    Options tab), and local paths and values as arguments.
+    Settings tab), and local paths and values as arguments.
   - `uname -s`, to tell macOS from Linux.
   - `open` (macOS), `xdg-open` (Linux) or `explorer.exe` (Windows) with the path of a
     local HTML file, only when you choose "Open full report" or the share page.
@@ -328,7 +328,7 @@ For a reviewer reading `hooks/register.tsx`, each kind of call it makes and why:
   The environment variables it reads are folder paths and the platform name, never a key
   or token.
 - **Configuration it sets (`$.config.set`).** Only `tokentab.autoOpen`, its own option,
-  when you flip "Open automatically" in the Options tab. It sets no environment variable
+  when you flip "Open automatically" in the Settings tab. It sets no environment variable
   and no other setting, and it does not hook `config.set`.
 - **Events it hooks.** `session.start` and `session.attach` (open the pane),
   `ui.render` and `ui.press` (its own pane), `command.run` for `/tokentab:status` only

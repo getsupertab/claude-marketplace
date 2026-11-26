@@ -1,5 +1,5 @@
 {
-  "_budgets_comment": "Master switch for the budget: the type and limit below. false (the default) checks nothing and keeps the values for when you turn it on (/tokentab:budget or the pane, the switch beside BUDGET on the Options tab).",
+  "_budgets_comment": "Master switch for the budget: the type and limit below. false (the default) checks nothing and keeps the values for when you turn it on (/tokentab:budget or the pane, the switch beside BUDGET on the Settings tab).",
   "budgets_on": false,
   "_unit_comment": "Your account decides what a budget counts: percent of the plan's usage windows on Pro and Max, else USD (priced from prices.json). Only the budget type picked for that unit is checked.",
   "_type_comment": "The one budget checked, per unit, so switching accounts keeps each one's pick. usd: today (daily_limit_usd) or session (session_limit_usd). percent: today (the daily budget below, its cap weekly_limit_percent), week (weekly_limit_percent), five_hour (five_hour_limit_percent) or session (session_limit_usd, dollars at API rates). null (the default) takes the limit you had set: today in USD unless only the session limit is set; on Pro and Max today if the old daily budget switch was on, else week unless only the 5-hour limit is set.",

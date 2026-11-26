@@ -12,7 +12,7 @@ import { TOKENS } from './tokens'
 // `session.start` opens a pane beside the chat (the `autoOpen` option); `/tokentab:status`
 // (the status skill, answered by a hook) opens it asked. `ui.render` draws one of two
 // tabs: Spend, the session against its limit, its cost by rate and what each tool cost,
-// today and this month; Options, the auto-open switch and the budget limits. Spend draws
+// today and this month; Settings, the auto-open switch and the budget limits. Spend draws
 // `tokentab.py --report`, the same report() the terminal live view and the status line
 // print, so the figures cannot drift apart. While the pane is not placed
 // (a narrow terminal) one status line carries the numbers instead. Redrawn a second after
@@ -525,11 +525,11 @@ export function barCells(parts: { series: string; frac: number }[], cells: numbe
 export type View = 'spend' | 'options'
 export const TABS: { view: View; label: string }[] = [
   { view: 'spend', label: 'Spend' },
-  { view: 'options', label: 'Options' },
+  { view: 'options', label: 'Settings' },
 ]
 const TOOLS_SHOWN = 12
 
-// The settings the Options tab edits, in budget.json's keys (dotted below the top level),
+// The settings the Settings tab edits, in budget.json's keys (dotted below the top level),
 // as sections of rows: a limit is an Input, a switch an On/Off Button, a choice a Select.
 // A section's `toggle` sits in its heading. Every write goes through tokentab/budget.py,
 // the one validator.
@@ -538,6 +538,10 @@ export type Setting = {
   key: string; label: string; kind: 'limit' | 'switch' | 'choice'; unit?: string
   /** A `choice` picks one of these. */
   choices?: string[]
+  /** A `choice`'s own words for its values, before CHOICE_LABELS. */
+  labels?: Record<string, string>
+  /** Drawn before a limit's field, as the frame's `$`. */
+  prefix?: string
   /** One line under the row saying what the setting does. */
   note?: string
   /** A switch that is null until set shows this other switch's value. */
@@ -550,7 +554,7 @@ export type Setting = {
 
 /** A choice's words in the pane; budget.json keeps the value. */
 export const CHOICE_LABELS: Record<string, string> = { auto: 'Auto', today: 'Today', week: 'Week', five_hour: '5 hours', session: 'Session' }
-export const choiceLabel = (value: string): string => CHOICE_LABELS[value] ?? value
+export const choiceLabel = (value: string, setting?: Setting): string => setting?.labels?.[value] ?? CHOICE_LABELS[value] ?? value
 /** A switch's state; one with `follows` shows that key's while its own is unset. */
 export function switchOn(budget: Json | undefined, setting: Setting): boolean {
   const own = at(budget, setting.key)
@@ -578,8 +582,8 @@ export const BUDGET_TYPES: Record<Unit, string[]> = { usd: ['today', 'session'],
 /** The limit field of each budget type, as TYPE_LIMITS in tokentab.py. On Pro and Max a session
  *  budget is dollars at API rates, and today's is spread from the week's cap. */
 const TYPE_LIMITS: Record<string, Setting> = {
-  'usd:today': { key: 'daily_limit_usd', label: 'Limit', unit: 'USD', kind: 'limit' },
-  'usd:session': { key: 'session_limit_usd', label: 'Limit', unit: 'USD', kind: 'limit' },
+  'usd:today': { key: 'daily_limit_usd', label: 'Limit', prefix: '$', kind: 'limit' },
+  'usd:session': { key: 'session_limit_usd', label: 'Limit', prefix: '$', kind: 'limit' },
   'percent:today': { key: 'weekly_limit_percent', label: 'Week cap', unit: '%', kind: 'limit',
     note: "Today's budget is what is left of the cap, spread over the days left." },
   'percent:week': { key: 'weekly_limit_percent', label: 'Limit', unit: '% of the week', kind: 'limit' },
@@ -599,7 +603,7 @@ export function budgetTypeOf(budget: Json | undefined, unit: Unit): string {
 
 export type Section = { title: string; toggle?: Setting; rows: Setting[] }
 
-/** The Options tab's sections below Display, for this file and account. The budget's rows show only
+/** The Settings tab's sections below Display, for this file and account. The budget's rows show only
  *  while it is on, and only its type's limit; each unit keeps its own type. Carry over is left to
  *  /tokentab:budget. */
 export function sections(budget: Json | undefined, unit: Unit): Section[] {
@@ -613,7 +617,7 @@ export function sections(budget: Json | undefined, unit: Unit): Section[] {
       TYPE_LIMITS[`${unit}:${type}`]!,
       { key: 'spend_less', label: 'Economy mode', kind: 'switch', beta: true, follows: 'hard_stop',
         note: 'Spends less as you near the limit.' },
-      { key: 'hard_stop', label: 'Stop at limit', kind: 'switch', note: 'Stops prompts and tool calls at the limit.' },
+      { key: 'hard_stop', label: 'Stop at limit', kind: 'switch', note: 'Holds new prompts at the limit.' },
     ] : [] },
     { title: 'session', rows: [
       { key: 'handoff.enabled', label: 'Handoff note', kind: 'switch', beta: true, defaultOn: HANDOFF_DEFAULTS.enabled,
@@ -624,7 +628,8 @@ export function sections(budget: Json | undefined, unit: Unit): Section[] {
 
 /** The figure that leads the pane, the status line and the reopen button. Its choices follow the account. */
 export const HEADLINE: Setting = { key: 'headline', label: 'Lead with', kind: 'choice',
-  note: 'The figure the pane and the status line show first. Auto follows the budget that is on.' }
+  labels: { today: 'Left today', week: 'Left this week', five_hour: 'Left in 5 hours', session: 'Left this session' },
+  note: 'e.g. "$31.40 left today"' }
 
 /** The headline words this account can show, as headline() in tokentab.py: a window only with its reading,
  *  and today (the daily budget on Pro and Max) only while the week has a reading. */
@@ -777,7 +782,7 @@ let lastWindows: string | undefined     // the last windows file written, for a 
 let autoOpenHere: boolean | undefined   // the switch set where /config had no row for it, `$.store`'s AUTO_OPEN
 
 // An SDK host (the Desktop app, `claude -p`) lists no plugin's /config row, so there the
-// Options tab's switch is kept in `$.store` with the option it was set over; it stands
+// Settings tab's switch is kept in `$.store` with the option it was set over; it stands
 // until /config changes that option, which a load sees without hooking `config.set`.
 const AUTO_OPEN = 'autoOpen'
 const optionAutoOpen = () => opts.autoOpen !== false
@@ -1179,7 +1184,7 @@ export const register: Register = (on, pluginOptions) => {
     )
   })
 
-  // Two tabs over one report (Spend) and budget.json (Options), the same tree on
+  // Two tabs over one report (Spend) and budget.json (Settings), the same tree on
   // every surface: the terminal ignores `size`, `weight` and `mono` and is monospaced
   // anyway; the bars are an Svg where the surface draws one and block characters in the
   // terminal. Only a Button takes a press, so the tabs and "Open full report" are Buttons.
@@ -1234,7 +1239,7 @@ export const register: Register = (on, pluginOptions) => {
     return { text: `${status}\n${where}`, context: figures === '' ? undefined : [`TokenTab, this session's figures as of now:\n${figures}`] }
   }).catch(() => ({ text: 'TokenTab: the status command failed' }))
 
-  // The Options tab's auto-open switch is the manifest's `userConfig` field: written as the
+  // The Settings tab's auto-open switch is the manifest's `userConfig` field: written as the
   // config menu would, so the menu, the install screen and the pane show one value. The
   // write reloads the module; `session.start` then runs again and is idempotent. Where
   // /config has no row for it (an SDK host), it is kept in `$.store` instead. A stored
@@ -1772,7 +1777,7 @@ function toolRow($: EngineInterface, e: RenderEvent, t: ToolRow, path: string, t
   )
 }
 
-/** Options, laid out as the issue #106 frame. Mobile has neither Input nor Select, so it shows the values. */
+/** Settings, laid out as the issue #106 frame. Mobile has neither Input nor Select, so it shows the values. */
 function optionsTab($: EngineInterface, e: RenderEvent): RenderChildren {
   const { Box, Text, Button } = $.ui.resolve(e)
   const o = options
@@ -1796,14 +1801,20 @@ function optionsTab($: EngineInterface, e: RenderEvent): RenderChildren {
       // The budget type shows the one in effect while unset; a headline this account cannot show falls back to auto, as tokentab.py does
       const picked = s.key.startsWith('budget_type.') ? budgetTypeOf(o?.budget, unit) : String(v)
       const current = choices.includes(picked) ? picked : choices[0] ?? shown(v)
-      if (mobile) return column(<Text size="footnote" mono weight="semibold">{choiceLabel(current)}</Text>)
+      if (mobile) return column(<Text size="footnote" mono weight="semibold">{choiceLabel(current, s)}</Text>)
       const { Select } = $.ui.resolve(e)
-      return column(<Select key={`b-${s.key}`} value={current} options={choices.map(choice => ({ value: choice, label: choiceLabel(choice) }))}
+      return column(<Select key={`b-${s.key}`} value={current} options={choices.map(choice => ({ value: choice, label: choiceLabel(choice, s) }))}
         onSelect={value => { void setBudget($, s.key, value) }} />, true)
     }
-    if (mobile) return column(<Text size="footnote" mono tabular weight="semibold">{shown(v)}</Text>)
+    if (mobile) return column(<Text size="footnote" mono tabular weight="semibold">{typeof v === 'number' && s.prefix ? `${s.prefix}${shown(v)}` : shown(v)}</Text>)
     const { Input } = $.ui.resolve(e)
-    return column(<Input key={`b-${s.key}`} value={shown(v)} placeholder="off" submitLabel="save" onSubmit={t => { void setBudget($, s.key, t) }} />, true)
+    const input = <Input key={`b-${s.key}`} value={shown(v)} placeholder="off" submitLabel="save" onSubmit={text => { void setBudget($, s.key, text) }} />
+    return column(s.prefix === undefined ? input : (
+      <Box gap={1} alignItems="center">
+        <Text size="footnote" dimColor>{s.prefix}</Text>
+        <Box flexGrow={1} flexDirection="column">{input}</Box>
+      </Box>
+    ), true)
   }
   const row = (key: string, name: string, ctl: RenderChildren, opts: { error?: string; note?: string; beta?: boolean } = {}) => (
     <Box key={`row-${key}`} flexDirection="column">
