@@ -1,7 +1,7 @@
 import { test, expect, mock } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On, RenderElement, RenderNode } from 'claude-code'
-import { at, barCells, barSvg, chevronSvg, COPY_HANDOFF, dataDir, DONT_SEND, freshNote, HANDOFF_DEFAULTS, HANDOFF_PROMPT, handoffPrompt, handoffStep, HELD_HANDOFF, NEW_CHAT, SEND_HERE, budgetTypeOf, int, liveLines, noteOf, pct, reopenLabel, SERIES, shareCard, shareCardSvg, shareLinks, sharePageHtml, sections, shareText, shown, SPEND_LESS_1_8_COMMENT, stripAnsi, switchOn, timedOut, toneOf, ttlOf, unitOf, usd, weekBaseline, withNewKeys, wrapWords } from './register'
+import { at, barCells, barSvg, chevronSvg, COPY_HANDOFF, dataDir, DONT_SEND, freshNote, HANDOFF_DEFAULTS, HANDOFF_PROMPT, handoffPrompt, handoffStep, HELD_HANDOFF, NEW_CHAT, SEND_HERE, budgetTypeOf, int, liveLines, pct, reopenLabel, SERIES, shareCard, shareCardSvg, shareLinks, sharePageHtml, sections, shareText, shown, SPEND_LESS_1_8_COMMENT, stripAnsi, switchOn, timedOut, toneOf, ttlOf, unitOf, usd, weekBaseline, withNewKeys, wrapWords } from './register'
 import type { Idle, Report } from './register'
 
 // The world beneath the plugin: `$.fs` reaches nothing under `claude plugin test`, and
@@ -185,6 +185,8 @@ const posixPath = (path: string) => path.replace(/\\/g, '/').replace(/^[A-Za-z]:
 const T0 = Date.UTC(2026, 9, 15, 14, 3, 11, 412)
 const FILES = { '/tokentab/prices.json': JSON.stringify(PRICES), '/tokentab/budget.json': BUDGET }
 const press = (key: string, surface?: 'terminal' | 'desktop') => ({ plugin: 'tokentab', key, requestId: 'tokentab', ...(surface ? { surface } : {}) })
+/** A switch's Off | On pair: the label of the filled one, or undefined where the pair is not drawn. */
+const switchState = (tree: RenderNode, key: string) => elements(tree, 'Button').find(button => String(button.key).startsWith(`${key}:`) && button.variant === 'primary')?.label
 
 function request(attributes: Record<string, string | number | null>) {
   return {
@@ -830,18 +832,16 @@ test('the Settings tab: auto-open through the config menu, the budget through th
   const tree = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   const t = texts(tree)
   expect(t.some(text => text.text === 'Open automatically')).toBe(true)
-  expect(t.filter(text => /^[A-Z][A-Z ]+$/.test(text.text) && text.props.dimColor).map(text => text.text)).toEqual(['DISPLAY', 'BUDGET', 'SESSION'])
+  expect(t.filter(text => /^[A-Z][A-Z ]+$/.test(text.text) && text.props.dimColor).map(text => text.text)).toEqual(['BUDGET', 'SESSION', 'DISPLAY'])
   // Economy mode and the handoff note are each tagged beta, in colour
   expect(t.filter(text => text.text === 'BETA').map(text => text.props.color)).toEqual(['warning', 'warning'])
   // the budget's rows in the frame's order, each with its line on what it does
   expect(t.filter(text => ['Limit applies to', 'Limit', 'Economy mode', 'Stop at limit'].includes(text.text)).map(text => text.text))
     .toEqual(['Limit applies to', 'Limit', 'Economy mode', 'Stop at limit'])
-  // the USD limit's field has the frame's $ before it, not a unit after its label
-  expect(t.some(text => text.text === '$' && text.props.dimColor)).toBe(true)
   expect(t.some(text => text.text === 'Resets at midnight, all sessions.' && text.props.dimColor)).toBe(true)
-  expect(t.some(text => text.text === 'Stops prompts and tool calls at the limit.' && text.props.dimColor)).toBe(true)
+  expect(t.some(text => text.text === 'Holds new prompts at the limit.' && text.props.dimColor)).toBe(true)
   expect(t.some(text => text.text === 'Save a note before cache expires.' && text.props.dimColor)).toBe(true)
-  expect(elements(tree, 'Button').find(button => button.key === 'auto-open')?.label).toBe('On')
+  expect(switchState(tree, 'auto-open')).toBe('On')
   // one budget type; the file had only today's limit, so today is the type, and its limit the one field
   const type = elements(tree, 'Select').find(select => select.key === 'b-budget_type.usd')
   expect(type?.value).toBe('today')
@@ -849,15 +849,22 @@ test('the Settings tab: auto-open through the config menu, the budget through th
   const inputs = elements(tree, 'Input')
   expect(inputs.map(input => input.key)).toEqual(['b-daily_limit_usd'])
   expect(inputs[0]?.value).toBe('40')
-  expect(elements(tree, 'Button').find(button => button.key === 'b-budgets_on')?.label).toBe('On')
-  expect(elements(tree, 'Button').find(button => button.key === 'b-hard_stop')?.label).toBe('Off')
-  expect(elements(tree, 'Button').find(button => button.key === 'b-handoff.enabled')?.label).toBe('On')
+  // the frame's $ is the field's own label, so it stays inside the controls column
+  expect(inputs[0]?.label).toBe('$')
+  expect(switchState(tree, 'b-budgets_on')).toBe('On')
+  expect(switchState(tree, 'b-hard_stop')).toBe('Off')
+  expect(switchState(tree, 'b-handoff.enabled')).toBe('On')
+  // each switch is Off then On side by side, as in the frame
+  expect(elements(tree, 'Button').filter(button => String(button.key).startsWith('b-hard_stop:')).map(button => [button.label, button.variant]))
+    .toEqual([['Off', 'primary'], ['On', 'secondary']])
   await $.ui.select({ plugin: 'tokentab', key: 'b-budget_type.usd', value: 'session' })
   expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'budget_type.usd', 'session'])
 
   // the switch is the manifest's userConfig field, written as the menu would
   ui.store.set('autoOpen', true)
-  await $.ui.press(press('auto-open'))
+  await $.ui.press(press('auto-open:on'))
+  expect(ui.config).toEqual([])
+  await $.ui.press(press('auto-open:off'))
   expect(ui.config).toEqual([['tokentab.autoOpen', false]])
   expect(ui.store.has('autoOpen')).toBe(false)
 
@@ -867,11 +874,14 @@ test('the Settings tab: auto-open through the config menu, the budget through th
   await $.ui.input({ plugin: 'tokentab', key: 'b-daily_limit_usd', text: 'bad' })
   const after = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   expect(texts(after).find(x => x.props.color === 'error')?.text.trim()).toBe("daily_limit_usd: a number is needed, not 'bad'")
-  await $.ui.press(press('b-hard_stop'))
+  const runs = ui.runs.length
+  await $.ui.press(press('b-hard_stop:off'))
+  expect(ui.runs.length).toBe(runs)
+  await $.ui.press(press('b-hard_stop:on'))
   expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'hard_stop', 'on'])
   // spend_less is Economy mode and, with no such key yet, shows hard_stop's off
-  expect(elements(tree, 'Button').find(button => button.key === 'b-spend_less')?.label).toBe('Off')
-  await $.ui.press(press('b-spend_less'))
+  expect(switchState(tree, 'b-spend_less')).toBe('Off')
+  await $.ui.press(press('b-spend_less:on'))
   expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'spend_less', 'on'])
   // carry over is left to /tokentab:budget
   expect(elements(tree, 'Button').some(button => button.key === 'b-daily_budget.carry_over')).toBe(false)
@@ -898,7 +908,7 @@ test('the Settings tab hides the budget\'s rows while the budget is off', async 
   await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   await $.ui.press(press('tab-options'))
   const tree = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
-  expect(elements(tree, 'Button').find(button => button.key === 'b-budgets_on')?.label).toBe('Off')
+  expect(switchState(tree, 'b-budgets_on')).toBe('Off')
   expect(texts(tree).some(text => text.text === 'Enable budget')).toBe(false)
   // the handoff note's is the one beta tag left
   expect(texts(tree).filter(text => text.text === 'BETA').length).toBe(1)
@@ -916,9 +926,9 @@ test('the Settings tab: spend_less, while unset, shows Stop at limit\'s on and s
   await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   await $.ui.press(press('tab-options'))
   const tree = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
-  expect(elements(tree, 'Button').find(button => button.key === 'b-spend_less')?.label).toBe('On')
-  expect(texts(tree).some(text => text.text === 'Spends less as you near the limit. Follows Stop at limit until you set it.')).toBe(true)
-  await $.ui.press(press('b-spend_less'))
+  expect(switchState(tree, 'b-spend_less')).toBe('On')
+  expect(texts(tree).some(text => text.text === 'Spends less as you near the limit.')).toBe(true)
+  await $.ui.press(press('b-spend_less:off'))
   expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'spend_less', 'off'])
 })
 
@@ -934,7 +944,7 @@ test('the Settings tab offers the daily budget once the plan reports a usage win
   await $.ui.press(press('tab-options'))
   const tree = await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   const t = texts(tree)
-  expect(t.filter(x => /^[A-Z][A-Z ]+$/.test(x.text) && x.props.dimColor).map(x => x.text)).toEqual(['DISPLAY', 'BUDGET', 'SESSION'])
+  expect(t.filter(x => /^[A-Z][A-Z ]+$/.test(x.text) && x.props.dimColor).map(x => x.text)).toEqual(['BUDGET', 'SESSION', 'DISPLAY'])
   // the file's old daily budget switch makes today the type; its field is the week's cap, said so under it
   expect(elements(tree, 'Select').find(select => select.key === 'b-budget_type.percent')?.value).toBe('today')
   // spread from the week's cap, it does not simply reset at midnight
@@ -947,8 +957,8 @@ test('the Settings tab offers the daily budget once the plan reports a usage win
   // the headline offers the plan's choices; the file's five_hour has no reading here (only the week reported), so it shows as auto
   const lead = elements(tree, 'Select').find(select => select.key === 'b-headline')
   expect(lead?.value).toBe('auto')
-  expect((lead?.options as { label: string }[]).map(option => option.label)).toEqual(['Auto', 'Today', 'Week', 'Session'])
-  expect(t.some(text => text.text === 'The figure the pane and the status line show first. Auto follows the budget that is on.' && text.props.dimColor)).toBe(true)
+  expect((lead?.options as { label: string }[]).map(option => option.label)).toEqual(['Auto', 'Left today', 'Left this week', 'Left this session'])
+  expect(t.some(text => text.text === 'e.g. "$31.40 left today"' && text.props.dimColor)).toBe(true)
   await $.ui.select({ plugin: 'tokentab', key: 'b-headline', value: 'today' })
   expect(ui.runs[ui.runs.length - 1]!.slice(2)).toEqual(['set', 'headline', 'today'])
   // carry over, which sizes the daily budget, is not on the tab
@@ -991,8 +1001,6 @@ test('the limit unit follows the account: percent where the plan reports a usage
   const spendLess = sections({ budgets_on: true }, 'usd').flatMap(section => section.rows).find(row => row.key === 'spend_less')!
   expect([{ hard_stop: true }, { hard_stop: true, spend_less: null }, { hard_stop: false }, { hard_stop: true, spend_less: false }, { hard_stop: false, spend_less: true }]
     .map(budget => switchOn(budget, spendLess))).toEqual([true, true, false, false, true])
-  expect(noteOf({ hard_stop: true }, spendLess)).toBe('Spends less as you near the limit. Follows Stop at limit until you set it.')
-  expect(noteOf({ spend_less: false }, spendLess)).toBe('Spends less as you near the limit. Set by you; /tokentab:budget spend_less auto follows Stop at limit again.')
   // a 1.8–1.9 false was that version's default: it follows hard_stop again, once; a newer file's false stays
   expect(withNewKeys({ _spend_less_comment: SPEND_LESS_1_8_COMMENT, spend_less: false }, { _spend_less_comment: 'new', spend_less: null }))
     .toEqual({ _spend_less_comment: 'new', spend_less: null })
@@ -1104,12 +1112,12 @@ test('where /config has no row for it (Desktop), the auto-open switch is kept in
   await $.ui.render({ surface: 'desktop', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   await $.ui.press(press('tab-options'))
   await $.ui.render({ surface: 'desktop', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
-  await $.ui.press(press('auto-open'))
+  await $.ui.press(press('auto-open:off'))
   expect(ui.config).toEqual([])
   expect(ui.toasts).toEqual([])
   expect(ui.store.get('autoOpen')).toEqual({ value: false, over: true })
   const tree = await $.ui.render({ surface: 'desktop', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
-  expect(elements(tree, 'Button').find(b => b.key === 'auto-open')?.label).toBe('Off')
+  expect(switchState(tree, 'auto-open')).toBe('Off')
 
   // the next session reads it back and opens nothing
   await $.session.start({ cwd: '/w', surface: 'desktop', isInteractive: true })
@@ -1142,7 +1150,7 @@ test('with only `py` installed and a Store stub as python3, the helpers run unde
   await $.ui.press(press('tab-options'))
   await $.ui.render({ surface: 'terminal', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS })
   // the budget's switch is drawn before budget.json is read, its rows only after
-  await $.ui.press(press('b-budgets_on'))
+  await $.ui.press(press('b-budgets_on:on'))
   await clock.settle()
   expect(ui.probes.length).toBe(3)
   expect(new Set(ui.launchers)).toEqual(new Set(['py -3']))
