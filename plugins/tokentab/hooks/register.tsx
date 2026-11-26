@@ -1779,16 +1779,17 @@ function optionsTab($: EngineInterface, e: RenderEvent): RenderChildren {
   const { Box, Text, Button } = $.ui.resolve(e)
   const o = options
   const mobile = e.surface === 'mobile'
-  // One column for every control, so the fields share a width and the switches line up with them
-  const column = (ctl: RenderChildren, stretch = false) => (
-    <Box width={16} flexShrink={0} flexDirection="column" alignItems={stretch ? 'stretch' : 'flex-start'}>{ctl}</Box>
+  // One column for every control: the fields fill it, switches and dropdowns sit at its right edge,
+  // so each ends where the limit field's save does
+  const column = (ctl: RenderChildren, align: 'flex-start' | 'stretch' | 'flex-end' = 'flex-start') => (
+    <Box width={16} flexShrink={0} flexDirection="column" alignItems={align}>{ctl}</Box>
   )
-  // Off and On right-aligned in the controls column, a space apart, so On ends where the limit field's save does.
+  // Off and On a space apart.
   // A switch still following another can be pressed on its filled side, to set it as shown.
   const toggle = (key: string, isOn: boolean, set: (on: boolean) => void, following = false): RenderChildren => mobile
     ? <Text size="footnote" mono weight="semibold">{isOn ? 'On' : 'Off'}</Text>
     : (
-      <Box gap={1} justifyContent="flex-end">
+      <Box gap={1}>
         {([false, true] as const).map(side => (
           <Button key={`${key}:${side ? 'on' : 'off'}`} label={side ? 'On' : 'Off'} variant={side === isOn ? 'primary' : 'secondary'}
             onPress={() => { if (side !== isOn || following) set(side) }} />
@@ -1800,7 +1801,7 @@ function optionsTab($: EngineInterface, e: RenderEvent): RenderChildren {
     const v = at(o?.budget, s.key)
     if (s.kind === 'switch') {
       return column(toggle(`b-${s.key}`, switchOn(o?.budget, s), on => { void setBudget($, s.key, on ? 'on' : 'off') },
-        s.follows !== undefined && typeof v !== 'boolean'), true)
+        s.follows !== undefined && typeof v !== 'boolean'), 'flex-end')
     }
     if (s.kind === 'choice') {
       const choices = s.key === HEADLINE.key ? headlineChoices(unit, (o?.windows ?? []).map(window => window.kind)) : s.choices ?? []
@@ -1810,13 +1811,13 @@ function optionsTab($: EngineInterface, e: RenderEvent): RenderChildren {
       if (mobile) return column(<Text size="footnote" mono weight="semibold">{choiceLabel(current)}</Text>)
       const { Select } = $.ui.resolve(e)
       return column(<Select key={`b-${s.key}`} value={current} options={choices.map(choice => ({ value: choice, label: choiceLabel(choice) }))}
-        onSelect={value => { void setBudget($, s.key, value) }} />, true)
+        onSelect={value => { void setBudget($, s.key, value) }} />, 'flex-end')
     }
     if (mobile) return column(<Text size="footnote" mono tabular weight="semibold">{typeof v === 'number' && s.prefix ? `${s.prefix}${shown(v)}` : shown(v)}</Text>)
     const { Input } = $.ui.resolve(e)
     // The field's own label draws the $, inside the column, so the field cannot push past it
     return column(<Input key={`b-${s.key}`} label={s.prefix} value={shown(v)} placeholder="off" submitLabel="save"
-      onSubmit={text => { void setBudget($, s.key, text) }} />, true)
+      onSubmit={text => { void setBudget($, s.key, text) }} />, 'stretch')
   }
   const row = (key: string, name: string, ctl: RenderChildren, opts: { error?: string; note?: string; beta?: boolean } = {}) => (
     <Box key={`row-${key}`} flexDirection="column">
@@ -1855,7 +1856,7 @@ function optionsTab($: EngineInterface, e: RenderEvent): RenderChildren {
         ]
       })}
       {section('display', undefined, [
-        row('auto-open', 'Open automatically', column(toggle('auto-open', autoOpen(), () => {}), true)),
+        row('auto-open', 'Open automatically', column(toggle('auto-open', autoOpen(), () => {}), 'flex-end')),
         row(HEADLINE.key, HEADLINE.label, control(HEADLINE), { error: o?.errors[HEADLINE.key], note: HEADLINE.note }),
       ])}
     </Box>
