@@ -9,9 +9,8 @@ and the budget skill alike.
                             its _comment keys kept. VALUE: a number; "off", "none" or "" for
                             a limit that is switched off (null); on/off/true/false/yes/no
                             for a switch;
-                            auto, session, today, five_hour or week for headline;
                             budget_type.usd: today or session; budget_type.percent: today,
-                            week, five_hour or session (auto for either: from the limits set).
+                            week or five_hour.
                             Prints the new value as JSON; a value that does not fit is
                             refused on stderr with exit code 1, nothing written.
 
@@ -25,11 +24,7 @@ import tokentab as kt  # noqa: E402
 
 PATH = os.path.join(kt.CFG, "budget.json")
 SHIPPED = os.path.join(os.path.dirname(os.path.abspath(__file__)), "budget.json")
-HEADLINES = ("auto", "session", "today", "five_hour", "week")
 TRUE, FALSE = ("on", "true", "yes", "1"), ("off", "false", "no", "0")
-AUTO = ("auto", "default", "null", "none")
-# Switches a 1.10-1.12 file may still hold as null, which now means off
-WAS_NULL = ("spend_less",)
 
 
 def load():
@@ -39,8 +34,7 @@ def load():
 
 def upgraded(cfg):
     """cfg with the keys the shipped file has and cfg lacks, in the shipped order, one level into objects,
-    the shipped _comment texts, and a 1.10-1.12 spend_less null written as false (off). register.tsx's
-    withNewKeys does the same."""
+    and the shipped _comment texts. register.tsx's withNewKeys does the same."""
     with open(SHIPPED, encoding="utf-8") as f:
         shipped = json.load(f)
     def merged(key, shipped_value):
@@ -50,12 +44,8 @@ def upgraded(cfg):
         if isinstance(shipped_value, dict) and isinstance(mine, dict):
             return {**shipped_value, **mine}
         return mine
-    out = {**{key: merged(key, value) for key, value in shipped.items()},
-           **{key: value for key, value in cfg.items() if key not in shipped}}
-    for key in WAS_NULL:
-        if out.get(key) is None:
-            out[key] = False
-    return out
+    return {**{key: merged(key, value) for key, value in shipped.items()},
+            **{key: value for key, value in cfg.items() if key not in shipped}}
 
 
 def lookup(cfg, key):
@@ -74,33 +64,23 @@ def lookup(cfg, key):
 def parse(key, old, raw):
     """The new value for key from the text raw, by the key's name and the value it holds."""
     leaf = key.split(".")[-1]
-    if leaf == "limit_unit":   # an old file may still hold it
-        raise ValueError(f"{key}: no longer a setting; the account decides (percent on Pro and Max, else USD)")
-    if leaf == "warn_at_percent":
-        raise ValueError(f"{key}: no longer a setting; TokenTab {kt.WARN_TEXT} of a limit")
-    if key == "daily_budget.enabled":
-        raise ValueError(f"{key}: no longer a setting; the daily budget is budget_type.percent today")
+    if key == "version":
+        raise ValueError(f"{key}: the file's format, not a setting")
     text = str(raw).strip().lower().replace(",", "").replace("$", "").rstrip("%").strip()
     if key.startswith("budget_type."):
-        if text in AUTO:
-            return None
         if text not in kt.BUDGET_TYPES.get(leaf, ()):
-            raise ValueError(f"{key}: one of {', '.join(kt.BUDGET_TYPES.get(leaf, ()))} or auto, not {raw!r}")
-        return text
-    if leaf == "headline":
-        if text not in HEADLINES:
-            raise ValueError(f"{key}: one of {', '.join(HEADLINES)}, not {raw!r}")
+            raise ValueError(f"{key}: one of {', '.join(kt.BUDGET_TYPES.get(leaf, ()))}, not {raw!r}")
         return text
     if isinstance(old, str):
         raise ValueError(f"{key}: edit this one in the file")
-    if isinstance(old, bool) or (old is None and leaf in WAS_NULL):
+    if isinstance(old, bool):
         if text in TRUE: return True
         if text in FALSE: return False
         raise ValueError(f"{key}: on or off, not {raw!r}")
     if isinstance(old, (list, dict)):
         raise ValueError(f"{key}: edit this one in the file")
     if text in ("", "off", "none", "null"):
-        if leaf.endswith(("_usd", "_limit_percent")):
+        if leaf.endswith("_usd"):
             return None
         raise ValueError(f"{key}: a number is needed")
     try:
@@ -109,9 +89,6 @@ def parse(key, old, raw):
         raise ValueError(f"{key}: a number is needed, not {raw!r}")
     if v < 0:
         raise ValueError(f"{key}: not below zero")
-    if leaf.endswith("_percent"):
-        if v > 100: raise ValueError(f"{key}: 0 to 100")
-        return int(v)
     if leaf.endswith(("_tokens", "_minutes", "_seconds")):
         return int(v)
     return v
@@ -127,8 +104,8 @@ def main():
         print(json.dumps(node[leaf])); return
     if len(a) == 3 and a[0] == "set":
         cfg = load()
-        if a[1] == "budgets_on" and a[1] not in cfg:
-            cfg = {"budgets_on": False, **cfg}     # a file from before the switch
+        if cfg.get("version") != 2:
+            raise ValueError("budget.json is from before TokenTab 1.14; a new session replaces it (the old one kept as budget.json.old)")
         try:
             node, leaf = lookup(cfg, a[1])
         except ValueError:

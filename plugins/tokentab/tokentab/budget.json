@@ -1,26 +1,25 @@
 {
-  "_budgets_comment": "Master switch for the budget: the type and limit below. false (the default) checks nothing and keeps the values for when you turn it on (/tokentab:budget or the pane, the switch beside BUDGET on the Settings tab).",
+  "_version_comment": "The file's format. A file without version 2 is from before 1.14: TokenTab renames it to budget.json.old and writes these defaults.",
+  "version": 2,
+  "_budgets_comment": "Master switch for the budget: the type and limit below. false (the default) checks nothing and keeps the values for when you turn it on (/tokentab:budget, or Enabled under BUDGET on the Settings tab). The pane's headline follows the budget type while it is on.",
   "budgets_on": false,
-  "_unit_comment": "Your account decides what a budget counts: percent of the plan's usage windows on Pro and Max, else USD (priced from prices.json). Only the budget type picked for that unit is checked.",
-  "_type_comment": "The one budget checked, per unit, so switching accounts keeps each one's pick. usd: today (daily_limit_usd) or session (session_limit_usd). percent: today (the daily budget below, its cap weekly_limit_percent), week (weekly_limit_percent), five_hour (five_hour_limit_percent) or session (session_limit_usd, dollars at API rates). null (the default) takes the limit you had set: today in USD unless only the session limit is set; on Pro and Max today if the old daily budget switch was on, else week unless only the 5-hour limit is set.",
+  "_unit_comment": "Your account decides what a budget counts: percent of the plan's usage windows where Claude Code reports them (Pro, Max, Team), else USD (Enterprise, API keys; priced from prices.json). Only the budget type picked for that unit is checked.",
+  "_type_comment": "The one budget checked, per unit, so switching accounts keeps each one's pick. usd: today (daily_limit_usd, every session, resets at midnight) or session (session_limit_usd). percent: today (what is left of the week spread over the days left), week or five_hour, each against Anthropic's own 100%, with no limit of its own.",
   "budget_type": {
-    "usd": null,
-    "percent": null
+    "usd": "today",
+    "percent": "today"
   },
-  "_comment": "Each budget type's limit; null disables it. Only the limit of the type in effect is checked.",
+  "_comment": "The USD limits; null disables one. Only the limit of the type in effect is checked.",
   "session_limit_usd": 25,
   "daily_limit_usd": 40,
-  "five_hour_limit_percent": 80,
-  "weekly_limit_percent": 90,
+  "_hard_stop_comment": "USD only: true stops prompts and tool calls at the limit. On Pro, Max and Team Anthropic stops at 100% itself.",
   "hard_stop": false,
-  "_spend_less_comment": "Beta. true also asks Claude to spend less (cheaper actions, shorter replies, and with hard_stop on, to wrap up) at each warning. false (the default) only warns you.",
-  "spend_less": false,
-  "_daily_comment": "On Pro and Max, budget type today: what is left of the week, spread evenly over the time left, fixed at the start of each local day. The week's own limit (weekly_limit_percent, else 100) is its cap.",
+  "_spend_less_comment": "Beta. true (the default) also asks Claude to spend less (cheaper actions, shorter replies, and with hard_stop on, to wrap up) at each warning. false only warns you.",
+  "spend_less": true,
+  "_daily_comment": "Percent budget type today. carry_over (beta): an even seventh of the week a day, plus what earlier days left unused, minus what they overspent.",
   "daily_budget": {
     "carry_over": false
   },
-  "_headline_comment": "Which figure leads in the pane, the status line and the reopen button, counted as what is left: auto, session, today, five_hour or week. auto (the default) follows the budget type while the budget is on, else the week on Pro and Max (the daily budget if an older file's daily_budget.enabled is on) and today in USD. today is the daily budget on Pro and Max and today's spend in USD; five_hour and week are Pro and Max only, and a pick this account has no reading for falls back to auto. The status line shows at most two figures: the headline, then the budget, else the next figure.",
-  "headline": "auto",
   "_context_comment": "Context size of the last call. Every call re-reads it all, so this is what each call costs. Warns once per threshold; resets after a compact.",
   "context_warn_tokens": [
     200000,

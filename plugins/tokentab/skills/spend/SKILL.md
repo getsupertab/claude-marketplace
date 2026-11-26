@@ -13,9 +13,10 @@ words.
 
 Run this as one Bash call, exactly as written. TokenTab never blocks it, even during a
 budget stop, but only when it is run on its own: do not chain it with `&&`, pipes or
-redirects, and do not quote the path.
+redirects. Keep the path in double quotes: it may hold a space
+(Claude Desktop's folder under `Application Support`).
 
-    python3 ${CLAUDE_PLUGIN_ROOT}/tokentab/tokentab.py --once
+    python3 "${CLAUDE_PLUGIN_ROOT}/tokentab/tokentab.py" --once
 
 Where `python3` is missing or is not Python 3 (Windows), run the same with `python`, else `py -3`, in its place.
 
@@ -25,7 +26,7 @@ Report the session cost and the budget lines in a few lines.
 
 If the user wants the status page and has no pane, run on its own, the same way:
 
-    python3 ${CLAUDE_PLUGIN_ROOT}/tokentab/sankey.py
+    python3 "${CLAUDE_PLUGIN_ROOT}/tokentab/sankey.py"
 
 It writes the page for the most recently active session as a snapshot file and prints
 its path (`state/status.html` in TokenTab's data folder). It is a

@@ -15,7 +15,7 @@ per-tool attribution. No dependencies.
   tokentab.py --status-json   that line and the reopen button's text, as JSON
   tokentab.py --all           live view across every project
 """
-import argparse, bisect, glob, json, os, re, shlex, sys, time
+import argparse, bisect, glob, json, math, os, re, shlex, sys, time
 from datetime import datetime, time as dtime, timedelta, timezone
 HERE = os.path.dirname(os.path.abspath(__file__))
 _T0 = time.perf_counter()     # the run's start, for the timing log
@@ -1106,37 +1106,23 @@ def bar(frac, width=28):
 
 # The limits of each unit, one field per scope: (scope, budget.json key, label)
 LIMITS = {"usd": (("session", "session_limit_usd", "session"), ("today", "daily_limit_usd", "today")),
-          "percent": (("five_hour", "five_hour_limit_percent", "5 hours"),
-                      ("seven_day", "weekly_limit_percent", "week"))}
+          "percent": (("five_hour", None, "5 hours"), ("seven_day", None, "week"))}
 
 # The budget types each unit offers, budget.json's budget_type words; register.tsx's BUDGET_TYPES is the same
-BUDGET_TYPES = {"usd": ("today", "session"), "percent": ("today", "week", "five_hour", "session")}
-# Each type's scope and the budget.json key holding its limit. On Pro and Max, session is dollars at API
-# rates, and today's limit is the week's cap it is spread from
+BUDGET_TYPES = {"usd": ("today", "session"), "percent": ("today", "week", "five_hour")}
+# Each type's scope and the budget.json key holding its limit. Percent types have none: they watch
+# Anthropic's own 100%
 TYPE_LIMITS = {("usd", "today"): ("today", "daily_limit_usd"), ("usd", "session"): ("session", "session_limit_usd"),
-               ("percent", "today"): ("today", "weekly_limit_percent"),
-               ("percent", "week"): ("seven_day", "weekly_limit_percent"),
-               ("percent", "five_hour"): ("five_hour", "five_hour_limit_percent"),
-               ("percent", "session"): ("session", "session_limit_usd")}
+               ("percent", "today"): ("today", None),
+               ("percent", "week"): ("seven_day", None),
+               ("percent", "five_hour"): ("five_hour", None)}
 
 def budget_type(budget, unit):
-    """The one budget type checked in this unit: budget_type's pick for the unit, else, for a file from
-    before it, the limit the user had set (the daily budget's old switch on Pro and Max). register.tsx's
-    budgetTypeOf is the same."""
+    """The one budget type checked in this unit: budget_type's pick for the unit, else today.
+    register.tsx's budgetTypeOf is the same."""
     picked = budget.get("budget_type")
     pick = picked.get(unit) if isinstance(picked, dict) else None
-    if pick in BUDGET_TYPES[unit]:
-        return pick
-    if unit == "usd":
-        return "session" if budget.get("session_limit_usd") and not budget.get("daily_limit_usd") else "today"
-    if legacy_daily(budget):
-        return "today"
-    return "five_hour" if budget.get("five_hour_limit_percent") and not budget.get("weekly_limit_percent") else "week"
-
-def legacy_daily(budget):
-    """An older file's daily budget switch, which led the pane whether or not the budget was on."""
-    daily = budget.get("daily_budget")
-    return isinstance(daily, dict) and daily.get("enabled") is True
+    return pick if pick in BUDGET_TYPES[unit] else "today"
 
 WINDOW_NAMES = {"five_hour": "5-hour window", "seven_day": "weekly window"}
 
@@ -1191,8 +1177,9 @@ def _iso_ts(iso):
 
 def day_budget(budget, windows, now=None):
     """Today's allowance out of the weekly window, fixed at the start of the local day: what is left of the
-    week spread evenly over the time left, or with carry_over (beta) a seventh of the cap plus what earlier
-    days left unused, minus what they overspent. None without a reading, or once reset."""
+    week (of 100%) spread evenly over the time left, or with carry_over (beta) a seventh of the week plus what
+    earlier days left unused, minus what they overspent. days: the local days left, today included. None
+    without a reading, or once reset."""
     cfg = budget.get("daily_budget") if isinstance(budget.get("daily_budget"), dict) else {}
     w = windows.get("seven_day")
     reset = _iso_ts(w.get("resetsAt")) if w else None
@@ -1220,8 +1207,7 @@ def day_budget(budget, windows, now=None):
                      else last if isinstance(last, (int, float)) else cur)
     else:
         base = 0.0 if week_start >= mid else cur
-    cap = budget.get("weekly_limit_percent")
-    cap = float(cap) if isinstance(cap, (int, float)) and not isinstance(cap, bool) else 100.0
+    cap = 100.0
     day_start, day_end = max(mid, week_start), min(nxt, reset)
     carry = cfg.get("carry_over") is True
     if carry:
@@ -1234,7 +1220,8 @@ def day_budget(budget, windows, now=None):
     used = max(0.0, cur - base)
     # A carry-over day that starts overspent has nothing left: full, not 0% used, before its first request
     frac = used / allowed if allowed > 0 else (1.0 if used > 0 or carry else 0.0)
-    out = {"used": used, "allowed": allowed, "frac": frac, "base": base, "cap": cap}
+    out = {"used": used, "allowed": allowed, "frac": frac, "base": base, "cap": cap,
+           "days": max(1, math.ceil((reset - day_start) / 86400))}
     if carry:
         out.update(daily=daily, carried=carried)
     return out
@@ -1245,33 +1232,25 @@ WARN_LEFT = (10, 5, 2)
 WARN_AT = 100 - WARN_LEFT[0]
 WARN_TEXT = "warns at " + ", ".join(f"{left}%" for left in WARN_LEFT) + " left"
 
-# budget.json's headline words and the scope each leads with
-HEADLINE_SCOPES = {"session": "session", "today": "today", "five_hour": "five_hour", "week": "seven_day"}
-
 def headline(budget, windows, day):
     """The figure that leads the pane, the status line and the reopen button: "session", "today",
-    "five_hour" or "seven_day". budget.json's pick when this account has a reading for it, else auto:
-    the budget type while the budget is on, else the week on Pro and Max and today in USD. An older
-    file's daily budget switch keeps the daily budget leading with the budget off, as it did before."""
+    "five_hour" or "seven_day". The budget type while the budget is on and this account has a reading
+    for it, else today in USD and the week on Pro and Max."""
     on = budget.get("budgets_on") is True
     unit = limit_unit(budget, windows)
-    typed = TYPE_LIMITS[unit, budget_type(budget, unit)][0] if on else "today" if legacy_daily(budget) else None
+    typed = TYPE_LIMITS[unit, budget_type(budget, unit)][0] if on else None
     if unit == "usd":
-        readable = ("session", "today")
-        auto = typed or "today"
-    else:
-        readable = ("session", *(("today",) if day else ()), *windows)
-        auto = typed if typed in readable else "seven_day" if "seven_day" in windows else "five_hour"
-    pick = HEADLINE_SCOPES.get(str(budget.get("headline", "auto")))
-    return pick if pick in readable else auto
+        return typed or "today"
+    readable = (*(("today",) if day else ()), *windows)
+    return typed if typed in readable else "seven_day" if "seven_day" in windows else "five_hour"
 
 TYPE_NAMES = {"session": "session", "today": "today", "five_hour": "5 hours", "seven_day": "week"}
 
 def limit_rows(budget, spent, windows, now=None):
     """(unit, rows): the budget type's limit in the unit in effect, as at most one row
     {scope, name, frac, used, limit, parts, reset}. spent is {"session": usd, "today": usd}. A limit
-    switched off (null), or a percent one with no reading yet, gives none; the daily budget on Pro and
-    Max needs no limit of its own, its cap being the week's or 100."""
+    switched off (null), or a percent one with no reading yet, gives none; a percent type's limit is
+    Anthropic's own 100%."""
     unit = limit_unit(budget, windows)
     scope, key = TYPE_LIMITS[unit, budget_type(budget, unit)]
     name, plan = TYPE_NAMES[scope], unit == "percent"
@@ -1284,17 +1263,16 @@ def limit_rows(budget, spent, windows, now=None):
         return unit, [{"scope": scope, "name": name, "frac": day["frac"], "used": day["used"], "limit": day["allowed"],
                        "parts": [f"{day['used']:.1f}% of the week used today, today's budget {day['allowed']:.1f}%"],
                        "reset": when, "resets": None}]
-    lim = budget.get(key)
+    lim = budget.get(key) if key else 100.0
     if not lim:
         return unit, []
     lim = float(lim)
-    if scope in ("session", "today"):
-        rates = " at API rates" if plan else ""
-        used, detail, reset = spent[scope], f"{money(spent[scope])} of ${lim:,.2f}{rates}", None
+    if not plan:
+        used, detail, reset = spent[scope], f"{money(spent[scope])} of ${lim:,.2f}", None
     elif scope in windows:
         w = windows[scope]
         used, reset = window_used(w), w.get("resetsAt")
-        detail = f"{used:g}% used, limit {lim:g}%"
+        detail = f"{used:g}% used"
     else:
         return unit, []
     resets = reset_text(reset) if reset else None
@@ -1394,7 +1372,7 @@ def report(store, sid, prices, budget, show_all, led=None):
                    "per_call": tb.ctx * rate(prices, tb.ctx_model, "cache_read") / 1e6,
                    "cold": idle >= lim, "minutes_left": int((lim - idle) // 60),
                    "rewrite": tb.ctx * rate(prices, tb.ctx_model, "cache_write_" + tb.ttl) / 1e6}
-        R["budget"] = {"on": on, "unit": unit, "hard_stop": bool(budget.get("hard_stop")),
+        R["budget"] = {"on": on, "unit": unit, "hard_stop": unit == "usd" and budget.get("hard_stop") is True,
                        "lines": lines, "context": ctx}
 
     R["tools"] = tool_totals(tb.tools) if tb and tb.tools else []
@@ -1567,7 +1545,7 @@ def pane_report(store, sid, prices, budget, led=None, windows=None):
     if day and (lead == "today" or "today" in limited):
         plan_windows.append({"scope": "today", "used": day["used"], "allowed": day["allowed"],
                              "limit": day["allowed"] if "today" in limited else None,
-                             "frac": day["frac"], "resets": None,
+                             "frac": day["frac"], "resets": None, "days": day["days"],
                              **({"daily": day["daily"], "carried": day["carried"]} if "carried" in day else {})})
     out["session"] = {
         "title": R["session"]["title"], "cost": b.cost, "tokens": b.tokens, "msgs": b.msgs,
@@ -1577,7 +1555,7 @@ def pane_report(store, sid, prices, budget, led=None, windows=None):
                  if row["scope"] in WINDOW_NAMES else row["parts"][0],
         "frac": row["frac"] if row else None,
         "other_limit": {"scope": other["scope"], "limit": other["parts"][0], "frac": other["frac"]} if other else None,
-        "hard_stop": bool(budget.get("hard_stop")),
+        "hard_stop": unit == "usd" and budget.get("hard_stop") is True,
         "headline": lead,
     }
     filled = backfilled(b)
@@ -1622,10 +1600,6 @@ def status_parts(store, sid, prices, budget, led=None):
             name, short = {"five_hour": ("5 hours", "5-hour"), "seven_day": ("week", "week")}[key]
             rest = f"{max(0.0, 100 - window_used(windows[key])):g}% left"
             return f"{name} {rest}", f"{short} {rest}"
-        if key.startswith("limit:"):
-            scope = key[len("limit:"):]
-            text = f"{WINDOW_NAMES[scope].split()[0]} limit {left(checked[scope]['frac']):.0f}% left"
-            return text, text
         if key == "today" and day:
             # With carry-over the budget's size moves day to day, so the line names it and what moved it
             size = ""
@@ -1647,9 +1621,7 @@ def status_parts(store, sid, prices, budget, led=None):
 
     # At most two figures: the headline, then the budget that is on, else the next figure of the account
     typed = next(iter(checked), None)
-    if typed in ("five_hour", "seven_day"):
-        second = "limit:" + typed
-    elif typed and typed != lead:
+    if typed and typed != lead and unit == "usd":
         second = typed
     elif unit == "usd":
         second = "today" if lead == "session" else "session"

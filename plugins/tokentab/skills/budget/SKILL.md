@@ -1,6 +1,6 @@
 ---
 name: budget
-description: Show or change TokenTab's budget (its type, limit, stop at limit). Use when the user asks, in the same prompt, to see or change a TokenTab budget or limit, e.g. "raise my daily limit to 30", "make my budget the session" or "stop at the limit". Never change a limit unasked.
+description: Show or change TokenTab's budget (its type, limit, stop at limit, carry over). Use when the user asks, in the same prompt, to see or change a TokenTab budget or limit, e.g. "raise my daily limit to 30", "make my budget the session" or "stop at the limit". Never change a limit unasked.
 argument-hint: "[what to change]"
 ---
 
@@ -18,39 +18,34 @@ Arguments: $ARGUMENTS
 
 ## No arguments: show the limits
 
-Read the file and show, in a short list: whether `budgets_on` is on (the BUDGET switch; off, or
-missing, means nothing is checked), the unit in effect, the budget type for that unit and its
-limit (`null` means off), and `hard_stop` ("Stop at limit": true blocks at the limit, false only
-warns; warnings come at 10%, 5% and 2% of the budget left, fixed, not a setting) and `spend_less`
-(beta; true also asks Claude to spend less at each warning, and to wrap up when `hard_stop` is
-on; false, the default, only warns the user, whatever `hard_stop` is; a `null` left by 1.10 to
-1.12 is off too, show it as off). "Turn budgets on/off" means `budgets_on`. Also show `headline`
-(`auto`, `session`, `today`, `five_hour` or `week`: which figure leads in the pane, status line and reopen button,
-as what is left; `auto` follows the budget type while the budget is on, else the week on Pro
-and Max (the daily budget if an older file's `daily_budget.enabled` is on) and today in USD; `five_hour` and `week` are Pro and Max only).
+Read the file and show, in a short list: whether `budgets_on` is on (Enabled under BUDGET; off,
+or missing, means nothing is checked), the unit in effect, the budget type for that unit, and
+`spend_less` (Economy mode, beta, on by default: Claude is also asked to spend less at each
+warning; off, only the user is warned). In USD also show the type's limit (`null` means off) and
+`hard_stop` ("Stop at limit": true blocks at the limit, false only warns). Warnings come at 10%,
+5% and 2% of the budget left, fixed, not a setting. "Turn budgets on/off" means `budgets_on`.
+The figure that leads the pane and the status line follows the budget type; it is not a setting.
 
 Only one budget is checked: `budget_type.usd` or `budget_type.percent`, whichever unit is in
-effect. Each type has one limit key:
+effect.
 
-| Unit | Type | Limit key |
+| Unit | Type | Limit |
 |---|---|---|
-| usd | `today` | `daily_limit_usd` |
+| usd | `today` (every session, resets at midnight) | `daily_limit_usd` |
 | usd | `session` | `session_limit_usd` |
-| percent | `today` (the daily budget) | `weekly_limit_percent`, the week's cap it is spread from (null: 100) |
-| percent | `week` | `weekly_limit_percent` |
-| percent | `five_hour` | `five_hour_limit_percent` |
-| percent | `session` | `session_limit_usd`, dollars at API rates |
+| percent | `today` | none: what is left of the week (of 100%) spread over the days left |
+| percent | `week` | none: Anthropic's own 100% of the weekly window |
+| percent | `five_hour` | none: Anthropic's own 100% of the 5-hour window |
 
-A `null` type takes the limit the file had set: `today` in USD unless only the session limit is
-set; in percent `today` if an older file's `daily_budget.enabled` is true, else `week` unless only
-the 5-hour limit is set. The daily budget (type `today` in percent) is what is left of the week
-spread over the days left, fixed at the start of each local day.
+Percent has no limit to set and no stop, because Anthropic stops at 100% itself.
+`daily_budget.carry_over` (beta, percent type `today` only): unused budget carries over to
+tomorrow, and an overspent day takes it out of the next.
 
 The account decides the unit; it is not a setting. Percent where Claude Code reports the plan's
-usage windows (Pro, Max), else USD (Enterprise, API key). `state/rate_limits.json` beside
+usage windows (Pro, Max, Team), else USD (Enterprise, API key). `state/rate_limits.json` beside
 budget.json holds the last reading: windows listed means percent. If the user asks to switch
 units, say the account sets it. A limit the user names without a type ("my limit 30") is the
-budget type's. "The daily budget" in percent means type `today`. Give the file path, and mention
+USD budget type's. "The daily budget" in percent means type `today`. Give the file path, and mention
 that the user can ask for a change with `/tokentab:budget <what to change>`.
 
 ## With arguments: change the limits
@@ -63,7 +58,7 @@ that the user can ask for a change with `/tokentab:budget <what to change>`.
 
    Where `python3` is missing or is not Python 3 (Windows), run the same with `python`, else `py -3`, in its place.
    KEY is dotted for nested settings (`cold_resume.confirm_seconds`); VALUE is a number, `off` for a
-   limit switched off, `on`/`off` for a switch, `auto`, `session`, `today`, `five_hour` or `week` for `headline`; for `budget_type.usd` `today` or `session`, for `budget_type.percent` `today`, `week`, `five_hour` or `session`, and `auto` for either. It refuses a value that does not fit or a
+   limit switched off, `on`/`off` for a switch; for `budget_type.usd` `today` or `session`, for `budget_type.percent` `today`, `week` or `five_hour`. It refuses a value that does not fit or a
    key that does not exist, and keeps the file's order and comments. `budget.py get` prints
    the file.
 3. Show the new values. They apply from the next prompt; no restart is needed. The same
