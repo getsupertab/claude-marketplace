@@ -428,6 +428,9 @@ test('an interactive session opens the pane and draws the Spend tab', async ($, 
     ['details-toggle', undefined], ['sessions-toggle', undefined],
   ])
   expect(elements(folded, 'Button').slice(0, 3).map(b => b.label)).toEqual(['Spend', 'Settings', 'Open full report ↗'])
+  // the tabs grouped at the left, "Open full report" pushed to the row's right edge
+  expect(boxesTo(folded, 'open-browser')?.at(-1)).toMatchObject({ justifyContent: 'space-between' })
+  expect(boxesTo(folded, 'tab-spend')?.at(-1)).toMatchObject({ key: 'tabs' })
   // no keyboard shortcuts: Tab or the arrows and Enter reach every Button (Kate, 2026-11-17)
   expect(elements(folded, 'Button').filter(b => b.hotkey !== undefined)).toEqual([])
   // the breakdown starts folded: the toggle shows, the rate table and the tools do not
