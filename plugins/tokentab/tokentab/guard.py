@@ -278,13 +278,26 @@ def last_call(transcript, sid):
                 found[0] = start
     return tuple(found)
 
+def handoff_note(sid):
+    """The session's handoff note: the name `handoff/.index/<sid>` gives, else the
+    pre-1.15.0 `<sid>.md`."""
+    folder = os.path.join(CFG, "handoff")
+    try:
+        with open(os.path.join(folder, ".index", sid), encoding="utf-8") as fh:
+            name = fh.read().strip()
+        if re.fullmatch(r"[^/\\]+\.md", name):
+            return os.path.join(folder, name)
+    except OSError:
+        pass
+    return os.path.join(folder, sid + ".md")
+
 def handoff_touched(sid, last):
     """`last` with its start moved to the handoff note's write time when that is later:
     the note's fork read the cache and restarted its clock, ledger line or not."""
     if not last:
         return last
     try:
-        with open(os.path.join(CFG, "handoff", sid + ".md"), encoding="utf-8") as fh:
+        with open(handoff_note(sid), encoding="utf-8") as fh:
             header = re.match(r"<!-- TokenTab handoff, (\S+) -->", fh.readline())
         written = datetime.fromisoformat(header.group(1).replace("Z", "+00:00")).timestamp() if header else None
     except (OSError, ValueError):

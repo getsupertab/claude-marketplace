@@ -129,8 +129,13 @@ context once too.
 Between turns of the main conversation, with a surface open (not under `claude -p`), a
 timer fires `write_at_minutes_1h` (50) or `write_at_minutes_5m` (3) minutes after the last
 call. On a context of `min_context_tokens` (100k) or more it forks the conversation once
-(`$.model.fork`) and asks for a handoff note, saved as `handoff/<session>.md` in the data
-folder. The fork reads the cached context at the cache-read rate, about a twentieth of a
+(`$.model.fork`) and asks for a handoff note, saved in the data folder as
+`handoff/<date>-<heading>.md`, for example `handoff/2026-11-24-snowfall-backdrop-mod.md`
+(`-2`, `-3` after it where another session's note has that name). `handoff/.index/<session>`
+names each session's note; a later note of the same session and name replaces it, one with
+another heading is written beside it. Notes written before 1.15.0 are `handoff/<session>.md`
+and are still read. Until your next prompt the pane and status line say "Handoff saved
+HH:MM", and the pane names the file. The fork reads the cached context at the cache-read rate, about a twentieth of a
 re-write on a 1-hour cache, and restarts the cache's clock once; nothing else is sent. A
 prompt of yours cancels the timer.
 
