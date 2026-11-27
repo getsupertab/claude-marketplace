@@ -1269,12 +1269,15 @@ export const register: Register = (on, pluginOptions) => {
     // refresh that invalidates into another render.
     const empty = view === 'options' ? options === undefined : report === undefined && error === undefined
     if (empty && running === undefined) void refresh($)
+    // The tabs at the left, "Open full report" at the right edge, as it leaves the pane
     const tabs = (
-      <Box gap={1}>
-        {TABS.map(t => (
-          <Button key={`tab-${t.view}`} label={t.label} variant={view === t.view ? 'primary' : 'secondary'}
-            onPress={() => show($, t.view)} />
-        ))}
+      <Box gap={1} justifyContent="space-between" alignItems="center">
+        <Box key="tabs" gap={1}>
+          {TABS.map(t => (
+            <Button key={`tab-${t.view}`} label={t.label} variant={view === t.view ? 'primary' : 'secondary'}
+              onPress={() => show($, t.view)} />
+          ))}
+        </Box>
         <Button key="open-browser" label="Open full report ↗" onPress={() => { void openSnapshot($) }} />
       </Box>
     )
