@@ -457,6 +457,12 @@ export type PlanWindow = {
   limit: number | null; frac: number | null; resets: string | null
 }
 const WINDOW_NAME = { five_hour: '5-hour window', seven_day: 'weekly window', today: "today's budget" } as const
+/** The hero's label, the same name the Headline setting gives the window. */
+const LEAD_NAME = { five_hour: '5-hour window', seven_day: 'week', today: 'today' } as const
+/** What is left, as the hero reads it: today's budget out of itself, a window out of the whole window. */
+const leadLeft = (w: PlanWindow) => Math.max(0, w.scope === 'today' ? 1 - (w.frac ?? 0) : 1 - w.used / 100)
+/** Tokens at a glance: 685k, 2.1M. */
+export const compact = (n: number): string => n >= 1e6 ? `${Math.round(n / 1e5) / 10}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : `${Math.round(n)}`
 const WINDOW_SHORT = { five_hour: '5-hour', seven_day: 'week', today: 'today' } as const
 const percent = (n: number) => `${Math.round(n * 10) / 10}%`
 
@@ -1559,10 +1565,11 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
   const reported = planWindows.filter(w => w.scope !== 'today')
   const lead = s.headline === 'session' ? undefined
     : planWindows.find(w => w.scope === s.headline) ?? reported.find(w => w.frac !== null) ?? reported[0]
-  const otherWindows = planWindows.filter(w => w !== lead)
+  // With today's budget leading, the week shows only once it nears its end: the 5-hour window is the nearer wall
+  const otherWindows = planWindows.filter(w => w !== lead
+    && !(lead?.scope === 'today' && w.scope === 'seven_day' && toneOf(w.used / 100) === 'success'))
   // In USD the headline today leads with today's spend over every session
   const todaySpend = !lead && s.unit === 'usd' && s.headline === 'today'
-  const apiRates = s.plan ? ' at API rates' : ''
   const frac = lead ? lead.frac : s.frac
   // Every figure counts what is left, as the warnings do
   const leftOf = (share: number) => pct(Math.max(0, 1 - share))
@@ -1595,19 +1602,20 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
   const checked = s.frac !== null || other !== null || planWindows.some(w => w.frac !== null && (w.scope !== 'today' || w.limit !== null))
   // Today's budget is always read as a share of itself; the week's figures follow, named as such
   // Under 0.05 rounds to "0%", which names nothing (a week's first day)
+  // The carry names the Carry over (beta) setting, so the extra (or missing) share explains itself
   const carriedText = (w: PlanWindow) => (w.carried === undefined || Math.abs(w.carried) < 0.05 ? ''
-    : ` (${percent(w.daily ?? 0)} a day ${w.carried < 0 ? '−' : '+'} ${percent(Math.abs(w.carried))} ${w.carried < 0 ? 'overspent' : 'carried over'})`)
-  const ofWeek = (w: PlanWindow) => `${percent(w.allowed ?? 0)} of the week${carriedText(w)}, ${percent(w.used)} used so far`
-  const weekShare = (w: PlanWindow) => `today's budget is ${ofWeek(w)}`
-  const budgetLine = (w: PlanWindow) => `today's budget ${leftOf(w.frac ?? 0)} left · ${ofWeek(w)}`
+    : ` · ${percent(Math.abs(w.carried))} ${w.carried < 0 ? 'less ' : ''}from carry over (beta)`)
+  const weekShare = (w: PlanWindow) => `${percent(w.allowed ?? 0)} of your week today${carriedText(w)}`
+  const budgetLine = (w: PlanWindow) => `today's budget ${leftOf(w.frac ?? 0)} left · ${weekShare(w)}`
   const resets = (w: PlanWindow) => (w.resets ? ` · resets ${w.resets}` : '')
   // A limit is read the way its window is, as what is left of the window when it stops
   const limitOf = (w: PlanWindow, sep: string) => (w.limit === null ? '' : `${sep}limit at ${percent(Math.max(0, 100 - w.limit))} left`)
-  const under = [
-    lead ? (other?.scope === 'session' ? '' : `${usd(s.cost)}${apiRates}`) : s.limit ?? '',
+  // On Pro, Max and Team the plan is the bill and its warn level is fixed: dollars and the mode say nothing
+  // the user can act on, so only a budget that is off or unread gets a line. Tokens sit in DETAILS.
+  const under = lead ? (checked ? '' : !s.limits_on ? 'budget off' : 'no limit set or no reading yet') : [
+    s.limit ?? '',
     todaySpend ? `this session ${other?.scope === 'session' ? other.limit : usd(s.cost)}`
       : other ? `${other.scope} ${other.limit}` : '',
-    `${int(s.tokens)} tokens`,
     checked ? mode : !s.limits_on ? 'budget off'
       : s.unit === 'percent' ? 'no limit set or no reading yet' : todaySpend ? 'no daily limit set' : 'no session limit set',
   ].filter(x => x !== '').join(' · ')
@@ -1615,7 +1623,7 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
   const series = (key: string) => (SERIES[key] ? key : 'input')
   const models = r.models ?? []
   const toolCalls = r.tools.reduce((n, t) => n + t.calls, 0)
-  const detailsSummary = `${int(s.msgs)} msgs · ${r.tools.length} tools · ${toolCalls} calls · ${models.length} ${models.length === 1 ? 'model' : 'models'}`
+  const detailsSummary = `${compact(s.tokens)} tokens · ${int(s.msgs)} msgs · ${r.tools.length} tools · ${toolCalls} calls · ${models.length} ${models.length === 1 ? 'model' : 'models'}`
   const COLS = { tokens: 11, cost: 10, share: 5 }
   const row = (key: string, name: RenderChildren, tokens: string, cost: string, share: string, style: { bold?: boolean; dim?: boolean } = {}) => (
     <Box key={`rate-${key}`} alignItems="center">
@@ -1629,7 +1637,7 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
     <Box flexDirection="column" gap={1}>
       <Box key="hero" flexDirection="column" gap="xs">
         <Box justifyContent="space-between" alignItems="center">
-          {label($, e, lead ? 'plan usage' : todaySpend ? "today's spend" : 'session spend')}
+          {label($, e, lead ? LEAD_NAME[lead.scope] : todaySpend ? "today's spend" : 'session spend')}
           {badge}
         </Box>
         <Box justifyContent="space-between" alignItems="center">
@@ -1640,23 +1648,28 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
             {lead
               ? <Text size="footnote" dimColor>{lead.scope === 'today'
                 ? "of today's budget left"
-                : `left of ${WINDOW_NAME[lead.scope]}${limitOf(lead, ' · ')}${resets(lead)}`}</Text>
+                : `left${limitOf(lead, ' · ')}${resets(lead)}`}</Text>
               : todaySpend ? <Text size="footnote" dimColor>today, every session</Text>
                 : s.plan && <Text size="footnote" dimColor>at API rates</Text>}
           </Box>
           <Button key="share" label="↑ Share"
             onPress={() => { void openSharePage($, r) }} />
         </Box>
-        {frac !== null && bar($, e, [{ series: toneOf(frac), frac }],
-          lead?.scope === 'today' ? `${pct(frac)} of today's budget used`
-            : `${pct(frac)} of the ${lead ? WINDOW_NAME[lead.scope] : todaySpend ? 'daily' : 'session'} limit`, 8)}
+        {/* A window's bar holds what is left, as its figure does, and drains from the right like a battery */}
+        {lead ? bar($, e, [{ series: toneOf(lead.frac ?? lead.used / 100), frac: leadLeft(lead) }],
+          `${pct(leadLeft(lead))} of ${WINDOW_NAME[lead.scope]} left`, 8)
+          : frac !== null && bar($, e, [{ series: toneOf(frac), frac }],
+            `${pct(frac)} of the ${todaySpend ? 'daily' : 'session'} limit`, 8)}
         {lead?.scope === 'today' && <Text key="week-share" size="footnote" dimColor>{weekShare(lead)}</Text>}
-        {otherWindows.map(w => (
-          <Text key={`window-${w.scope}`} size="footnote" dimColor>
-            {w.scope === 'today' ? budgetLine(w) : `${WINDOW_SHORT[w.scope]} ${windowLeft(w)} left${limitOf(w, ', ')}${resets(w)}`}
-          </Text>
-        ))}
-        <Text size="footnote" dimColor>{under}</Text>
+        {otherWindows.map(w => {
+          const near = w.scope !== 'today' && toneOf(w.used / 100) !== 'success' ? toneOf(w.used / 100) : undefined
+          return (
+            <Text key={`window-${w.scope}`} size="footnote" dimColor={!near} color={near} weight={near && 'semibold'}>
+              {w.scope === 'today' ? budgetLine(w) : `${WINDOW_SHORT[w.scope]} ${windowLeft(w)} left${limitOf(w, ', ')}${resets(w)}`}
+            </Text>
+          )
+        })}
+        {under && <Text size="footnote" dimColor>{under}</Text>}
       </Box>
       <Box key="details" flexDirection="column" gap="xs">
         {/* Desktop draws the Button's label and drops its children, so the summary sits beside it */}
