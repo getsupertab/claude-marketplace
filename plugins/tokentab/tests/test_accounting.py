@@ -1262,17 +1262,25 @@ def handoff_touch_case():
     env = dict(os.environ, CLAUDE_CONFIG_DIR=cfg)
     guard = os.path.join(PLUGIN, "tokentab", "guard.py")
 
-    def check(note_minutes_ago):
+    def check(note_minutes_ago, name="2026-11-24-fix-tests.md"):
+        """A note `note_minutes_ago` old under `name`, indexed unless it is the pre-1.15.0 `s.md`."""
         if note_minutes_ago is not None:
-            with open(os.path.join(data, "handoff", "s.md"), "w", encoding="utf-8") as f:
+            with open(os.path.join(data, "handoff", name), "w", encoding="utf-8") as f:
                 f.write(f"<!-- TokenTab handoff, {iso(now - timedelta(minutes=note_minutes_ago))} -->\nnote\n")
+            if name != "s.md":
+                os.makedirs(os.path.join(data, "handoff", ".index"), exist_ok=True)
+                with open(os.path.join(data, "handoff", ".index", "s"), "w", encoding="utf-8") as f:
+                    f.write(name + "\n")
         r = subprocess.run([sys.executable, guard, "--cold-check", "s"], env=env, capture_output=True)
         return json.loads(r.stdout or b"null")
 
     if "cold" not in (check(None) or {}):
         errs.append("handoff touch: a 70-minute-old call with no note should be cold")
+    if check(20, "s.md") != {}:
+        errs.append("handoff touch: a pre-1.15.0 note written 20 minutes ago should keep the cache warm")
+    os.remove(os.path.join(data, "handoff", "s.md"))
     if check(20) != {}:
-        errs.append("handoff touch: a note written 20 minutes ago should keep the cache warm")
+        errs.append("handoff touch: an indexed note written 20 minutes ago should keep the cache warm")
     older = check(80) or {}
     if "cold" not in older or abs(older.get("started", 0) - (now - timedelta(minutes=70)).timestamp()) > 1:
         errs.append(f"handoff touch: a note older than the call changes nothing, got {older}")
