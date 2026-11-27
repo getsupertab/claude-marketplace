@@ -1281,12 +1281,16 @@ export const register: Register = (on, pluginOptions) => {
     const body = view === 'options' ? optionsTab($, e)
       : report === undefined ? <Text dimColor>loading...</Text>
       : spendTab($, e, report)
+    // 24 px under the tabs on Desktop and mobile; a cell surface keeps one row, as `xl` would be two
+    const cells = e.surface === 'terminal' || e.surface === 'vscode'
     return (
-      <Box flexDirection="column" gap={1}>
+      <Box flexDirection="column" gap={cells ? 1 : 'xl'}>
         {tabs}
-        {error !== undefined && <Text color="error">TokenTab: {error}</Text>}
-        {saved !== undefined && <Text dimColor>Handoff saved {localTime(saved.at)}: {saved.name}</Text>}
-        {body}
+        <Box key="below-tabs" flexDirection="column" gap={1}>
+          {error !== undefined && <Text color="error">TokenTab: {error}</Text>}
+          {saved !== undefined && <Text dimColor>Handoff saved {localTime(saved.at)}: {saved.name}</Text>}
+          {body}
+        </Box>
       </Box>
     )
   })
