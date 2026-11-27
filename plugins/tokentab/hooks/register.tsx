@@ -311,8 +311,8 @@ export function noteSlug(note: string): string {
 
 /** `HH:MM` in local time. */
 export const localTime = (ms: number): string => {
-  const d = new Date(ms)
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  const date = new Date(ms)
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
 }
 export const noteName = (day: string, slug: string, n: number): string => `${day}-${slug}${n === 1 ? '' : `-${n}`}.md`
 

@@ -1693,7 +1693,7 @@ test('after a turn the timer writes the handoff note once, shortly before the ca
   expect(fs.get(`${DATA}/handoff/${name}`)).toBe(noteFile(BASE + 50 * MIN))
   expect(fs.get(`${DATA}/handoff/.index/${SID}`)).toBe(`${name}\n`)
   const marker = `Handoff saved ${localTime(BASE + 50 * MIN)}: ${name}`
-  expect(texts(await $.ui.render(TIMER_PANE)).map(x => x.text)).toContain(marker)
+  expect(texts(await $.ui.render(TIMER_PANE)).map(line => line.text)).toContain(marker)
   await clock.advance(120 * MIN)
   await clock.settle()
   expect(forks.length).toBe(1)
@@ -1704,7 +1704,7 @@ test('after a turn the timer writes the handoff note once, shortly before the ca
   await clock.advance(20 * MIN)
   await $.turn.start({ turnId: 't3', text: 'back' } as never)
   // the person is back: the marker goes
-  expect(texts(await $.ui.render(TIMER_PANE)).map(x => x.text)).not.toContain(marker)
+  expect(texts(await $.ui.render(TIMER_PANE)).map(line => line.text)).not.toContain(marker)
   await clock.advance(120 * MIN)
   await clock.settle()
   expect(forks.length).toBe(1)
