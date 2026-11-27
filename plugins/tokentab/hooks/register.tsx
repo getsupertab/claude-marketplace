@@ -293,7 +293,62 @@ export function freshNote(file: string, startedSeconds: number | undefined): str
 export const handoffPrompt = (note: string, prompt: string): string =>
   `I'm continuing from an earlier chat whose prompt cache had expired. Its handoff note:\n\n${note}\n\n---\n\n${prompt}`
 
-export const handoffPath = (data: string, id: string): string => `${data}/handoff/${id}.md`
+// A note is named by its date and heading; `.index/<session>` names a session's note, one file
+// per session so two sessions writing at once never overwrite each other's entry.
+export const handoffDir = (data: string): string => `${data}/handoff`
+export const indexPath = (data: string, id: string): string => `${data}/handoff/.index/${id}`
+/** Before 1.15.0 a note was named by its session id; still read where no index entry is. */
+export const legacyPath = (data: string, id: string): string => `${data}/handoff/${id}.md`
+
+/** The note's first heading as a file name part, without its `Handoff:` lead; `handoff` without one. */
+export function noteSlug(note: string): string {
+  const heading = /^#{1,6}\s+(.+)$/m.exec(note)?.[1] ?? ''
+  const slug = heading.replace(/^handoff\s*[:\-–—]\s*/i, '').normalize('NFKD').replace(/[̀-ͯ]/g, '')
+    .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+  const cut = slug.length <= 60 ? slug : slug.slice(0, 61).replace(/-[^-]*$/, '') || slug.slice(0, 60)
+  return cut || 'handoff'
+}
+
+/** `HH:MM` in local time. */
+export const localTime = (ms: number): string => {
+  const d = new Date(ms)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+export const noteName = (day: string, slug: string, n: number): string => `${day}-${slug}${n === 1 ? '' : `-${n}`}.md`
+
+async function indexed($: EngineInterface, data: string, id: string): Promise<string | undefined> {
+  try {
+    const name = (await $.fs.read(indexPath(data, id))).trim()
+    return /^[^/\\]+\.md$/.test(name) ? name : undefined
+  } catch { return undefined }
+}
+
+/** Where the session's note is: the indexed name, else the pre-1.15.0 one. */
+async function notePath($: EngineInterface, id: string): Promise<string> {
+  const data = await dataRoot($)
+  const name = await indexed($, data, id)
+  return name === undefined ? legacyPath(data, id) : `${handoffDir(data)}/${name}`
+}
+
+// The first free `<day>-<slug>[-n].md`; the session's own note of that name is overwritten.
+async function freshName($: EngineInterface, data: string, id: string, note: string, now: number): Promise<string> {
+  const mine = await indexed($, data, id)
+  const day = localDay(now)
+  const slug = noteSlug(note)
+  for (let n = 1; n <= 50; n++) {
+    const name = noteName(day, slug, n)
+    if (name === mine || !(await $.fs.exists(`${handoffDir(data)}/${name}`))) return name
+  }
+  return `${day}-${slug}-${id.slice(0, 8)}.md`
+}
+
+/** The status line with the saved marker after it, while this session's note is fresh. */
+export const withSaved = (line: string, saved: Saved | undefined, id: string): string =>
+  saved?.id === id ? `${line} · handoff saved ${localTime(saved.at)}` : line
+
+/** The note written in this idle stretch: the pane and status line say so until the next turn. */
+export type Saved = { id: string, at: number, name: string }
+let saved: Saved | undefined
 
 let handoffTimer: Timer | undefined
 // Bumped by every main-loop turn start and end and by /clear: a timer or fork from an older stretch stands down.
@@ -303,6 +358,12 @@ function stopHandoff(): void {
   handoffTimer?.cancel()
   handoffTimer = undefined
   stretch++
+}
+
+// The person is back: the note is either offered now or stale after this turn.
+function dropSaved(): void {
+  saved = undefined
+  if (tick !== undefined) stale = true
 }
 
 function scheduleHandoff($: EngineInterface, ms: number): void {
@@ -335,13 +396,21 @@ async function handoffTick($: EngineInterface, mine: number): Promise<void> {
     // One write per stretch: the fork's own read restarts the cache's clock, so no timer follows it.
     const reply = await $.model.fork({ prompt: HANDOFF_PROMPT })
     if (stretch !== mine || !reply.isAnswered) return
-    const written = new Date(await $.clock.now()).toISOString()
-    await $.fs.write(handoffPath(await dataRoot($), id), `<!-- TokenTab handoff, ${written} -->\n${reply.text.trim()}\n`)
+    const now = await $.clock.now()
+    const data = await dataRoot($)
+    const note = reply.text.trim()
+    const name = await freshName($, data, id, note, now)
+    await $.fs.write(`${handoffDir(data)}/${name}`, `<!-- TokenTab handoff, ${new Date(now).toISOString()} -->\n${note}\n`)
+    await $.fs.write(indexPath(data, id), `${name}\n`)
+    if (stretch !== mine) return
+    saved = { id, at: now, name }
+    if (tick !== undefined) stale = true
+    $.ui.invalidate('ui.render')
   } catch { /* no note this stretch: the cold-cache question asks as before */ }
 }
 
 async function readHandoff($: EngineInterface, started: number | undefined): Promise<string | undefined> {
-  try { return freshNote(await $.fs.read(handoffPath(await dataRoot($), await sid($))), started) } catch { return undefined }
+  try { return freshNote(await $.fs.read(await notePath($, await sid($))), started) } catch { return undefined }
 }
 
 async function copyHandoff($: EngineInterface, ask: ColdAsk, surface: RenderSurface | undefined): Promise<boolean> {
@@ -353,7 +422,7 @@ async function copyHandoff($: EngineInterface, ask: ColdAsk, surface: RenderSurf
 async function handedOver($: EngineInterface, ask: ColdAsk, surface: RenderSurface | undefined, id: string, paste: string): Promise<string> {
   let copied = false
   try { copied = await copyHandoff($, ask, surface) } catch { /* the path below still says where the note is */ }
-  return copied ? `The handoff and your prompt are on your clipboard: ${paste}.` : `The note is in ${handoffPath(await dataRoot($), id)}.`
+  return copied ? `The handoff and your prompt are on your clipboard: ${paste}.` : `The note is in ${await notePath($, id)}.`
 }
 
 // /clear, then the note and the held prompt as the new chat's first prompt. Where the clear
@@ -394,7 +463,7 @@ async function pressCopy($: EngineInterface, ask: ColdAsk, surface: RenderSurfac
   if (coldAsk !== ask) return
   coldAsk = copied
     ? { ...ask, failed: undefined, note: 'Copied the handoff note and your prompt. Open a new chat and paste them there.' }
-    : { ...ask, failed: `couldn't copy here. The note is in ${handoffPath(await dataRoot($), await sid($))}.` }
+    : { ...ask, failed: `couldn't copy here. The note is in ${await notePath($, await sid($))}.` }
   $.ui.invalidate('ui.render')
 }
 
@@ -885,7 +954,7 @@ async function refreshNow($: EngineInterface): Promise<void> {
       $.ui.status(undefined)
     } else {
       const out = JSON.parse(await python($, 'tokentab.py', ['--status-json', '--session', id])) as { line: string; button?: string | null }
-      $.ui.status(out.line.trim())
+      $.ui.status(withSaved(out.line.trim(), saved, id))
       reopenText = out.button ?? undefined
     }
     if (await pageIsOpen($)) await python($, 'sankey.py', ['--session', id, '--push', pushPath(await dataRoot($), id)])
@@ -1108,6 +1177,7 @@ export const register: Register = (on, pluginOptions) => {
         conversation++
         coldAsk = undefined
         stopHandoff()
+        saved = undefined
         measured = false
         pageOpenedAt = undefined
         if (tick !== undefined) stale = true
@@ -1215,6 +1285,7 @@ export const register: Register = (on, pluginOptions) => {
       <Box flexDirection="column" gap={1}>
         {tabs}
         {error !== undefined && <Text color="error">TokenTab: {error}</Text>}
+        {saved !== undefined && <Text dimColor>Handoff saved {localTime(saved.at)}: {saved.name}</Text>}
         {body}
       </Box>
     )
@@ -1294,7 +1365,10 @@ export const register: Register = (on, pluginOptions) => {
   // Main-loop turns bound an idle stretch; the handoff timer runs between them, only where
   // someone may come back to a surface (not under `claude -p`).
   on('turn.start', ($, e, next) => {
-    if (e.agentId === undefined) stopHandoff()
+    if (e.agentId === undefined) {
+      stopHandoff()
+      if (saved !== undefined) dropSaved()
+    }
     return next(e)
   }).catch(($, e, next) => next(e))
 

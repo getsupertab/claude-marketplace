@@ -236,8 +236,10 @@ The limits are off, but these checks run from the start. Each one is set in
   sends it for you (shown as sent through TokenTab). Where nothing can be shown (`claude -p`), it blocks once; sending again within two minutes goes through. Nothing has been sent at that point, so holding it back costs nothing.
   Turn it off by removing `cold_resume`.
 - **Handoff note.** Shortly before a long session's cache would expire while you're away,
-  TokenTab asks Claude once for a handoff note (one cheap cache read). When you come back
-  to a cold cache, the question above the prompt box offers **New chat from handoff**,
+  TokenTab asks Claude once for a handoff note (one cheap cache read). It is saved under
+  `handoff/` in TokenTab's data folder, named by date and topic (for example
+  `2026-11-24-snowfall-backdrop-mod.md`), and the pane and status line show "Handoff saved
+  16:06" until you send again. When you come back to a cold cache, the question above the prompt box offers **New chat from handoff**,
   which clears the chat and starts again from the note with your prompt, or **Copy
   handoff** to paste it into a new chat yourself. The session must stay open and the
   computer awake. Turn it off on the pane's Settings tab (Handoff note, under SESSION).
