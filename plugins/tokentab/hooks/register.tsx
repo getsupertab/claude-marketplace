@@ -1589,7 +1589,8 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
   const tone = worst === null ? undefined : toneOf(worst)
   // With today's budget as the hero, a second percent beside it reads as a rival figure for the day. The badge
   // then shows only a state, past a warn level, and names the window when it is not today's budget.
-  const todayLeads = lead?.scope === 'today'
+  // A window watched at its own 100% reads the same as its hero, so it too shows only a state
+  const todayLeads = lead?.scope === 'today' || (lead !== undefined && (lead.limit ?? 100) >= 100)
   const named = otherNearer ? `${other.scope} · `
     : todayLeads && judged[0] && judged[0].w !== lead ? `${WINDOW_SHORT[judged[0].w.scope]} · ` : ''
   const badge = worst === null || tone === undefined || (todayLeads && tone === 'success') ? undefined
@@ -1609,7 +1610,8 @@ function spendTab($: EngineInterface, e: RenderEvent, r: Report): RenderChildren
   const budgetLine = (w: PlanWindow) => `today's budget ${leftOf(w.frac ?? 0)} left · ${weekShare(w)}`
   const resets = (w: PlanWindow) => (w.resets ? ` · resets ${w.resets}` : '')
   // A limit is read the way its window is, as what is left of the window when it stops
-  const limitOf = (w: PlanWindow, sep: string) => (w.limit === null ? '' : `${sep}limit at ${percent(Math.max(0, 100 - w.limit))} left`)
+  // Anthropic's own 100% is the window itself, so it names no limit
+  const limitOf = (w: PlanWindow, sep: string) => (w.limit === null || w.limit >= 100 ? '' : `${sep}limit at ${percent(Math.max(0, 100 - w.limit))} left`)
   // On Pro, Max and Team the plan is the bill and its warn level is fixed: dollars and the mode say nothing
   // the user can act on, so only a budget that is off or unread gets a line. Tokens sit in DETAILS.
   const under = lead ? (checked ? '' : !s.limits_on ? 'budget off' : 'no limit set or no reading yet') : [

@@ -524,6 +524,16 @@ test('Spend on a percent budget leads with the window, names it, and leaves doll
   // the bar holds what is left, as the figure does
   expect(elements(tree, 'Svg').filter(s => s.alt !== 'separator' && !String(s.alt).startsWith('chevron'))[0]!.alt).toBe('92% of 5-hour window left')
 
+  // watching a window checks it at Anthropic's own 100%: that is the window itself, so no limit is named
+  report.value = { ...REPORT, session: { ...REPORT.session!, unit: 'percent', plan: true, headline: 'five_hour',
+    windows: [{ ...windows[0], limit: 100, frac: 0.08 }, windows[1]], limit: '5-hour window 8% used', frac: 0.08 } }
+  await $.telemetry.log(request({}))
+  await clock.advance(1000)
+  const watched = texts(await $.ui.render({ surface: 'desktop', component: 'Pane', requestId: 'tokentab', props: PANE_PROPS }))
+  expect(watched.some(x => x.text === 'left · resets 16:00')).toBe(true)
+  // nor does a badge repeat the hero's figure under the warn level
+  expect(watched.some(x => x.text.endsWith('of limit left'))).toBe(false)
+
   // a USD budget on a subscription: dollars lead, labelled as API rates
   report.value = { ...REPORT, session: { ...REPORT.session!, plan: true, windows: [] } }
   await $.telemetry.log(request({}))
